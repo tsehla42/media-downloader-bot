@@ -28,7 +28,7 @@ WORKDIR /usr/src/app
 COPY --from=build /install /usr/local
 
 # Copy application code
-COPY *.py ./
+COPY src/ ./src/
 
 # Create download directory
 RUN mkdir -p /tmp/bot-downloads
@@ -37,4 +37,4 @@ RUN mkdir -p /tmp/bot-downloads
 RUN useradd --create-home appuser
 USER appuser
 
-CMD ["python", "bot.py"]
+CMD ["python", "src/bot.py"]
