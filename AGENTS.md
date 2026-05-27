@@ -12,37 +12,39 @@ A Telegram bot that downloads videos and images from YouTube, TikTok, and Instag
 
 ```
 media-downloader-bot/
-├── bot.py              # Entry point - creates Application, registers handlers, runs polling
-├── config.py           # Loads .env, exports settings as constants
-├── downloader.py       # yt-dlp subprocess wrapper (metadata, download, audio, images)
-├── handlers.py         # Telegram handlers: /start, /help, /audio, URL message handling
-├── inline.py           # Inline query handler for @botname usage
-├── utils.py            # Platform detection, URL validation, file cleanup
+├── src/                # Application code
+│   ├── bot.py          # Entry point - creates Application, registers handlers, runs polling
+│   ├── config.py       # Loads .env, exports settings as constants
+│   ├── downloader.py   # yt-dlp subprocess wrapper (metadata, download, audio, images)
+│   ├── handlers.py     # Telegram handlers: /start, /help, /audio, URL message handling
+│   ├── inline.py       # Inline query handler for @botname usage
+│   └── utils.py        # Platform detection, URL validation, file cleanup
+├── tests/              # Test suite (imports from src/ via conftest.py)
+│   ├── test_utils.py
+│   ├── test_downloader.py
+│   └── test_handlers.py
+├── docs/
+│   ├── README.md       # Project overview
+│   ├── architecture.md # Module responsibilities and data flow
+│   └── superpowers/    # Design specs and implementation plans
 ├── requirements.txt    # Dependencies
 ├── .env.example        # Config template
 ├── Dockerfile          # Multi-stage build
 ├── docker-compose.yml  # Container orchestration
 ├── compose.sh          # Build + deploy script
-├── tests/              # Test suite
-│   ├── test_utils.py
-│   ├── test_downloader.py
-│   └── test_handlers.py
-└── docs/
-    ├── README.md       # Project overview
-    ├── architecture.md # Module responsibilities and data flow
-    └── superpowers/    # Design specs and implementation plans
+└── conftest.py         # Adds src/ to Python path for tests
 ```
 
 ## Module Responsibilities
 
 | Module | Depends on | What it does |
 |---|---|---|
-| `config.py` | .env file | Loads BOT_TOKEN, ALLOWED_USER_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE |
-| `utils.py` | nothing | Platform detection from URL, URL validation, file cleanup |
-| `downloader.py` | nothing | yt-dlp subprocess calls: get_metadata, download_video, download_audio, download_images |
-| `handlers.py` | config, utils, downloader | Telegram message handlers, orchestrates download flow |
-| `inline.py` | config, utils, downloader | Inline query handler, returns metadata as inline results |
-| `bot.py` | config, handlers, inline | Entry point, wires everything together |
+| `src/config.py` | .env file | Loads BOT_TOKEN, ALLOWED_USER_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE |
+| `src/utils.py` | nothing | Platform detection from URL, URL validation, file cleanup |
+| `src/downloader.py` | nothing | yt-dlp subprocess calls: get_metadata, download_video, download_audio, download_images |
+| `src/handlers.py` | config, utils, downloader | Telegram message handlers, orchestrates download flow |
+| `src/inline.py` | config, utils, downloader | Inline query handler, returns metadata as inline results |
+| `src/bot.py` | config, handlers, inline | Entry point, wires everything together |
 
 ## Data Flow
 
@@ -68,11 +70,11 @@ All 19 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 
-**Add a new platform:** Add domain to `SUPPORTED_PLATFORMS` in `utils.py`, add platform-specific args in `downloader.py`.
+**Add a new platform:** Add domain to `SUPPORTED_PLATFORMS` in `src/utils.py`, add platform-specific args in `src/downloader.py`.
 
-**Add a new command:** Add handler function in `handlers.py`, register in `bot.py` with `app.add_handler(CommandHandler(...))`.
+**Add a new command:** Add handler function in `src/handlers.py`, register in `src/bot.py` with `app.add_handler(CommandHandler(...))`.
 
-**Change download behavior:** Edit `downloader.py`. All yt-dlp calls go through `subprocess.run()`.
+**Change download behavior:** Edit `src/downloader.py`. All yt-dlp calls go through `subprocess.run()`.
 
 ## Docs Index
 
