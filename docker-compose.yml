@@ -1,0 +1,14 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: media-downloader-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - bot-downloads:/tmp/bot-downloads
+
+volumes:
+  bot-downloads:
