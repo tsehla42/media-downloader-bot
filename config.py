@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ALLOWED_USER_IDS = [
     int(uid) for uid in os.environ.get("ALLOWED_USER_IDS", "").split(",") if uid.strip()
 ]
