@@ -46,29 +46,39 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /audio command - download as MP3."""
+    reply_params = {"message_id": update.message.message_id}
+
     if not _is_allowed(update.message.from_user.id):
-        await update.message.reply_text("You are not authorized to use this bot.")
+        await update.message.reply_text(
+            "You are not authorized to use this bot.",
+            reply_parameters=reply_params,
+        )
         return
 
     text = update.message.text.replace("/audio", "").strip()
     if not text:
-        await update.message.reply_text("Usage: /audio <url>")
+        await update.message.reply_text(
+            "Usage: /audio <url>",
+            reply_parameters=reply_params,
+        )
         return
 
     urls = extract_urls(text)
     if not urls:
-        await update.message.reply_text("Please provide a valid URL.")
+        await update.message.reply_text(
+            "Please provide a valid URL.",
+            reply_parameters=reply_params,
+        )
         return
 
     url = urls[0]
     platform = detect_platform(url)
     if not platform:
         await update.message.reply_text(
-            "Unsupported platform. Use /help to see supported sites."
+            "Unsupported platform. Use /help to see supported sites.",
+            reply_parameters=reply_params,
         )
         return
-
-    status_msg = await update.message.reply_text("Downloading audio...")
 
     tmp_id = uuid.uuid4().hex[:8]
     output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.mp3")
@@ -78,56 +88,47 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         success = download_audio(url, output_path)
         if success and os.path.isfile(output_path):
             with open(output_path, "rb") as f:
-                await update.message.reply_audio(audio=f)
-            await status_msg.edit_text("Audio sent!")
+                await update.message.reply_audio(
+                    audio=f,
+                    reply_parameters=reply_params,
+                )
         else:
-            await status_msg.edit_text("Failed to download audio. Check the URL and try again.")
+            await update.message.reply_text(
+                "Failed to download audio. Check the URL and try again.",
+                reply_parameters=reply_params,
+            )
     except Exception as e:
-        await status_msg.edit_text(f"Error: {e}")
+        await update.message.reply_text(
+            f"Error: {e}",
+            reply_parameters=reply_params,
+        )
     finally:
         cleanup_file(output_path)
 
 
-async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle messages containing URLs."""
-    if not update.message or not update.message.text:
-        return
+async def _download_and_send(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, url: str
+) -> None:
+    """Download and send a single URL."""
+    reply_params = {"message_id": update.message.message_id}
 
-    if not _is_allowed(update.message.from_user.id):
-        return
-
-    text = update.message.text.strip()
-
-    if text.startswith("/audio"):
-        await audio_command(update, context)
-        return
-
-    if not is_valid_url(text):
-        return
-
-    urls = extract_urls(text)
-    if not urls:
-        await update.message.reply_text("Please send a valid URL.")
-        return
-
-    url = urls[0]
     platform = detect_platform(url)
     if not platform:
         await update.message.reply_text(
-            "Unsupported platform. I support YouTube, TikTok, and Instagram."
+            "Unsupported platform. I support YouTube, TikTok, and Instagram.",
+            reply_parameters=reply_params,
         )
         return
 
-    status_msg = await update.message.reply_text("Fetching info...")
     metadata = get_metadata(url)
     if not metadata:
-        await status_msg.edit_text(
-            "Could not fetch video info. The content may be private or the URL invalid."
+        await update.message.reply_text(
+            "Could not fetch video info. The content may be private or the URL invalid.",
+            reply_parameters=reply_params,
         )
         return
 
     title = metadata.get("title", "video")
-    await status_msg.edit_text(f"Downloading: {title[:50]}...")
 
     tmp_id = uuid.uuid4().hex[:8]
     output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
@@ -141,15 +142,20 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 for i in range(0, len(images), 10):
                     batch = images[i:i+10]
                     media = [InputMediaPhoto(open(img, "rb")) for img in batch]
-                    await update.message.reply_media_group(media=media)
+                    await update.message.reply_media_group(
+                        media=media,
+                        reply_parameters=reply_params,
+                    )
                     for img in batch:
                         os.remove(img)
-                await status_msg.edit_text("Images sent!")
                 return
 
         success = download_video(url, output_path, MAX_FILE_SIZE, platform=platform)
         if not success:
-            await status_msg.edit_text("Download failed. Try again later.")
+            await update.message.reply_text(
+                "Download failed. Try again later.",
+                reply_parameters=reply_params,
+            )
             return
 
         downloaded = None
@@ -160,11 +166,18 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 break
 
         if not downloaded:
-            await status_msg.edit_text("Download failed. File not found.")
+            await update.message.reply_text(
+                "Download failed. File not found.",
+                reply_parameters=reply_params,
+            )
             return
 
         with open(downloaded, "rb") as f:
-            await update.message.reply_video(video=f, caption=title[:1024])
+            await update.message.reply_video(
+                video=f,
+                caption=title[:1024],
+                reply_parameters=reply_params,
+            )
 
         log_request(
             url=url,
@@ -187,7 +200,39 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             user=update.message.from_user,
             chat=update.message.chat,
         )
-        await status_msg.edit_text(f"Error: {e}")
+        await update.message.reply_text(
+            f"Error: {e}",
+            reply_parameters=reply_params,
+        )
     finally:
         for ext in ["mp4", "webm", "mkv", "mp3", "m4a"]:
             cleanup_file(f"{base}.{ext}")
+
+
+async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle messages containing URLs."""
+    if not update.message or not update.message.text:
+        return
+
+    if not _is_allowed(update.message.from_user.id):
+        return
+
+    text = update.message.text.strip()
+
+    if text.startswith("/audio"):
+        await audio_command(update, context)
+        return
+
+    if not is_valid_url(text):
+        return
+
+    urls = extract_urls(text)
+    if not urls:
+        await update.message.reply_text(
+            "Please send a valid URL.",
+            reply_parameters={"message_id": update.message.message_id},
+        )
+        return
+
+    for url in urls:
+        await _download_and_send(update, context, url)
