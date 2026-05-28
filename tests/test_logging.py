@@ -37,3 +37,74 @@ def test_config_custom_log_dir():
         import config
         importlib.reload(config)
         assert config.LOG_DIR == "/var/log/bot"
+
+
+import json
+import logging
+from datetime import datetime, timezone
+
+
+def test_json_formatter_basic():
+    """JSONFormatter outputs valid JSON with required fields."""
+    from logging_config import JSONFormatter
+
+    formatter = JSONFormatter()
+    record = logging.LogRecord(
+        name="test",
+        level=logging.INFO,
+        pathname="test.py",
+        lineno=1,
+        msg="test message",
+        args=(),
+        exc_info=None,
+    )
+    output = formatter.format(record)
+    data = json.loads(output)
+
+    assert "timestamp" in data
+    assert data["level"] == "INFO"
+    assert data["message"] == "test message"
+
+
+def test_json_formatter_with_extra():
+    """JSONFormatter includes extra_data from log record."""
+    from logging_config import JSONFormatter
+
+    formatter = JSONFormatter()
+    record = logging.LogRecord(
+        name="test",
+        level=logging.INFO,
+        pathname="test.py",
+        lineno=1,
+        msg="test",
+        args=(),
+        exc_info=None,
+    )
+    record.extra_data = {"url": "https://example.com", "platform": "youtube"}
+    output = formatter.format(record)
+    data = json.loads(output)
+
+    assert data["url"] == "https://example.com"
+    assert data["platform"] == "youtube"
+
+
+def test_json_formatter_timestamp_format():
+    """Timestamp is ISO 8601 UTC format."""
+    from logging_config import JSONFormatter
+
+    formatter = JSONFormatter()
+    record = logging.LogRecord(
+        name="test",
+        level=logging.INFO,
+        pathname="test.py",
+        lineno=1,
+        msg="test",
+        args=(),
+        exc_info=None,
+    )
+    output = formatter.format(record)
+    data = json.loads(output)
+
+    # Parse timestamp to verify format
+    ts = datetime.fromisoformat(data["timestamp"].replace("Z", "+00:00"))
+    assert ts.tzinfo == timezone.utc
