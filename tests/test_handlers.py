@@ -43,7 +43,7 @@ async def test_caption_command_toggle(update, context):
     await caption_command(update, context)
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args[0][0]
-    assert "Captions removed" in text
+    assert "Captions enabled" in text
 
 @pytest.mark.asyncio
 async def test_handle_url_processes_all_urls(update, context):
