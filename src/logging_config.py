@@ -51,6 +51,33 @@ def log_request(
     logging.info("media_request", extra={"extra_data": log_data})
 
 
+def log_error(
+    url: str,
+    error: str,
+    platform: str,
+    user: object,
+    chat: object,
+) -> None:
+    """Log an error with context."""
+    log_data = {
+        "event": "download_failed",
+        "url": url,
+        "error": error,
+        "platform": platform,
+        "user": {
+            "id": user.id,
+            "name": getattr(user, "first_name", None),
+            "username": getattr(user, "username", None),
+        },
+        "chat": {
+            "id": chat.id,
+            "name": getattr(chat, "title", None),
+            "type": getattr(chat, "type", None),
+        },
+    }
+    logging.error("download_failed", extra={"extra_data": log_data})
+
+
 # Track if setup_logging has been called
 _initialized = False
 
