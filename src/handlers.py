@@ -18,18 +18,20 @@ def _is_allowed(user_id: int) -> bool:
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
+    bot_username = context.bot_data.get("bot_username", "botname")
     await update.message.reply_text(
         "Media Downloader Bot\n\n"
         "Send me a YouTube, TikTok, or Instagram URL and I'll download it for you.\n\n"
         "Commands:\n"
         "/help - Show supported platforms\n"
         "/audio <url> - Download as audio (MP3)\n\n"
-        "You can also use inline mode: @botname <url>"
+        f"You can also use inline mode: @{bot_username} <url>"
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command."""
+    bot_username = context.bot_data.get("bot_username", "botname")
     await update.message.reply_text(
         "Supported platforms:\n"
         "- YouTube (videos, shorts)\n"
@@ -38,7 +40,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Usage:\n"
         "1. Send a URL directly\n"
         "2. Use /audio <url> for audio extraction\n"
-        "3. Use inline mode: @botname <url>"
+        f"3. Use inline mode: @{bot_username} <url>"
     )
 
 

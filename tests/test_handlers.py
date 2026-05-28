@@ -16,7 +16,9 @@ def update():
 
 @pytest.fixture
 def context():
-    return MagicMock()
+    ctx = MagicMock()
+    ctx.bot_data = {"bot_username": "testbot"}
+    return ctx
 
 @pytest.mark.asyncio
 async def test_start_command(update, context):
