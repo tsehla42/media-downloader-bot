@@ -1,4 +1,5 @@
 import os
+import tempfile
 from unittest.mock import patch
 
 
@@ -41,6 +42,7 @@ def test_config_custom_log_dir():
 
 import json
 import logging
+import logging.handlers
 from datetime import datetime, timezone
 
 
@@ -108,3 +110,65 @@ def test_json_formatter_timestamp_format():
     # Parse timestamp to verify format
     ts = datetime.fromisoformat(data["timestamp"].replace("Z", "+00:00"))
     assert ts.tzinfo == timezone.utc
+
+
+def test_setup_logging_stdout():
+    """setup_logging configures stdout handler when LOG_OUTPUT=stdout."""
+    import importlib
+
+    import config
+    import logging_config
+    from logging_config import setup_logging
+
+    logging_config._initialized = False
+
+    with patch.dict(os.environ, {"LOG_OUTPUT": "stdout"}):
+        importlib.reload(config)
+        setup_logging()
+
+    root = logging.getLogger()
+    stream_handlers = [h for h in root.handlers if isinstance(h, logging.StreamHandler)]
+    assert len(stream_handlers) >= 1
+
+
+def test_setup_logging_file():
+    """setup_logging configures file handlers when LOG_OUTPUT=file."""
+    import importlib
+
+    import config
+    import logging_config
+    from logging_config import setup_logging
+
+    logging_config._initialized = False
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch.dict(os.environ, {"LOG_OUTPUT": "file", "LOG_DIR": tmpdir}):
+            importlib.reload(config)
+            setup_logging()
+
+        root = logging.getLogger()
+        file_handlers = [h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
+        assert len(file_handlers) >= 2  # requests + errors
+
+        # Check files were created
+        assert os.path.exists(os.path.join(tmpdir, "requests.jsonl"))
+        assert os.path.exists(os.path.join(tmpdir, "errors.jsonl"))
+
+
+def test_setup_logging_idempotent():
+    """setup_logging can be called multiple times without duplicate handlers."""
+    import importlib
+
+    import config
+    import logging_config
+    from logging_config import setup_logging
+
+    logging_config._initialized = False
+
+    with patch.dict(os.environ, {"LOG_OUTPUT": "stdout"}):
+        importlib.reload(config)
+        setup_logging()
+        handler_count = len(logging.getLogger().handlers)
+        setup_logging()
+        # Should not double handlers
+        assert len(logging.getLogger().handlers) == handler_count
