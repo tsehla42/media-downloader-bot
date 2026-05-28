@@ -9,6 +9,10 @@ from downloader import get_metadata, download_video, download_audio, download_im
 from logging_config import log_request, log_error
 
 
+# Per-user caption preferences: user_id -> bool (True = remove caption)
+_user_caption_prefs: dict[int, bool] = {}
+
+
 def _is_allowed(user_id: int) -> bool:
     """Check if user is in allowlist (empty list = allow all)."""
     if not ALLOWED_USER_IDS:
@@ -42,6 +46,38 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "2. Use /audio <url> for audio extraction\n"
         f"3. Use inline mode: @{bot_username} <url>"
     )
+
+
+async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /caption command - toggle video caption on/off."""
+    if not _is_allowed(update.message.from_user.id):
+        return
+
+    text = update.message.text.replace("/caption", "").strip().lower()
+    user_id = update.message.from_user.id
+
+    if text in ("on", "1", "true", "yes"):
+        _user_caption_prefs[user_id] = True
+        await update.message.reply_text(
+            "Captions removed. Videos will be sent without description.",
+            reply_parameters={"message_id": update.message.message_id},
+        )
+    elif text in ("off", "0", "false", "no"):
+        _user_caption_prefs[user_id] = False
+        await update.message.reply_text(
+            "Captions enabled. Videos will include the title.",
+            reply_parameters={"message_id": update.message.message_id},
+        )
+    else:
+        current = _user_caption_prefs.get(user_id, False)
+        state = "ON (removing captions)" if current else "OFF (captions shown)"
+        await update.message.reply_text(
+            f"Current caption setting: {state}\n\n"
+            "Usage:\n"
+            "/caption on - Remove video captions\n"
+            "/caption off - Show video captions",
+            reply_parameters={"message_id": update.message.message_id},
+        )
 
 
 async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -175,7 +211,7 @@ async def _download_and_send(
         with open(downloaded, "rb") as f:
             await update.message.reply_video(
                 video=f,
-                caption=title[:1024],
+                caption="" if _user_caption_prefs.get(update.message.from_user.id, False) else title[:1024],
                 reply_parameters=reply_params,
             )
 
