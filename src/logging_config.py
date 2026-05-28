@@ -22,6 +22,35 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_data)
 
 
+def log_request(
+    url: str,
+    platform: str,
+    content_type: str,
+    user: object,
+    chat: object,
+    media_info: dict,
+) -> None:
+    """Log a media request with structured data."""
+    log_data = {
+        "event": "media_request",
+        "url": url,
+        "platform": platform,
+        "content_type": content_type,
+        "user": {
+            "id": user.id,
+            "name": getattr(user, "first_name", None),
+            "username": getattr(user, "username", None),
+        },
+        "chat": {
+            "id": chat.id,
+            "name": getattr(chat, "title", None),
+            "type": getattr(chat, "type", None),
+        },
+        "media": media_info,
+    }
+    logging.info(json.dumps(log_data))
+
+
 # Track if setup_logging has been called
 _initialized = False
 

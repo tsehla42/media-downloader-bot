@@ -1,6 +1,6 @@
 import os
 import tempfile
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 def test_config_default_log_output():
@@ -172,3 +172,90 @@ def test_setup_logging_idempotent():
         setup_logging()
         # Should not double handlers
         assert len(logging.getLogger().handlers) == handler_count
+
+
+def test_log_request_basic():
+    """log_request outputs JSON with all required fields."""
+    from logging_config import log_request
+
+    user = MagicMock()
+    user.id = 123456
+    user.first_name = "Test"
+    user.username = "testuser"
+
+    chat = MagicMock()
+    chat.id = -100789
+    chat.title = "Test Group"
+    chat.type = "group"
+
+    with patch("logging_config.logging") as mock_logging:
+        log_request(
+            url="https://youtube.com/watch?v=abc",
+            platform="youtube",
+            content_type="video",
+            user=user,
+            chat=chat,
+            media_info={
+                "duration_seconds": 120,
+                "file_size_mb": 45.2,
+                "image_count": None,
+                "quality": "720p",
+            },
+        )
+
+        mock_logging.info.assert_called_once()
+        call_args = mock_logging.info.call_args
+        log_data = json.loads(call_args[0][0])
+
+        assert log_data["event"] == "media_request"
+        assert log_data["url"] == "https://youtube.com/watch?v=abc"
+        assert log_data["platform"] == "youtube"
+        assert log_data["content_type"] == "video"
+        assert log_data["user"]["id"] == 123456
+        assert log_data["user"]["name"] == "Test"
+        assert log_data["user"]["username"] == "testuser"
+        assert log_data["chat"]["id"] == -100789
+        assert log_data["chat"]["name"] == "Test Group"
+        assert log_data["chat"]["type"] == "group"
+        assert log_data["media"]["duration_seconds"] == 120
+        assert log_data["media"]["file_size_mb"] == 45.2
+        assert log_data["media"]["image_count"] is None
+        assert log_data["media"]["quality"] == "720p"
+
+
+def test_log_request_null_fields():
+    """log_request handles null user/chat fields."""
+    from logging_config import log_request
+
+    user = MagicMock()
+    user.id = 123
+    user.first_name = None
+    user.username = None
+
+    chat = MagicMock()
+    chat.id = 123
+    chat.title = None
+    chat.type = "private"
+
+    with patch("logging_config.logging") as mock_logging:
+        log_request(
+            url="https://tiktok.com/video/123",
+            platform="tiktok",
+            content_type="image",
+            user=user,
+            chat=chat,
+            media_info={
+                "duration_seconds": None,
+                "file_size_mb": 3.2,
+                "image_count": 1,
+                "quality": None,
+            },
+        )
+
+        call_args = mock_logging.info.call_args
+        log_data = json.loads(call_args[0][0])
+
+        assert log_data["user"]["name"] is None
+        assert log_data["user"]["username"] is None
+        assert log_data["chat"]["name"] is None
+        assert log_data["media"]["image_count"] == 1
