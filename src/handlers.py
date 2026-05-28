@@ -165,7 +165,6 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         with open(downloaded, "rb") as f:
             await update.message.reply_video(video=f, caption=title[:1024])
-        await status_msg.edit_text("Sent!")
 
         log_request(
             url=url,
