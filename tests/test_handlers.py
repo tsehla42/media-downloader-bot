@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from handlers import start_command, help_command, handle_url, _download_and_send
+from handlers import start_command, help_command, handle_url, _download_and_send, caption_command
 
 @pytest.fixture
 def update():
@@ -36,6 +36,14 @@ async def test_help_command(update, context):
     assert "YouTube" in text
     assert "TikTok" in text
     assert "Instagram" in text
+
+@pytest.mark.asyncio
+async def test_caption_command_toggle(update, context):
+    update.message.text = "/caption on"
+    await caption_command(update, context)
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "Captions removed" in text
 
 @pytest.mark.asyncio
 async def test_handle_url_processes_all_urls(update, context):

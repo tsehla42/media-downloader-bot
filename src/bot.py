@@ -9,7 +9,7 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN
-from handlers import start_command, help_command, handle_url
+from handlers import start_command, help_command, handle_url, caption_command
 from inline import inline_query
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ def main() -> None:
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("caption", caption_command))
     app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
 
