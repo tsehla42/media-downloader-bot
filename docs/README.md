@@ -14,7 +14,8 @@ Sharing media from these platforms in Telegram is annoying - links don't always 
 2. Bot detects the platform (YouTube/TikTok/Instagram)
 3. yt-dlp downloads the media via subprocess
 4. Bot uploads the file to Telegram
-5. Temp files are cleaned up
+5. Request is logged as structured JSON
+6. Temp files are cleaned up
 
 ## Docs
 
@@ -23,6 +24,8 @@ Sharing media from these platforms in Telegram is annoying - links don't always 
 | [Architecture](architecture.md) | Module responsibilities, data flow, design decisions |
 | [Design Spec](superpowers/specs/2026-05-27-media-downloader-bot-design.md) | Original requirements and design |
 | [Implementation Plan](superpowers/plans/2026-05-27-media-downloader-bot.md) | Step-by-step build plan with TDD |
+| [Structured Logging Spec](superpowers/specs/2026-05-28-structured-logging-design.md) | Logging system design and schema |
+| [Structured Logging Plan](superpowers/plans/2026-05-28-structured-logging.md) | Logging implementation plan |
 
 ## Quick Start
 

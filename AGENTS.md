@@ -18,11 +18,13 @@ media-downloader-bot/
 │   ├── downloader.py   # yt-dlp subprocess wrapper (metadata, download, audio, images)
 │   ├── handlers.py     # Telegram handlers: /start, /help, /audio, URL message handling
 │   ├── inline.py       # Inline query handler for @botname usage
+│   ├── logging_config.py # Structured JSON logging (JSONFormatter, log_request, log_error)
 │   └── utils.py        # Platform detection, URL validation, file cleanup
 ├── tests/              # Test suite (imports from src/ via conftest.py)
 │   ├── test_utils.py
 │   ├── test_downloader.py
-│   └── test_handlers.py
+│   ├── test_handlers.py
+│   └── test_logging.py # Logging infrastructure tests
 ├── docs/
 │   ├── README.md       # Project overview
 │   ├── architecture.md # Module responsibilities and data flow
@@ -39,19 +41,22 @@ media-downloader-bot/
 
 | Module | Depends on | What it does |
 |---|---|---|
-| `src/config.py` | .env file | Loads BOT_TOKEN, ALLOWED_USER_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE |
+| `src/config.py` | .env file | Loads BOT_TOKEN, ALLOWED_USER_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, LOG_OUTPUT, LOG_DIR |
 | `src/utils.py` | nothing | Platform detection from URL, URL validation, file cleanup |
 | `src/downloader.py` | nothing | yt-dlp subprocess calls: get_metadata, download_video, download_audio, download_images |
-| `src/handlers.py` | config, utils, downloader | Telegram message handlers, orchestrates download flow |
+| `src/logging_config.py` | config | Structured JSON logging: JSONFormatter, setup_logging, log_request, log_error |
+| `src/handlers.py` | config, utils, downloader, logging_config | Telegram message handlers, orchestrates download flow, logs requests |
 | `src/inline.py` | config, utils, downloader | Inline query handler, returns metadata as inline results |
-| `src/bot.py` | config, handlers, inline | Entry point, wires everything together |
+| `src/bot.py` | config, handlers, inline, logging_config | Entry point, wires everything together, initializes logging |
 
 ## Data Flow
 
 1. User sends URL -> `handlers.py` detects platform via `utils.detect_platform()`
 2. `handlers.py` calls `downloader.get_metadata()` to fetch title/thumbnail
 3. `handlers.py` calls `downloader.download_video()` or `download_audio()` or `download_images()`
-4. `handlers.py` sends file to Telegram, cleans up temp files
+4. `handlers.py` calls `logging_config.log_request()` to log the request
+5. `handlers.py` sends file to Telegram, cleans up temp files
+6. On error: `handlers.py` calls `logging_config.log_error()` to log the failure
 
 ## Key Design Decisions
 
@@ -59,6 +64,7 @@ media-downloader-bot/
 - **Stateless bot** - No database. Temp files cleaned after upload.
 - **Auto best quality** - Downloads best quality under 50MB Telegram limit, retries with worst on failure.
 - **User allowlist** - ALLOWED_USER_IDS in .env. Empty = allow all.
+- **Structured logging** - JSON logs for easy querying. stdout for dev, rotating files for prod. Zero external dependencies.
 
 ## Running Tests
 
@@ -66,7 +72,7 @@ media-downloader-bot/
 python -m pytest tests/ -v
 ```
 
-All 19 tests use mocked subprocess calls - no real downloads needed.
+All 34 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 
@@ -76,9 +82,13 @@ All 19 tests use mocked subprocess calls - no real downloads needed.
 
 **Change download behavior:** Edit `src/downloader.py`. All yt-dlp calls go through `subprocess.run()`.
 
+**Add logging to a handler:** Import `log_request` and `log_error` from `logging_config`, call after download completes or on exception.
+
 ## Docs Index
 
 - [Project Overview](docs/README.md) - Quick summary of what/why
 - [Architecture](docs/architecture.md) - Detailed module responsibilities and data flow
 - [Design Spec](docs/superpowers/specs/2026-05-27-media-downloader-bot-design.md) - Original design document
 - [Implementation Plan](docs/superpowers/plans/2026-05-27-media-downloader-bot.md) - Step-by-step build plan
+- [Structured Logging Spec](docs/superpowers/specs/2026-05-28-structured-logging-design.md) - Logging system design
+- [Structured Logging Plan](docs/superpowers/plans/2026-05-28-structured-logging.md) - Logging implementation plan
