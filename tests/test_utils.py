@@ -21,6 +21,15 @@ def test_detect_instagram_reel():
 def test_detect_instagram_post():
     assert detect_platform("https://www.instagram.com/p/abc123/") == "instagram"
 
+def test_detect_tiktok_vt():
+    assert detect_platform("https://vt.tiktok.com/ZSxCuvru2/") == "tiktok"
+
+def test_detect_tiktok_m():
+    assert detect_platform("https://m.tiktok.com/share/live/123") == "tiktok"
+
+def test_detect_douyin():
+    assert detect_platform("https://www.douyin.com/video/6961737553342991651") == "tiktok"
+
 def test_detect_unknown():
     assert detect_platform("https://example.com/video") is None
 

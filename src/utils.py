@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 SUPPORTED_PLATFORMS = {
     "youtube": ["youtube.com", "youtu.be"],
-    "tiktok": ["tiktok.com", "vm.tiktok.com"],
+    "tiktok": ["tiktok.com", "vm.tiktok.com", "vt.tiktok.com", "m.tiktok.com", "douyin.com"],
     "instagram": ["instagram.com"],
 }
 
