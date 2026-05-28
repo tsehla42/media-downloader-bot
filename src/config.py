@@ -10,3 +10,6 @@ ALLOWED_USER_IDS = [
 DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", "/tmp/bot-downloads")
 MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", "50"))
 MAX_CONCURRENT_DOWNLOADS = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "3"))
+
+LOG_OUTPUT = os.environ.get("LOG_OUTPUT", "stdout")
+LOG_DIR = os.environ.get("LOG_DIR", "logs")
