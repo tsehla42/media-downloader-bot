@@ -129,8 +129,22 @@ def setup_logging() -> None:
         stream_handler.setFormatter(formatter)
         root.addHandler(stream_handler)
 
-        # Also write to .dev.jsonl for local development
-        dev_log_path = os.path.join(os.getcwd(), ".dev.jsonl")
-        dev_handler = logging.FileHandler(dev_log_path, encoding="utf-8")
-        dev_handler.setFormatter(formatter)
-        root.addHandler(dev_handler)
+        # Also write to dev log files (same structure as prod)
+        os.makedirs(LOG_DIR, exist_ok=True)
+
+        dev_request_handler = RotatingFileHandler(
+            os.path.join(LOG_DIR, "requests.dev.jsonl"),
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+        )
+        dev_request_handler.setFormatter(formatter)
+        root.addHandler(dev_request_handler)
+
+        dev_error_handler = RotatingFileHandler(
+            os.path.join(LOG_DIR, "errors.dev.jsonl"),
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+        )
+        dev_error_handler.setLevel(logging.ERROR)
+        dev_error_handler.setFormatter(formatter)
+        root.addHandler(dev_error_handler)

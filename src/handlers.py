@@ -26,7 +26,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(
         "Media Downloader Bot\n\n"
         "Send me a YouTube, TikTok, or Instagram URL and I'll download it for you.\n"
-        "You can send multiple URLs in one message.\n"
+        "You can send multiple URLs in one message or send them one by one.\n"
         f"Max file size: {MAX_FILE_SIZE}MB\n\n"
         "Commands:\n"
         "/help - Show supported platforms and commands\n"
@@ -63,25 +63,25 @@ async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = update.message.from_user.id
 
     if text in ("on", "1", "true", "yes"):
-        _user_caption_prefs[user_id] = True
-        await update.message.reply_text(
-            "Captions removed. Videos will be sent without description.",
-            reply_parameters={"message_id": update.message.message_id},
-        )
-    elif text in ("off", "0", "false", "no"):
         _user_caption_prefs[user_id] = False
         await update.message.reply_text(
             "Captions enabled. Videos will include the title.",
             reply_parameters={"message_id": update.message.message_id},
         )
+    elif text in ("off", "0", "false", "no"):
+        _user_caption_prefs[user_id] = True
+        await update.message.reply_text(
+            "Captions removed. Videos will be sent without description.",
+            reply_parameters={"message_id": update.message.message_id},
+        )
     else:
         current = _user_caption_prefs.get(user_id, False)
-        state = "ON (removing captions)" if current else "OFF (captions shown)"
+        state = "OFF (no captions)" if current else "ON (captions shown)"
         await update.message.reply_text(
             f"Current caption setting: {state}\n\n"
             "Usage:\n"
-            "/caption on - Remove video captions\n"
-            "/caption off - Show video captions",
+            "/caption on - Show video captions (default)\n"
+            "/caption off - Remove video captions",
             reply_parameters={"message_id": update.message.message_id},
         )
 
