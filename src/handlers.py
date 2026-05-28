@@ -6,6 +6,7 @@ from telegram.ext import ContextTypes
 from config import DOWNLOAD_DIR, MAX_FILE_SIZE, ALLOWED_USER_IDS
 from utils import detect_platform, is_valid_url, extract_urls, cleanup_file
 from downloader import get_metadata, download_video, download_audio, download_images
+from logging_config import log_request, log_error
 
 
 def _is_allowed(user_id: int) -> bool:
@@ -128,6 +129,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     tmp_id = uuid.uuid4().hex[:8]
     output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
+    base = os.path.join(DOWNLOAD_DIR, tmp_id)
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
     try:
@@ -148,7 +150,6 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await status_msg.edit_text("Download failed. Try again later.")
             return
 
-        base = os.path.join(DOWNLOAD_DIR, tmp_id)
         downloaded = None
         for ext in ["mp4", "webm", "mkv", "mp3", "m4a"]:
             candidate = f"{base}.{ext}"
@@ -163,7 +164,28 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         with open(downloaded, "rb") as f:
             await update.message.reply_video(video=f, caption=title[:1024])
         await status_msg.edit_text("Sent!")
+
+        log_request(
+            url=url,
+            platform=platform,
+            content_type="video",
+            user=update.message.from_user,
+            chat=update.message.chat,
+            media_info={
+                "duration_seconds": metadata.get("duration") if metadata else None,
+                "file_size_mb": round(os.path.getsize(downloaded) / (1024 * 1024), 2) if downloaded else 0,
+                "image_count": None,
+                "quality": metadata.get("format") if metadata else None,
+            },
+        )
     except Exception as e:
+        log_error(
+            url=url,
+            error=str(e),
+            platform=platform,
+            user=update.message.from_user,
+            chat=update.message.chat,
+        )
         await status_msg.edit_text(f"Error: {e}")
     finally:
         for ext in ["mp4", "webm", "mkv", "mp3", "m4a"]:
