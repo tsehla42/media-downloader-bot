@@ -48,7 +48,7 @@ def log_request(
         },
         "media": media_info,
     }
-    logging.info(json.dumps(log_data))
+    logging.info("media_request", extra={"extra_data": log_data})
 
 
 # Track if setup_logging has been called

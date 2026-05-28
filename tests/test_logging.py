@@ -205,7 +205,8 @@ def test_log_request_basic():
 
         mock_logging.info.assert_called_once()
         call_args = mock_logging.info.call_args
-        log_data = json.loads(call_args[0][0])
+        assert call_args[0][0] == "media_request"
+        log_data = call_args[1]["extra"]["extra_data"]
 
         assert log_data["event"] == "media_request"
         assert log_data["url"] == "https://youtube.com/watch?v=abc"
@@ -253,7 +254,8 @@ def test_log_request_null_fields():
         )
 
         call_args = mock_logging.info.call_args
-        log_data = json.loads(call_args[0][0])
+        assert call_args[0][0] == "media_request"
+        log_data = call_args[1]["extra"]["extra_data"]
 
         assert log_data["user"]["name"] is None
         assert log_data["user"]["username"] is None
