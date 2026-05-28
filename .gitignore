@@ -32,3 +32,9 @@ bot-downloads/
 *.swp
 *.swo
 *~
+
+docs/superpowers
+
+# Logs
+logs/
+*.jsonl
