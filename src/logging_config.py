@@ -128,3 +128,9 @@ def setup_logging() -> None:
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(formatter)
         root.addHandler(stream_handler)
+
+        # Also write to .dev.jsonl for local development
+        dev_log_path = os.path.join(os.getcwd(), ".dev.jsonl")
+        dev_handler = logging.FileHandler(dev_log_path, encoding="utf-8")
+        dev_handler.setFormatter(formatter)
+        root.addHandler(dev_handler)
