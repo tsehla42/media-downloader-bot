@@ -1,4 +1,5 @@
 import logging
+from logging_config import setup_logging
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -11,15 +12,12 @@ from config import BOT_TOKEN
 from handlers import start_command, help_command, handle_url
 from inline import inline_query
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
 logger = logging.getLogger(__name__)
 
 
 def main() -> None:
     """Start the bot."""
+    setup_logging()
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
