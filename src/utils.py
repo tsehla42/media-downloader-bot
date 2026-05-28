@@ -28,7 +28,7 @@ def detect_platform(url: str) -> str | None:
 
 def is_valid_url(text: str) -> bool:
     """Check if text contains a valid HTTP(S) URL."""
-    return URL_PATTERN.match(text.strip()) is not None
+    return URL_PATTERN.search(text.strip()) is not None
 
 
 def extract_urls(text: str) -> list[str]:

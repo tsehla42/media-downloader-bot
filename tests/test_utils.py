@@ -37,3 +37,7 @@ def test_is_valid_url():
     assert is_valid_url("https://youtube.com/watch?v=123") is True
     assert is_valid_url("not a url") is False
     assert is_valid_url("ftp://files.example.com") is False
+
+def test_is_valid_url_embedded():
+    assert is_valid_url("Check out https://youtube.com/watch?v=123") is True
+    assert is_valid_url("https://tiktok.com/a and https://tiktok.com/b") is True

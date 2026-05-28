@@ -25,11 +25,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     bot_username = context.bot_data.get("bot_username", "botname")
     await update.message.reply_text(
         "Media Downloader Bot\n\n"
-        "Send me a YouTube, TikTok, or Instagram URL and I'll download it for you.\n\n"
+        "Send me a YouTube, TikTok, or Instagram URL and I'll download it for you.\n"
+        "You can send multiple URLs in one message.\n"
+        f"Max file size: {MAX_FILE_SIZE}MB\n\n"
         "Commands:\n"
-        "/help - Show supported platforms\n"
-        "/audio <url> - Download as audio (MP3)\n\n"
-        f"You can also use inline mode: @{bot_username} <url>"
+        "/help - Show supported platforms and commands\n"
+        "/audio <url> - Download as audio (MP3)\n"
+        "/caption on|off - Toggle video captions\n\n"
+        f"Inline mode: @{bot_username} <url>"
     )
 
 
@@ -41,10 +44,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "- YouTube (videos, shorts)\n"
         "- TikTok (videos, no watermark)\n"
         "- Instagram (reels, posts, carousels)\n\n"
-        "Usage:\n"
-        "1. Send a URL directly\n"
-        "2. Use /audio <url> for audio extraction\n"
-        f"3. Use inline mode: @{bot_username} <url>"
+        "Commands:\n"
+        "/audio <url> - Download as audio (MP3)\n"
+        "/caption on - Remove video captions\n"
+        "/caption off - Show video captions (default)\n\n"
+        f"Max file size: {MAX_FILE_SIZE}MB\n"
+        "You can send multiple URLs in one message.\n\n"
+        f"Inline mode: @{bot_username} <url>"
     )
 
 
