@@ -15,10 +15,17 @@ from inline import inline_query
 logger = logging.getLogger(__name__)
 
 
+async def post_init(application: Application) -> None:
+    """Fetch bot username after application is initialized."""
+    me = await application.bot.get_me()
+    application.bot_data["bot_username"] = me.username
+    logger.info("Bot username: %s", me.username)
+
+
 def main() -> None:
     """Start the bot."""
     setup_logging()
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
