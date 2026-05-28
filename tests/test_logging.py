@@ -28,3 +28,12 @@ def test_config_custom_log_output():
         import config
         importlib.reload(config)
         assert config.LOG_OUTPUT == "file"
+
+
+def test_config_custom_log_dir():
+    """LOG_DIR can be set to a custom path."""
+    with patch.dict(os.environ, {"LOG_DIR": "/var/log/bot"}):
+        import importlib
+        import config
+        importlib.reload(config)
+        assert config.LOG_DIR == "/var/log/bot"
