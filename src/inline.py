@@ -17,16 +17,32 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Handle inline queries like @botname <url>."""
     query = update.inline_query
     if not _is_allowed(query.from_user.id):
+        await query.answer(results=[], cache_time=0)
         return
 
     text = query.query.strip()
+    if not text:
+        await query.answer(results=[], cache_time=0)
+        return
+
     urls = extract_urls(text)
     if not urls:
+        await query.answer(results=[], cache_time=0)
         return
 
     url = urls[0]
     platform = detect_platform(url)
     if not platform:
+        results = [
+            InlineQueryResultArticle(
+                id=uuid.uuid4().hex,
+                title="Unsupported platform",
+                input_message_content=InputTextMessageContent(
+                    message_text=f"Unsupported platform for: {url}"
+                ),
+            )
+        ]
+        await query.answer(results=results, cache_time=0)
         return
 
     metadata = get_metadata(url)
