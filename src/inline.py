@@ -1,5 +1,10 @@
 import uuid
-from telegram import Update, InlineQueryResultArticle, InputTextMessageContent
+from telegram import (
+    Update,
+    InlineQueryResultArticle,
+    InlineQueryResultVideo,
+    InputTextMessageContent,
+)
 from telegram.ext import ContextTypes
 
 from config import ALLOWED_USER_IDS
@@ -11,6 +16,20 @@ def _is_allowed(user_id: int) -> bool:
     if not ALLOWED_USER_IDS:
         return True
     return user_id in ALLOWED_USER_IDS
+
+
+def _get_video_url(metadata: dict) -> str | None:
+    """Extract a direct video URL from yt-dlp metadata."""
+    # Try the top-level url field first
+    url = metadata.get("url")
+    if url:
+        return url
+    # Try the best format
+    formats = metadata.get("formats", [])
+    for fmt in formats:
+        if fmt.get("url"):
+            return fmt["url"]
+    return None
 
 
 async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -59,16 +78,33 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     else:
         title = metadata.get("title", "Media")
         thumbnail = metadata.get("thumbnail", "")
-        results = [
-            InlineQueryResultArticle(
-                id=uuid.uuid4().hex,
-                title=title[:100],
-                description=f"Download from {platform}",
-                thumbnail_url=thumbnail if thumbnail else None,
-                input_message_content=InputTextMessageContent(
-                    message_text=url
-                ),
-            )
-        ]
+        video_url = _get_video_url(metadata)
+
+        if video_url:
+            # Send video directly via inline mode
+            results = [
+                InlineQueryResultVideo(
+                    id=uuid.uuid4().hex,
+                    title=title[:100],
+                    video_url=video_url,
+                    mime_type="video/mp4",
+                    thumb_url=thumbnail if thumbnail else "",
+                    caption=title[:1024],
+                    description=f"Download from {platform}",
+                )
+            ]
+        else:
+            # Fallback to article with link
+            results = [
+                InlineQueryResultArticle(
+                    id=uuid.uuid4().hex,
+                    title=title[:100],
+                    description=f"Download from {platform}",
+                    thumbnail_url=thumbnail if thumbnail else None,
+                    input_message_content=InputTextMessageContent(
+                        message_text=url
+                    ),
+                )
+            ]
 
     await query.answer(results=results, cache_time=300)
