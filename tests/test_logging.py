@@ -261,3 +261,39 @@ def test_log_request_null_fields():
         assert log_data["user"]["username"] is None
         assert log_data["chat"]["name"] is None
         assert log_data["media"]["image_count"] == 1
+
+
+def test_log_error():
+    """log_error outputs JSON with error details."""
+    from logging_config import log_error
+
+    user = MagicMock()
+    user.id = 123
+    user.first_name = "Test"
+    user.username = "test"
+
+    chat = MagicMock()
+    chat.id = -100
+    chat.title = "Group"
+    chat.type = "group"
+
+    with patch("logging_config.logging") as mock_logging:
+        log_error(
+            url="https://youtube.com/watch?v=abc",
+            error="yt-dlp timeout",
+            platform="youtube",
+            user=user,
+            chat=chat,
+        )
+
+        mock_logging.error.assert_called_once()
+        call_args = mock_logging.error.call_args
+        assert call_args[0][0] == "download_failed"
+        log_data = call_args[1]["extra"]["extra_data"]
+
+        assert log_data["event"] == "download_failed"
+        assert log_data["error"] == "yt-dlp timeout"
+        assert log_data["url"] == "https://youtube.com/watch?v=abc"
+        assert log_data["platform"] == "youtube"
+        assert log_data["user"]["id"] == 123
+        assert log_data["chat"]["id"] == -100
