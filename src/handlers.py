@@ -103,7 +103,6 @@ async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
 
-@with_request_logging
 async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /audio command - download as MP3."""
     reply_params = {"message_id": update.message.message_id}
