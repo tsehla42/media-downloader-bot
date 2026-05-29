@@ -335,6 +335,33 @@ def test_log_request_completed_basic():
         assert log_data["file_size_mb"] == 45.2
 
 
+def test_log_request_failed_basic():
+    """log_request_failed outputs JSON with all required fields."""
+    from logging_config import log_request_failed
+
+    with patch("logging_config.logging") as mock_logging:
+        log_request_failed(
+            request_id="a1b2c3d4",
+            url="https://youtube.com/watch?v=abc",
+            platform="youtube",
+            error="yt-dlp timeout",
+            error_type="TimeoutError",
+        )
+
+        mock_logging.error.assert_called_once()
+        call_args = mock_logging.error.call_args
+        assert call_args[0][0] == "request_failed"
+        log_data = call_args[1]["extra"]["extra_data"]
+
+        assert log_data["event"] == "request_failed"
+        assert log_data["message"] == "Request failed: yt-dlp timeout"
+        assert log_data["request_id"] == "a1b2c3d4"
+        assert log_data["url"] == "https://youtube.com/watch?v=abc"
+        assert log_data["platform"] == "youtube"
+        assert log_data["error"] == "yt-dlp timeout"
+        assert log_data["error_type"] == "TimeoutError"
+
+
 def test_log_error():
     """log_error outputs JSON with error details."""
     from logging_config import log_error

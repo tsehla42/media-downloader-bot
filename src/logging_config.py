@@ -106,6 +106,26 @@ def log_request_completed(
     logging.info("request_completed", extra={"extra_data": log_data})
 
 
+def log_request_failed(
+    request_id: str,
+    url: str,
+    platform: str,
+    error: str,
+    error_type: str,
+) -> None:
+    """Log when a request fails with an exception."""
+    log_data = {
+        "event": "request_failed",
+        "message": f"Request failed: {error}",
+        "request_id": request_id,
+        "url": url,
+        "platform": platform,
+        "error": error,
+        "error_type": error_type,
+    }
+    logging.error("request_failed", extra={"extra_data": log_data})
+
+
 def log_error(
     url: str,
     error: str,
