@@ -304,6 +304,37 @@ def test_log_request_received_basic():
         assert log_data["chat"]["type"] == "group"
 
 
+def test_log_request_completed_basic():
+    """log_request_completed outputs JSON with all required fields."""
+    from logging_config import log_request_completed
+
+    with patch("logging_config.logging") as mock_logging:
+        log_request_completed(
+            request_id="a1b2c3d4",
+            url="https://youtube.com/watch?v=abc",
+            platform="youtube",
+            duration_ms=15000,
+            success=True,
+            content_type="video",
+            file_size_mb=45.2,
+        )
+
+        mock_logging.info.assert_called_once()
+        call_args = mock_logging.info.call_args
+        assert call_args[0][0] == "request_completed"
+        log_data = call_args[1]["extra"]["extra_data"]
+
+        assert log_data["event"] == "request_completed"
+        assert log_data["message"] == "Request completed"
+        assert log_data["request_id"] == "a1b2c3d4"
+        assert log_data["url"] == "https://youtube.com/watch?v=abc"
+        assert log_data["platform"] == "youtube"
+        assert log_data["duration_ms"] == 15000
+        assert log_data["success"] is True
+        assert log_data["content_type"] == "video"
+        assert log_data["file_size_mb"] == 45.2
+
+
 def test_log_error():
     """log_error outputs JSON with error details."""
     from logging_config import log_error

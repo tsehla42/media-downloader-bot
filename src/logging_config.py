@@ -79,6 +79,33 @@ def log_request_received(
     logging.info("request_received", extra={"extra_data": log_data})
 
 
+def log_request_completed(
+    request_id: str,
+    url: str,
+    platform: str,
+    duration_ms: int,
+    success: bool,
+    content_type: str | None = None,
+    file_size_mb: float | None = None,
+    error: str | None = None,
+) -> None:
+    """Log when a request completes (success or expected failure)."""
+    log_data = {
+        "event": "request_completed",
+        "message": "Request completed",
+        "request_id": request_id,
+        "url": url,
+        "platform": platform,
+        "duration_ms": duration_ms,
+        "success": success,
+        "content_type": content_type,
+        "file_size_mb": file_size_mb,
+    }
+    if error:
+        log_data["error"] = error
+    logging.info("request_completed", extra={"extra_data": log_data})
+
+
 def log_error(
     url: str,
     error: str,
