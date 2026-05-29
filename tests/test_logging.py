@@ -2,6 +2,8 @@ import os
 import tempfile
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 def test_config_default_log_output():
     """LOG_OUTPUT defaults to 'stdout'."""
@@ -396,3 +398,109 @@ def test_log_error():
         assert log_data["platform"] == "youtube"
         assert log_data["user"]["id"] == 123
         assert log_data["chat"]["id"] == -100
+
+
+def test_decorator_generates_request_id():
+    """Decorator generates UUID and stores in context.user_data."""
+    from logging_config import with_request_logging
+
+    mock_context = MagicMock()
+    mock_context.user_data = {}
+    mock_update = MagicMock()
+
+    @with_request_logging
+    async def dummy_handler(update, context):
+        return "success"
+
+    with patch("logging_config.logging"):
+        import asyncio
+        result = asyncio.run(dummy_handler(mock_update, mock_context))
+
+    assert "request_id" in mock_context.user_data
+    assert len(mock_context.user_data["request_id"]) == 8
+    assert result == "success"
+
+
+def test_decorator_logs_request_received():
+    """Decorator calls log_request_received at handler start."""
+    from logging_config import with_request_logging
+
+    mock_context = MagicMock()
+    mock_context.user_data = {}
+    mock_update = MagicMock()
+
+    @with_request_logging
+    async def dummy_handler(update, context):
+        return "success"
+
+    with patch("logging_config.log_request_received") as mock_received:
+        import asyncio
+        asyncio.run(dummy_handler(mock_update, mock_context))
+
+    mock_received.assert_called_once()
+    call_args = mock_received.call_args
+    assert call_args[1]["request_id"] == mock_context.user_data["request_id"]
+
+
+def test_decorator_logs_request_completed():
+    """Decorator calls log_request_completed on success."""
+    from logging_config import with_request_logging
+
+    mock_context = MagicMock()
+    mock_context.user_data = {}
+    mock_update = MagicMock()
+
+    @with_request_logging
+    async def dummy_handler(update, context):
+        return "success"
+
+    with patch("logging_config.log_request_completed") as mock_completed:
+        import asyncio
+        asyncio.run(dummy_handler(mock_update, mock_context))
+
+    mock_completed.assert_called_once()
+    call_args = mock_completed.call_args
+    assert call_args[1]["request_id"] == mock_context.user_data["request_id"]
+    assert call_args[1]["success"] is True
+
+
+def test_decorator_logs_request_failed():
+    """Decorator calls log_request_failed on exception."""
+    from logging_config import with_request_logging
+
+    mock_context = MagicMock()
+    mock_context.user_data = {}
+    mock_update = MagicMock()
+
+    @with_request_logging
+    async def dummy_handler(update, context):
+        raise ValueError("test error")
+
+    with patch("logging_config.log_request_failed") as mock_failed:
+        import asyncio
+        with pytest.raises(ValueError, match="test error"):
+            asyncio.run(dummy_handler(mock_update, mock_context))
+
+    mock_failed.assert_called_once()
+    call_args = mock_failed.call_args
+    assert call_args[1]["request_id"] == mock_context.user_data["request_id"]
+    assert call_args[1]["error"] == "test error"
+    assert call_args[1]["error_type"] == "ValueError"
+
+
+def test_decorator_reraises_exception():
+    """Decorator re-raises exception after logging."""
+    from logging_config import with_request_logging
+
+    mock_context = MagicMock()
+    mock_context.user_data = {}
+    mock_update = MagicMock()
+
+    @with_request_logging
+    async def dummy_handler(update, context):
+        raise RuntimeError("boom")
+
+    with patch("logging_config.log_request_failed"):
+        import asyncio
+        with pytest.raises(RuntimeError, match="boom"):
+            asyncio.run(dummy_handler(mock_update, mock_context))

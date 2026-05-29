@@ -1,6 +1,9 @@
+import functools
 import json
 import logging
 import os
+import time
+import uuid
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 
@@ -124,6 +127,53 @@ def log_request_failed(
         "error_type": error_type,
     }
     logging.error("request_failed", extra={"extra_data": log_data})
+
+
+def with_request_logging(handler):
+    """Decorator that adds request_received/completed/failed logging to handlers."""
+    @functools.wraps(handler)
+    async def wrapper(update, context):
+        request_id = uuid.uuid4().hex[:8]
+        context.user_data["request_id"] = request_id
+
+        # Extract user/chat from update
+        user = update.message.from_user if update.message else update.callback_query.from_user
+        chat = update.message.chat if update.message else update.callback_query.message.chat
+        url = getattr(update.message, 'text', '') or ''
+        platform = ""  # Platform unknown at handler start
+
+        log_request_received(
+            request_id=request_id,
+            url=url,
+            platform=platform,
+            user=user,
+            chat=chat,
+        )
+
+        start_time = time.time()
+
+        try:
+            result = await handler(update, context)
+            duration_ms = int((time.time() - start_time) * 1000)
+            log_request_completed(
+                request_id=request_id,
+                url=url,
+                platform=platform,
+                duration_ms=duration_ms,
+                success=True,
+            )
+            return result
+        except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            log_request_failed(
+                request_id=request_id,
+                url=url,
+                platform=platform,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            raise
+    return wrapper
 
 
 def log_error(
