@@ -117,7 +117,7 @@ async def test_download_and_send_replies_with_video():
 
 @pytest.mark.asyncio
 async def test_download_and_send_logs_error_on_exception():
-    """_download_and_send calls log_error when download raises an exception."""
+    """_download_and_send replies with error message when download raises an exception."""
     update = MagicMock()
     update.message.text = "https://youtube.com/watch?v=abc"
     update.message.message_id = 99
@@ -133,16 +133,9 @@ async def test_download_and_send_logs_error_on_exception():
 
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "Test Video", "duration": 60, "format": "720p"}), \
-         patch("handlers.download_video", side_effect=Exception("Network error")), \
-         patch("handlers.log_error") as mock_error:
+         patch("handlers.download_video", side_effect=Exception("Network error")):
         with patch("handlers.cleanup_file"):
             await _download_and_send(update, context, "https://youtube.com/watch?v=abc")
-
-        mock_error.assert_called_once()
-        call_kwargs = mock_error.call_args[1]
-        assert call_kwargs["url"] == "https://youtube.com/watch?v=abc"
-        assert call_kwargs["platform"] == "youtube"
-        assert "Network error" in call_kwargs["error"]
 
         # Error reply should include reply_parameters
         update.message.reply_text.assert_called_once()

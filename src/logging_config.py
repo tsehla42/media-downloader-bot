@@ -25,35 +25,6 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_data)
 
 
-def log_request(
-    url: str,
-    platform: str,
-    content_type: str,
-    user: object,
-    chat: object,
-    media_info: dict,
-) -> None:
-    """Log a media request with structured data."""
-    log_data = {
-        "event": "media_request",
-        "url": url,
-        "platform": platform,
-        "content_type": content_type,
-        "user": {
-            "id": user.id,
-            "name": getattr(user, "first_name", None),
-            "username": getattr(user, "username", None),
-        },
-        "chat": {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        },
-        "media": media_info,
-    }
-    logging.info("media_request", extra={"extra_data": log_data})
-
-
 def log_request_received(
     request_id: str,
     url: str,
@@ -174,33 +145,6 @@ def with_request_logging(handler):
             )
             raise
     return wrapper
-
-
-def log_error(
-    url: str,
-    error: str,
-    platform: str,
-    user: object,
-    chat: object,
-) -> None:
-    """Log an error with context."""
-    log_data = {
-        "event": "download_failed",
-        "url": url,
-        "error": error,
-        "platform": platform,
-        "user": {
-            "id": user.id,
-            "name": getattr(user, "first_name", None),
-            "username": getattr(user, "username", None),
-        },
-        "chat": {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        },
-    }
-    logging.error("download_failed", extra={"extra_data": log_data})
 
 
 # Track if setup_logging has been called

@@ -8,7 +8,7 @@ from telegram.ext import ContextTypes
 from config import DOWNLOAD_DIR, MAX_FILE_SIZE, ALLOWED_USER_IDS
 from utils import detect_platform, is_valid_url, extract_urls, cleanup_file
 from downloader import get_metadata, download_video, download_audio, download_images
-from logging_config import log_error, with_request_logging
+from logging_config import with_request_logging
 
 
 async def _start_typing(chat_id: int, bot) -> asyncio.Task:
@@ -241,13 +241,6 @@ async def _download_and_send(
                 reply_parameters=reply_params,
             )
     except Exception as e:
-        log_error(
-            url=url,
-            error=str(e),
-            platform=platform,
-            user=update.message.from_user,
-            chat=update.message.chat,
-        )
         await update.message.reply_text(
             f"Error: {e}",
             reply_parameters=reply_params,
