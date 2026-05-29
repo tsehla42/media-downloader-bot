@@ -196,8 +196,8 @@ async def test_download_and_send_metadata_failure():
 
 
 @pytest.mark.asyncio
-async def test_download_and_send_starts_typing():
-    """_download_and_send starts and cancels typing loop."""
+async def test_handle_url_starts_typing_immediately():
+    """handle_url starts typing immediately when message received."""
     update = MagicMock()
     update.message.text = "https://youtube.com/watch?v=abc"
     update.message.message_id = 99
@@ -228,9 +228,9 @@ async def test_download_and_send_starts_typing():
          patch("handlers.cleanup_file"), \
          patch("builtins.open", MagicMock()), \
          patch("handlers._start_typing", side_effect=fake_start_typing):
-        await _download_and_send(update, context, "https://youtube.com/watch?v=abc")
+        await handle_url(update, context)
 
-    # Verify typing action was sent
+    # Verify typing action was sent immediately
     context.bot.send_chat_action.assert_called()
     call_args = context.bot.send_chat_action.call_args
     assert call_args[1]["chat_id"] == -100
@@ -238,8 +238,8 @@ async def test_download_and_send_starts_typing():
 
 
 @pytest.mark.asyncio
-async def test_audio_command_starts_typing():
-    """audio_command starts and cancels typing loop."""
+async def test_handle_url_starts_typing_for_audio():
+    """handle_url starts typing for /audio command."""
     update = MagicMock()
     update.message.text = "/audio https://youtube.com/watch?v=abc"
     update.message.message_id = 42
@@ -262,11 +262,12 @@ async def test_audio_command_starts_typing():
          patch("handlers.cleanup_file"), \
          patch("builtins.open", MagicMock()), \
          patch("handlers._start_typing", side_effect=fake_start_typing):
-        await audio_command(update, context)
+        await handle_url(update, context)
 
     context.bot.send_chat_action.assert_called()
     call_args = context.bot.send_chat_action.call_args
     assert call_args[1]["chat_id"] == 123456
+    assert call_args[1]["action"] == ChatAction.TYPING
     assert call_args[1]["action"] == ChatAction.TYPING
 
 
