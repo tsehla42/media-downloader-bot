@@ -21,6 +21,7 @@ def context():
     ctx = MagicMock()
     ctx.bot_data = {"bot_username": "testbot"}
     ctx.bot.send_chat_action = AsyncMock()
+    ctx.user_data = {}
     return ctx
 
 @pytest.mark.asyncio

@@ -104,6 +104,10 @@ def with_request_logging(handler):
     """Decorator that adds request_received/completed/failed logging to handlers."""
     @functools.wraps(handler)
     async def wrapper(update, context):
+        # Skip logging for updates without message or callback_query
+        if not update.message and not update.callback_query:
+            return await handler(update, context)
+
         request_id = uuid.uuid4().hex[:8]
         context.user_data["request_id"] = request_id
 
