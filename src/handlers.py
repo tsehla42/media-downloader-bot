@@ -46,8 +46,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "- Instagram (reels, posts, carousels)\n\n"
         "Commands:\n"
         "/audio <url> - Download as audio (MP3)\n"
-        "/caption on - Remove video captions\n"
-        "/caption off - Show video captions (default)\n\n"
+        "/caption on - Show video captions\n"
+        "/caption off - Remove video captions (default)\n\n"
         f"Max file size: {MAX_FILE_SIZE}MB\n"
         "You can send multiple URLs in one message.\n\n"
         f"Inline mode: @{bot_username} <url>"
@@ -75,13 +75,13 @@ async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_parameters={"message_id": update.message.message_id},
         )
     else:
-        current = _user_caption_prefs.get(user_id, False)
+        current = _user_caption_prefs.get(user_id, True)
         state = "OFF (no captions)" if current else "ON (captions shown)"
         await update.message.reply_text(
             f"Current caption setting: {state}\n\n"
             "Usage:\n"
-            "/caption on - Show video captions (default)\n"
-            "/caption off - Remove video captions",
+            "/caption on - Show video captions\n"
+            "/caption off - Remove video captions (default)",
             reply_parameters={"message_id": update.message.message_id},
         )
 
@@ -217,7 +217,7 @@ async def _download_and_send(
         with open(downloaded, "rb") as f:
             await update.message.reply_video(
                 video=f,
-                caption="" if _user_caption_prefs.get(update.message.from_user.id, False) else title[:1024],
+                caption="" if _user_caption_prefs.get(update.message.from_user.id, True) else title[:1024],
                 reply_parameters=reply_params,
             )
 
