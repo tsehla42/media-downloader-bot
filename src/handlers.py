@@ -1,12 +1,26 @@
+import asyncio
 import os
 import uuid
 from telegram import Update, InputMediaPhoto
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from config import DOWNLOAD_DIR, MAX_FILE_SIZE, ALLOWED_USER_IDS
 from utils import detect_platform, is_valid_url, extract_urls, cleanup_file
 from downloader import get_metadata, download_video, download_audio, download_images
 from logging_config import log_request, log_error
+
+
+async def _start_typing(chat_id: int, bot) -> asyncio.Task:
+    """Start a loop that sends typing action every 4 seconds. Returns a task to cancel."""
+    async def _loop():
+        try:
+            while True:
+                await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            pass
+    return asyncio.create_task(_loop())
 
 
 # Per-user caption preferences: user_id -> bool (True = remove caption)
@@ -126,6 +140,7 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.mp3")
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+    typing_task = await _start_typing(update.message.chat.id, context.bot)
     try:
         success = download_audio(url, output_path)
         if success and os.path.isfile(output_path):
@@ -145,6 +160,7 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             reply_parameters=reply_params,
         )
     finally:
+        typing_task.cancel()
         cleanup_file(output_path)
 
 
@@ -153,31 +169,33 @@ async def _download_and_send(
 ) -> None:
     """Download and send a single URL."""
     reply_params = {"message_id": update.message.message_id}
-
-    platform = detect_platform(url)
-    if not platform:
-        await update.message.reply_text(
-            "Unsupported platform. I support YouTube, TikTok, and Instagram.",
-            reply_parameters=reply_params,
-        )
-        return
-
-    metadata = get_metadata(url)
-    if not metadata:
-        await update.message.reply_text(
-            "Could not fetch video info. The content may be private or the URL invalid.",
-            reply_parameters=reply_params,
-        )
-        return
-
-    title = metadata.get("title", "video")
-
-    tmp_id = uuid.uuid4().hex[:8]
-    output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
-    base = os.path.join(DOWNLOAD_DIR, tmp_id)
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    typing_task = await _start_typing(update.message.chat.id, context.bot)
+    base = None
 
     try:
+        platform = detect_platform(url)
+        if not platform:
+            await update.message.reply_text(
+                "Unsupported platform. I support YouTube, TikTok, and Instagram.",
+                reply_parameters=reply_params,
+            )
+            return
+
+        metadata = get_metadata(url)
+        if not metadata:
+            await update.message.reply_text(
+                "Could not fetch video info. The content may be private or the URL invalid.",
+                reply_parameters=reply_params,
+            )
+            return
+
+        title = metadata.get("title", "video")
+
+        tmp_id = uuid.uuid4().hex[:8]
+        output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
+        base = os.path.join(DOWNLOAD_DIR, tmp_id)
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
         if platform == "instagram" and metadata.get("extractor") == "instagram":
             images = download_images(url, os.path.join(DOWNLOAD_DIR, tmp_id))
             if images:
@@ -247,8 +265,10 @@ async def _download_and_send(
             reply_parameters=reply_params,
         )
     finally:
-        for ext in ["mp4", "webm", "mkv", "mp3", "m4a"]:
-            cleanup_file(f"{base}.{ext}")
+        typing_task.cancel()
+        if base:
+            for ext in ["mp4", "webm", "mkv", "mp3", "m4a"]:
+                cleanup_file(f"{base}.{ext}")
 
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
