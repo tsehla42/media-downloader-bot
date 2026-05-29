@@ -13,11 +13,14 @@ from logging_config import log_request, log_error
 
 async def _start_typing(chat_id: int, bot) -> asyncio.Task:
     """Start a loop that sends typing action every 4 seconds. Returns a task to cancel."""
+    # Send first typing action immediately so indicator appears right away
+    await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+
     async def _loop():
         try:
             while True:
-                await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
                 await asyncio.sleep(4)
+                await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
         except asyncio.CancelledError:
             pass
     return asyncio.create_task(_loop())
