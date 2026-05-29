@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from handlers import start_command, help_command, handle_url, _download_and_send, caption_command
+from telegram.constants import ChatAction
+from handlers import start_command, help_command, handle_url, _download_and_send, caption_command, audio_command
 
 @pytest.fixture
 def update():
@@ -192,6 +193,81 @@ async def test_download_and_send_metadata_failure():
         assert "Could not fetch video info" in text
         kwargs = update.message.reply_text.call_args[1]
         assert kwargs["reply_parameters"] == {"message_id": 42}
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_starts_typing():
+    """_download_and_send starts and cancels typing loop."""
+    update = MagicMock()
+    update.message.text = "https://youtube.com/watch?v=abc"
+    update.message.message_id = 99
+    update.message.from_user.id = 123
+    update.message.from_user.first_name = "Test"
+    update.message.from_user.username = "test"
+    update.message.chat.id = -100
+    update.message.chat.title = "Group"
+    update.message.chat.type = "group"
+    update.message.reply_video = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot.send_chat_action = AsyncMock()
+
+    mock_typing_task = MagicMock()
+
+    async def fake_start_typing(chat_id, bot):
+        await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+        return mock_typing_task
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={"title": "Test Video", "duration": 60, "format": "720p"}), \
+         patch("handlers.download_video", return_value=True), \
+         patch("handlers.log_request"), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=1024*1024), \
+         patch("handlers.cleanup_file"), \
+         patch("builtins.open", MagicMock()), \
+         patch("handlers._start_typing", side_effect=fake_start_typing):
+        await _download_and_send(update, context, "https://youtube.com/watch?v=abc")
+
+    # Verify typing action was sent
+    context.bot.send_chat_action.assert_called()
+    call_args = context.bot.send_chat_action.call_args
+    assert call_args[1]["chat_id"] == -100
+    assert call_args[1]["action"] == ChatAction.TYPING
+
+
+@pytest.mark.asyncio
+async def test_audio_command_starts_typing():
+    """audio_command starts and cancels typing loop."""
+    update = MagicMock()
+    update.message.text = "/audio https://youtube.com/watch?v=abc"
+    update.message.message_id = 42
+    update.message.from_user.id = 123456
+    update.message.chat.id = 123456
+    update.message.reply_audio = AsyncMock()
+
+    context = MagicMock()
+    context.bot.send_chat_action = AsyncMock()
+
+    mock_typing_task = MagicMock()
+
+    async def fake_start_typing(chat_id, bot):
+        await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+        return mock_typing_task
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.download_audio", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("handlers.cleanup_file"), \
+         patch("builtins.open", MagicMock()), \
+         patch("handlers._start_typing", side_effect=fake_start_typing):
+        await audio_command(update, context)
+
+    context.bot.send_chat_action.assert_called()
+    call_args = context.bot.send_chat_action.call_args
+    assert call_args[1]["chat_id"] == 123456
+    assert call_args[1]["action"] == ChatAction.TYPING
 
 
 @pytest.mark.asyncio

@@ -171,6 +171,7 @@ async def _download_and_send(
     reply_params = {"message_id": update.message.message_id}
     typing_task = await _start_typing(update.message.chat.id, context.bot)
     base = None
+    platform = None
 
     try:
         platform = detect_platform(url)
