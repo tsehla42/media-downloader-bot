@@ -8,7 +8,7 @@ from telegram.ext import ContextTypes
 from config import DOWNLOAD_DIR, MAX_FILE_SIZE, ALLOWED_USER_IDS
 from utils import detect_platform, is_valid_url, extract_urls, cleanup_file
 from downloader import get_metadata, download_video, download_audio, download_images
-from logging_config import log_request, log_error
+from logging_config import log_error, with_request_logging
 
 
 async def _start_typing(chat_id: int, bot) -> asyncio.Task:
@@ -103,6 +103,7 @@ async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
 
+@with_request_logging
 async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /audio command - download as MP3."""
     reply_params = {"message_id": update.message.message_id}
@@ -239,20 +240,6 @@ async def _download_and_send(
                 caption="" if _user_caption_prefs.get(update.message.from_user.id, True) else title[:1024],
                 reply_parameters=reply_params,
             )
-
-        log_request(
-            url=url,
-            platform=platform,
-            content_type="video",
-            user=update.message.from_user,
-            chat=update.message.chat,
-            media_info={
-                "duration_seconds": metadata.get("duration") if metadata else None,
-                "file_size_mb": round(os.path.getsize(downloaded) / (1024 * 1024), 2) if downloaded else 0,
-                "image_count": None,
-                "quality": metadata.get("format") if metadata else None,
-            },
-        )
     except Exception as e:
         log_error(
             url=url,
@@ -271,6 +258,7 @@ async def _download_and_send(
                 cleanup_file(f"{base}.{ext}")
 
 
+@with_request_logging
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle messages containing URLs."""
     if not update.message or not update.message.text:
