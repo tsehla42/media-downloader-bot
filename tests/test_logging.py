@@ -379,3 +379,26 @@ def test_decorator_reraises_exception():
         import asyncio
         with pytest.raises(RuntimeError, match="boom"):
             asyncio.run(dummy_handler(mock_update, mock_context))
+
+
+def test_decorator_calculates_duration():
+    """Decorator calculates duration_ms correctly."""
+    from logging_config import with_request_logging
+
+    mock_context = MagicMock()
+    mock_context.user_data = {}
+    mock_update = MagicMock()
+
+    @with_request_logging
+    async def dummy_handler(update, context):
+        await asyncio.sleep(0.1)  # 100ms
+        return "success"
+
+    with patch("logging_config.log_request_completed") as mock_completed:
+        import asyncio
+        asyncio.run(dummy_handler(mock_update, mock_context))
+
+    call_args = mock_completed.call_args
+    duration_ms = call_args[1]["duration_ms"]
+    assert duration_ms >= 90  # Allow some tolerance
+    assert duration_ms <= 200
