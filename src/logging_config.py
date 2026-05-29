@@ -51,6 +51,34 @@ def log_request(
     logging.info("media_request", extra={"extra_data": log_data})
 
 
+def log_request_received(
+    request_id: str,
+    url: str,
+    platform: str,
+    user: object,
+    chat: object,
+) -> None:
+    """Log when a request is received."""
+    log_data = {
+        "event": "request_received",
+        "message": "Request received",
+        "request_id": request_id,
+        "url": url,
+        "platform": platform,
+        "user": {
+            "id": user.id,
+            "name": getattr(user, "first_name", None),
+            "username": getattr(user, "username", None),
+        },
+        "chat": {
+            "id": chat.id,
+            "name": getattr(chat, "title", None),
+            "type": getattr(chat, "type", None),
+        },
+    }
+    logging.info("request_received", extra={"extra_data": log_data})
+
+
 def log_error(
     url: str,
     error: str,

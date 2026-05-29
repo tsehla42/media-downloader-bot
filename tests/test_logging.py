@@ -263,6 +263,47 @@ def test_log_request_null_fields():
         assert log_data["media"]["image_count"] == 1
 
 
+def test_log_request_received_basic():
+    """log_request_received outputs JSON with all required fields."""
+    from logging_config import log_request_received
+
+    user = MagicMock()
+    user.id = 123456
+    user.first_name = "Test"
+    user.username = "testuser"
+
+    chat = MagicMock()
+    chat.id = -100789
+    chat.title = "Test Group"
+    chat.type = "group"
+
+    with patch("logging_config.logging") as mock_logging:
+        log_request_received(
+            request_id="a1b2c3d4",
+            url="https://youtube.com/watch?v=abc",
+            platform="youtube",
+            user=user,
+            chat=chat,
+        )
+
+        mock_logging.info.assert_called_once()
+        call_args = mock_logging.info.call_args
+        assert call_args[0][0] == "request_received"
+        log_data = call_args[1]["extra"]["extra_data"]
+
+        assert log_data["event"] == "request_received"
+        assert log_data["message"] == "Request received"
+        assert log_data["request_id"] == "a1b2c3d4"
+        assert log_data["url"] == "https://youtube.com/watch?v=abc"
+        assert log_data["platform"] == "youtube"
+        assert log_data["user"]["id"] == 123456
+        assert log_data["user"]["name"] == "Test"
+        assert log_data["user"]["username"] == "testuser"
+        assert log_data["chat"]["id"] == -100789
+        assert log_data["chat"]["name"] == "Test Group"
+        assert log_data["chat"]["type"] == "group"
+
+
 def test_log_error():
     """log_error outputs JSON with error details."""
     from logging_config import log_error
