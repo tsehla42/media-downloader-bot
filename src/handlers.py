@@ -140,7 +140,6 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.mp3")
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-    typing_task = await _start_typing(update.message.chat.id, context.bot)
     try:
         success = download_audio(url, output_path)
         if success and os.path.isfile(output_path):
@@ -160,7 +159,6 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             reply_parameters=reply_params,
         )
     finally:
-        typing_task.cancel()
         cleanup_file(output_path)
 
 
@@ -169,7 +167,6 @@ async def _download_and_send(
 ) -> None:
     """Download and send a single URL."""
     reply_params = {"message_id": update.message.message_id}
-    typing_task = await _start_typing(update.message.chat.id, context.bot)
     base = None
     platform = None
 
@@ -266,7 +263,6 @@ async def _download_and_send(
             reply_parameters=reply_params,
         )
     finally:
-        typing_task.cancel()
         if base:
             for ext in ["mp4", "webm", "mkv", "mp3", "m4a"]:
                 cleanup_file(f"{base}.{ext}")
@@ -280,22 +276,26 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not _is_allowed(update.message.from_user.id):
         return
 
-    text = update.message.text.strip()
+    typing_task = await _start_typing(update.message.chat.id, context.bot)
+    try:
+        text = update.message.text.strip()
 
-    if text.startswith("/audio"):
-        await audio_command(update, context)
-        return
+        if text.startswith("/audio"):
+            await audio_command(update, context)
+            return
 
-    if not is_valid_url(text):
-        return
+        if not is_valid_url(text):
+            return
 
-    urls = extract_urls(text)
-    if not urls:
-        await update.message.reply_text(
-            "Please send a valid URL.",
-            reply_parameters={"message_id": update.message.message_id},
-        )
-        return
+        urls = extract_urls(text)
+        if not urls:
+            await update.message.reply_text(
+                "Please send a valid URL.",
+                reply_parameters={"message_id": update.message.message_id},
+            )
+            return
 
-    for url in urls:
-        await _download_and_send(update, context, url)
+        for url in urls:
+            await _download_and_send(update, context, url)
+    finally:
+        typing_task.cancel()
