@@ -57,8 +57,7 @@ async def test_handle_url_processes_all_urls(update, context):
          patch("handlers.cleanup_file"), \
          patch("os.path.isfile", return_value=True), \
          patch("os.path.getsize", return_value=1024*1024), \
-         patch("builtins.open", MagicMock()), \
-         patch("handlers.log_request"):
+         patch("builtins.open", MagicMock()):
         update.message.reply_video = AsyncMock()
         await handle_url(update, context)
         # Both URLs should have been processed
@@ -104,8 +103,7 @@ async def test_download_and_send_replies_with_video():
 
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "Test Video", "duration": 60, "format": "720p"}), \
-         patch("handlers.download_video", return_value=True), \
-         patch("handlers.log_request") as mock_log:
+         patch("handlers.download_video", return_value=True):
         with patch("os.path.isfile", return_value=True), \
              patch("os.path.getsize", return_value=1024*1024), \
              patch("handlers.cleanup_file"), \
@@ -115,12 +113,6 @@ async def test_download_and_send_replies_with_video():
         update.message.reply_video.assert_called_once()
         kwargs = update.message.reply_video.call_args[1]
         assert kwargs["reply_parameters"] == {"message_id": 99}
-
-        mock_log.assert_called_once()
-        call_kwargs = mock_log.call_args[1]
-        assert call_kwargs["url"] == "https://youtube.com/watch?v=abc"
-        assert call_kwargs["platform"] == "youtube"
-        assert call_kwargs["content_type"] == "video"
 
 
 @pytest.mark.asyncio
@@ -223,7 +215,6 @@ async def test_handle_url_starts_typing_immediately():
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "Test Video", "duration": 60, "format": "720p"}), \
          patch("handlers.download_video", return_value=True), \
-         patch("handlers.log_request"), \
          patch("os.path.isfile", return_value=True), \
          patch("os.path.getsize", return_value=1024*1024), \
          patch("handlers.cleanup_file"), \
