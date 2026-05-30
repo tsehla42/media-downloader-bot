@@ -240,7 +240,14 @@ async def _download_and_send(
                         os.remove(img)
                 return
 
-        success = download_video(url, output_path, MAX_FILE_SIZE, platform=platform)
+        # YouTube Music: send as audio (these are typically songs with cover art, not real videos)
+        is_ytmusic = "music.youtube.com" in url
+
+        if is_ytmusic:
+            success = download_audio(url, f"{base}.mp3")
+        else:
+            success = download_video(url, output_path, MAX_FILE_SIZE, platform=platform)
+
         if not success:
             context.user_data["_request_success"] = False
             await update.message.reply_text(
@@ -250,7 +257,7 @@ async def _download_and_send(
             return
 
         downloaded = None
-        for ext in ["mp4", "webm", "mkv", "mp3", "m4a"]:
+        for ext in ["mp3", "mp4", "webm", "mkv", "m4a"]:
             candidate = f"{base}.{ext}"
             if os.path.isfile(candidate):
                 downloaded = candidate
@@ -265,11 +272,18 @@ async def _download_and_send(
             return
 
         with open(downloaded, "rb") as f:
-            await update.message.reply_video(
-                video=f,
-                caption="" if _user_caption_prefs.get(update.message.from_user.id, True) else title[:1024],
-                reply_parameters=reply_params,
-            )
+            if is_ytmusic:
+                await update.message.reply_audio(
+                    audio=f,
+                    title=title[:1024],
+                    reply_parameters=reply_params,
+                )
+            else:
+                await update.message.reply_video(
+                    video=f,
+                    caption="" if _user_caption_prefs.get(update.message.from_user.id, True) else title[:1024],
+                    reply_parameters=reply_params,
+                )
     except Exception as e:
         context.user_data["_request_success"] = False
         await update.message.reply_text(
