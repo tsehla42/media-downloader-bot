@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes
 
 from config import DOWNLOAD_DIR, MAX_FILE_SIZE, ALLOWED_USER_IDS, ALLOWED_GROUP_IDS
 from utils import detect_platform, is_valid_url, extract_urls, cleanup_file
-from downloader import get_metadata, download_video, download_audio, download_images
+from downloader import get_metadata, download_video, download_audio, download_images, download_instagram_image
 from logging_config import with_request_logging
 
 
@@ -195,6 +195,23 @@ async def _download_and_send(
 
         metadata = get_metadata(url)
         if not metadata:
+            # Fallback for Instagram: try to extract single image
+            if platform == "instagram":
+                tmp_id = uuid.uuid4().hex[:8]
+                img_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.jpg")
+                os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+                if download_instagram_image(url, img_path):
+                    try:
+                        with open(img_path, "rb") as f:
+                            await update.message.reply_photo(
+                                photo=f,
+                                reply_parameters=reply_params,
+                            )
+                        context.user_data["_request_success"] = True
+                        return
+                    finally:
+                        cleanup_file(img_path)
+
             context.user_data["_request_success"] = False
             await update.message.reply_text(
                 "Could not fetch video info. The content may be private or the URL invalid.",
