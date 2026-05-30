@@ -4,7 +4,7 @@ Entry point for AI agents working on this project. Start here to understand the 
 
 ## What This Project Is
 
-A Telegram bot that downloads videos and images from YouTube, TikTok, and Instagram. Users paste a URL, get the media back. Also supports inline queries (`@botname <url>`) in any chat.
+A Telegram bot that downloads videos and images from YouTube, TikTok, and Instagram. Users paste a URL, get the media back.
 
 **Tech stack:** Python 3.12+, python-telegram-bot, yt-dlp (subprocess), pytest
 
@@ -17,7 +17,6 @@ media-downloader-bot/
 │   ├── config.py       # Loads .env, exports settings as constants
 │   ├── downloader.py   # yt-dlp subprocess wrapper (metadata, download, audio, images)
 │   ├── handlers.py     # Telegram handlers: /start, /help, /audio, URL message handling
-│   ├── inline.py       # Inline query handler for @botname usage
 │   ├── logging_config.py # Structured JSON logging (JSONFormatter, with_request_logging decorator)
 │   └── utils.py        # Platform detection, URL validation, file cleanup
 ├── tests/              # Test suite (imports from src/ via conftest.py)
@@ -46,8 +45,7 @@ media-downloader-bot/
 | `src/downloader.py` | nothing | yt-dlp subprocess calls: get_metadata, download_video, download_audio, download_images |
 | `src/logging_config.py` | config | Structured JSON logging: JSONFormatter, setup_logging, with_request_logging decorator |
 | `src/handlers.py` | config, utils, downloader, logging_config | Telegram message handlers, orchestrates download flow, logs requests |
-| `src/inline.py` | config, utils, downloader | Inline query handler, returns metadata as inline results |
-| `src/bot.py` | config, handlers, inline, logging_config | Entry point, wires everything together, initializes logging |
+| `src/bot.py` | config, handlers, logging_config | Entry point, wires everything together, initializes logging |
 
 ## Data Flow
 

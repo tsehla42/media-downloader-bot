@@ -51,11 +51,6 @@ Structured JSON logging with zero external dependencies:
 - `log_request_completed()` - Logs when a request completes
 - `log_request_failed()` - Logs when a request fails with an exception
 
-### inline.py
-Inline query handler:
-- `inline_query` - Handles `@botname <url>` in any chat
-- Returns InlineQueryResultArticle with title and thumbnail
-
 ### bot.py
 Entry point:
 - Creates `Application` with bot token
