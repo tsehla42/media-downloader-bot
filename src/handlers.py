@@ -176,6 +176,7 @@ async def _download_and_send(
     try:
         platform = detect_platform(url)
         if not platform:
+            context.user_data["_request_success"] = False
             await update.message.reply_text(
                 "Unsupported platform. I support YouTube, TikTok, and Instagram.",
                 reply_parameters=reply_params,
@@ -184,6 +185,7 @@ async def _download_and_send(
 
         metadata = get_metadata(url)
         if not metadata:
+            context.user_data["_request_success"] = False
             await update.message.reply_text(
                 "Could not fetch video info. The content may be private or the URL invalid.",
                 reply_parameters=reply_params,
@@ -213,6 +215,7 @@ async def _download_and_send(
 
         success = download_video(url, output_path, MAX_FILE_SIZE, platform=platform)
         if not success:
+            context.user_data["_request_success"] = False
             await update.message.reply_text(
                 "Download failed. Try again later.",
                 reply_parameters=reply_params,
@@ -227,6 +230,7 @@ async def _download_and_send(
                 break
 
         if not downloaded:
+            context.user_data["_request_success"] = False
             await update.message.reply_text(
                 "Download failed. File not found.",
                 reply_parameters=reply_params,
@@ -240,6 +244,7 @@ async def _download_and_send(
                 reply_parameters=reply_params,
             )
     except Exception as e:
+        context.user_data["_request_success"] = False
         await update.message.reply_text(
             f"Error: {e}",
             reply_parameters=reply_params,

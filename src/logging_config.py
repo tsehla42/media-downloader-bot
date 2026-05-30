@@ -130,12 +130,13 @@ def with_request_logging(handler):
         try:
             result = await handler(update, context)
             duration_ms = int((time.time() - start_time) * 1000)
+            success = context.user_data.get("_request_success", True)
             log_request_completed(
                 request_id=request_id,
                 url=url,
                 platform=platform,
                 duration_ms=duration_ms,
-                success=True,
+                success=success,
             )
             return result
         except Exception as e:
