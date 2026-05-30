@@ -22,10 +22,6 @@ Sharing media from these platforms in Telegram is annoying - links don't always 
 | Document | What it covers |
 |---|---|
 | [Architecture](architecture.md) | Module responsibilities, data flow, design decisions |
-| [Design Spec](superpowers/specs/2026-05-27-media-downloader-bot-design.md) | Original requirements and design |
-| [Implementation Plan](superpowers/plans/2026-05-27-media-downloader-bot.md) | Step-by-step build plan with TDD |
-| [Structured Logging Spec](superpowers/specs/2026-05-28-structured-logging-design.md) | Logging system design and schema |
-| [Structured Logging Plan](superpowers/plans/2026-05-28-structured-logging.md) | Logging implementation plan |
 
 ## Quick Start
 
