@@ -13,6 +13,7 @@ from logging_config import with_request_logging
 
 
 AUDIO_ONLY_EXTS = {"m4a", "mp3", "opus", "wav", "aac"}
+AUDIO_TITLE_MAX = 64  # Telegram Bot API limit for reply_audio title
 
 
 def _has_video_available(metadata: dict) -> bool:
@@ -21,6 +22,37 @@ def _has_video_available(metadata: dict) -> bool:
     if not ext:
         return False
     return ext not in AUDIO_ONLY_EXTS
+
+
+async def _download_and_send_video(
+    url: str, base: str, output_path: str,
+    caption: str, reply_params: dict, message
+) -> bool:
+    """Download video and send it via message.reply_video.
+
+    Returns True on success, False on failure.
+    """
+    success = download_video(url, output_path, MAX_FILE_SIZE)
+    if not success:
+        return False
+
+    downloaded = None
+    for ext in ["mp4", "webm", "mkv"]:
+        candidate = f"{base}.{ext}"
+        if os.path.isfile(candidate):
+            downloaded = candidate
+            break
+
+    if not downloaded:
+        return False
+
+    with open(downloaded, "rb") as f:
+        await message.reply_video(
+            video=f,
+            caption=caption,
+            reply_parameters=reply_params,
+        )
+    return True
 
 
 def is_group_chat(update: Update) -> bool:
@@ -275,43 +307,29 @@ async def _download_and_send(
                 return
             else:
                 success = download_audio(url, f"{base}.mp3")
+                if success and os.path.isfile(f"{base}.mp3"):
+                    with open(f"{base}.mp3", "rb") as f:
+                        await update.message.reply_audio(
+                            audio=f,
+                            title=title[:AUDIO_TITLE_MAX],
+                            reply_parameters=reply_params,
+                        )
+                else:
+                    context.user_data["_request_success"] = False
+                    await update.message.reply_text(
+                        "Download failed.",
+                        reply_parameters=reply_params,
+                    )
+                return
         else:
-            success = download_video(url, output_path, MAX_FILE_SIZE, platform=platform)
-
-        if not success:
-            context.user_data["_request_success"] = False
-            await update.message.reply_text(
-                "Download failed. Try again later.",
-                reply_parameters=reply_params,
+            caption = "" if _user_caption_prefs.get(update.message.from_user.id, True) else title[:1024]
+            video_ok = await _download_and_send_video(
+                url, base, output_path, caption, reply_params, update.message
             )
-            return
-
-        downloaded = None
-        for ext in ["mp3", "mp4", "webm", "mkv", "m4a"]:
-            candidate = f"{base}.{ext}"
-            if os.path.isfile(candidate):
-                downloaded = candidate
-                break
-
-        if not downloaded:
-            context.user_data["_request_success"] = False
-            await update.message.reply_text(
-                "Download failed. File not found.",
-                reply_parameters=reply_params,
-            )
-            return
-
-        with open(downloaded, "rb") as f:
-            if is_ytmusic:
-                await update.message.reply_audio(
-                    audio=f,
-                    title=title[:1024],
-                    reply_parameters=reply_params,
-                )
-            else:
-                await update.message.reply_video(
-                    video=f,
-                    caption="" if _user_caption_prefs.get(update.message.from_user.id, True) else title[:1024],
+            if not video_ok:
+                context.user_data["_request_success"] = False
+                await update.message.reply_text(
+                    "Download failed.",
                     reply_parameters=reply_params,
                 )
     except Exception as e:
@@ -377,7 +395,7 @@ async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 with open(f"{base}.mp3", "rb") as f:
                     await update.effective_message.reply_audio(
                         audio=f,
-                        title=title[:128],
+                        title=title[:AUDIO_TITLE_MAX],
                         reply_parameters=reply_params,
                     )
             else:
@@ -387,29 +405,13 @@ async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 )
 
         elif choice == "video":
-            success = download_video(url, output_path, MAX_FILE_SIZE)
-            if success:
-                downloaded = None
-                for ext in ["mp4", "webm", "mkv"]:
-                    candidate = f"{base}.{ext}"
-                    if os.path.isfile(candidate):
-                        downloaded = candidate
-                        break
-                if downloaded:
-                    with open(downloaded, "rb") as f:
-                        await update.effective_message.reply_video(
-                            video=f,
-                            caption="" if _user_caption_prefs.get(
-                                update.effective_message.from_user.id, True
-                            ) else title[:1024],
-                            reply_parameters=reply_params,
-                        )
-                else:
-                    await update.effective_message.reply_text(
-                        "Video download failed. File not found.",
-                        reply_parameters=reply_params,
-                    )
-            else:
+            caption = "" if _user_caption_prefs.get(
+                update.effective_message.from_user.id, True
+            ) else title[:1024]
+            video_ok = await _download_and_send_video(
+                url, base, output_path, caption, reply_params, update.effective_message
+            )
+            if not video_ok:
                 await update.effective_message.reply_text(
                     "Video download failed.",
                     reply_parameters=reply_params,
@@ -417,36 +419,26 @@ async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         elif choice == "both":
             # Send video first, then audio
-            success = download_video(url, output_path, MAX_FILE_SIZE)
-            if success:
-                downloaded = None
-                for ext in ["mp4", "webm", "mkv"]:
-                    candidate = f"{base}.{ext}"
-                    if os.path.isfile(candidate):
-                        downloaded = candidate
-                        break
-                if downloaded:
-                    with open(downloaded, "rb") as f:
-                        await update.effective_message.reply_video(
-                            video=f,
-                            caption="" if _user_caption_prefs.get(
-                                update.effective_message.from_user.id, True
-                            ) else title[:1024],
-                            reply_parameters=reply_params,
-                        )
-            else:
+            caption = "" if _user_caption_prefs.get(
+                update.effective_message.from_user.id, True
+            ) else title[:1024]
+            video_ok = await _download_and_send_video(
+                url, base, output_path, caption, reply_params, update.effective_message
+            )
+            if not video_ok:
                 await update.effective_message.reply_text(
                     "Video download failed.",
                     reply_parameters=reply_params,
                 )
 
-            # Then send audio
+            # Continue to audio even if video failed — user wanted both,
+            # give them what's available
             success = download_audio(url, f"{base}.mp3")
             if success and os.path.isfile(f"{base}.mp3"):
                 with open(f"{base}.mp3", "rb") as f:
                     await update.effective_message.reply_audio(
                         audio=f,
-                        title=title[:128],
+                        title=title[:AUDIO_TITLE_MAX],
                         reply_parameters=reply_params,
                     )
             else:
