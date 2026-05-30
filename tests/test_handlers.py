@@ -448,6 +448,33 @@ async def test_ytmusic_with_video_sends_inline_keyboard():
 
 
 @pytest.mark.asyncio
+async def test_ytmusic_audio_only_sends_audio_directly():
+    """When YouTube Music has no video (m4a), bot sends audio without keyboard."""
+    update = MagicMock()
+    update.message.text = "https://music.youtube.com/watch?v=abc"
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.reply_audio = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={"title": "Test Song", "ext": "m4a"}), \
+         patch("handlers.download_audio", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("handlers.cleanup_file"), \
+         patch("builtins.open", MagicMock()):
+        await _download_and_send(update, context, "https://music.youtube.com/watch?v=abc")
+
+    # Should send audio directly, no keyboard
+    update.message.reply_audio.assert_called_once()
+    update.message.reply_text.assert_not_called()
+    assert 42 not in context.user_data
+
+
+@pytest.mark.asyncio
 async def test_ytmusic_callback_audio_choice():
     """Callback with 'audio' choice downloads audio and deletes question message."""
     from handlers import ytmusic_callback
