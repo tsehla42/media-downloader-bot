@@ -274,26 +274,54 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not _is_allowed(update.message.from_user.id):
         return
 
-    typing_task = await _start_typing(update.message.chat.id, context.bot)
-    try:
-        text = update.message.text.strip()
+    text = update.message.text.strip()
 
-        if text.startswith("/audio"):
+    if text.startswith("/audio"):
+        # Start typing for audio command
+        typing_task = await _start_typing(update.message.chat.id, context.bot)
+        try:
             await audio_command(update, context)
-            return
+        finally:
+            typing_task.cancel()
+        return
 
-        if not is_valid_url(text):
-            return
+    if not is_valid_url(text):
+        return
 
-        urls = extract_urls(text)
-        if not urls:
+    urls = extract_urls(text)
+    if not urls:
+        # In P2P: show error. In groups: silently ignore.
+        if not is_group_chat(update):
             await update.message.reply_text(
                 "Please send a valid URL.",
                 reply_parameters={"message_id": update.message.message_id},
             )
-            return
+        return
 
-        for url in urls:
+    # Filter to supported platforms only
+    supported_urls = [url for url in urls if detect_platform(url)]
+
+    # In groups: ignore if no supported URLs (no error message)
+    if is_group_chat(update) and not supported_urls:
+        return
+
+    # In P2P: show error if no valid URLs
+    if not is_group_chat(update) and not supported_urls:
+        await update.message.reply_text(
+            "Unsupported platform. I support YouTube, TikTok, and Instagram.",
+            reply_parameters={"message_id": update.message.message_id},
+        )
+        return
+
+    # Check group allowlist
+    if is_group_chat(update) and not _is_allowed_group(update.effective_chat.id):
+        return
+
+    # Start typing indicator (works in both P2P and groups)
+    typing_task = await _start_typing(update.message.chat.id, context.bot)
+    try:
+        # Download each supported URL (with normal error handling)
+        for url in supported_urls:
             await _download_and_send(update, context, url)
     finally:
         typing_task.cancel()
