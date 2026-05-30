@@ -39,12 +39,17 @@ Telegram message handlers:
 
 ### logging_config.py
 Structured JSON logging with zero external dependencies:
-- `JSONFormatter` - Custom `logging.Formatter` that outputs JSON with timestamp, level, message, and extra fields
+- `JSONFormatter` - Custom `logging.Formatter` that outputs JSON with timestamp, level, message, and extra fields (with `ensure_ascii=False` for Unicode support)
 - `setup_logging()` - Configures logging based on `LOG_OUTPUT` env var
   - stdout mode: StreamHandler for development
-  - file mode: RotatingFileHandler for `requests.jsonl` (all levels) and `errors.jsonl` (ERROR+), plus stderr for errors
-- `log_request()` - Logs media requests with user, chat, and media metadata
-- `log_error()` - Logs download failures with error context
+  - file mode: RotatingFileHandler for `requests.jsonl` (all levels), plus stderr for errors
+- `with_request_logging()` - Decorator that wraps handlers and logs request lifecycle:
+  - `request_received` when handler starts
+  - `request_completed` when handler finishes (success or expected failure)
+  - `request_failed` when handler throws exception
+- `log_request_received()` - Logs when a request is received
+- `log_request_completed()` - Logs when a request completes
+- `log_request_failed()` - Logs when a request fails with an exception
 
 ### inline.py
 Inline query handler:
@@ -63,17 +68,33 @@ Entry point:
 User sends URL
     │
     ▼
+@with_request_logging (decorator)
+    │
+    ├─ log_request_received() → logs "request_received" event
+    │
+    ▼
 handlers.handle_url()
     │
     ├─ utils.detect_platform(url) → "youtube"
     ├─ downloader.get_metadata(url) → {title, thumbnail, ...}
     ├─ downloader.download_video(url, path) → True
-    ├─ logging_config.log_request() → structured JSON log
     └─ send file to Telegram, cleanup temp files
+    │
+    ▼
+@with_request_logging (decorator)
+    │
+    ├─ log_request_completed() → logs "request_completed" event (success)
+    │
+    ▼
+Done
 
-On error:
-    ├─ logging_config.log_error() → error JSON log
-    └─ notify user of failure
+On exception:
+    │
+    ▼
+@with_request_logging (decorator)
+    │
+    ├─ log_request_failed() → logs "request_failed" event (error)
+    └─ re-raises exception
 ```
 
 ## External Dependencies
@@ -84,36 +105,54 @@ On error:
 
 ## Structured Logging
 
-Logs are written in JSON format for easy querying with `jq` and log aggregators.
+Logs are written in JSON format for easy querying with `jq` and log aggregators. All events go to a single `requests.jsonl` file.
 
 ### Log Schema
 
-Request log entry:
+Request received:
 ```json
 {
-  "timestamp": "2026-05-28T14:32:01.123Z",
+  "timestamp": "2026-05-30T13:16:36.527047+00:00",
   "level": "INFO",
-  "event": "media_request",
+  "message": "Request received",
+  "event": "request_received",
+  "request_id": "3df4888f",
   "url": "https://youtube.com/watch?v=abc",
-  "platform": "youtube",
-  "content_type": "video",
-  "user": {"id": 123, "name": "John", "username": "john"},
-  "chat": {"id": -100, "name": "Group", "type": "group"},
-  "media": {"duration_seconds": 120, "file_size_mb": 45.2, "image_count": null, "quality": "720p"}
-}
-```
-
-Error log entry:
-```json
-{
-  "timestamp": "2026-05-28T14:32:05.456Z",
-  "level": "ERROR",
-  "event": "download_failed",
-  "url": "https://...",
-  "error": "yt-dlp timeout",
   "platform": "youtube",
   "user": {"id": 123, "name": "John", "username": "john"},
   "chat": {"id": -100, "name": "Group", "type": "group"}
+}
+```
+
+Request completed:
+```json
+{
+  "timestamp": "2026-05-30T13:16:39.195279+00:00",
+  "level": "INFO",
+  "message": "Request completed",
+  "event": "request_completed",
+  "request_id": "3df4888f",
+  "url": "https://youtube.com/watch?v=abc",
+  "platform": "youtube",
+  "duration_ms": 2668,
+  "success": true,
+  "content_type": "video",
+  "file_size_mb": 45.2
+}
+```
+
+Request failed:
+```json
+{
+  "timestamp": "2026-05-30T13:16:35.123456+00:00",
+  "level": "ERROR",
+  "message": "Request failed: yt-dlp timeout",
+  "event": "request_failed",
+  "request_id": "a1b2c3d4",
+  "url": "https://youtube.com/watch?v=abc",
+  "platform": "youtube",
+  "error": "yt-dlp timeout",
+  "error_type": "TimeoutError"
 }
 ```
 
@@ -126,7 +165,7 @@ Error log entry:
 
 ### File Rotation (Production)
 
-- `logs/requests.jsonl` - All media request logs (10MB, 5 backups)
+- `logs/requests.jsonl` - All request lifecycle events (10MB, 5 backups)
 - `logs/errors.jsonl` - Error logs only (10MB, 5 backups)
 
 ### Example Queries
@@ -135,11 +174,14 @@ Error log entry:
 # All YouTube requests
 cat logs/requests.jsonl | jq 'select(.platform == "youtube")'
 
-# Large video downloads (>100MB)
-cat logs/requests.jsonl | jq 'select(.media.file_size_mb > 100)'
+# Failed requests
+cat logs/requests.jsonl | jq 'select(.event == "request_failed")'
 
-# Error summary
-cat logs/errors.jsonl | jq -r '.error' | sort | uniq -c | sort -rn
+# Slow downloads (>5 seconds)
+cat logs/requests.jsonl | jq 'select(.event == "request_completed" and .duration_ms > 5000)'
+
+# Request lifecycle for a specific request_id
+cat logs/requests.jsonl | jq 'select(.request_id == "3df4888f")'
 ```
 
 ## Why Subprocess (not Python import)?
