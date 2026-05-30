@@ -4,7 +4,7 @@ import shutil
 from urllib.parse import urlparse
 
 SUPPORTED_PLATFORMS = {
-    "youtube": ["youtube.com", "youtu.be"],
+    "youtube": ["youtube.com", "youtu.be", "music.youtube.com"],
     "tiktok": ["tiktok.com", "vm.tiktok.com", "vt.tiktok.com", "m.tiktok.com", "douyin.com"],
     "instagram": ["instagram.com"],
 }

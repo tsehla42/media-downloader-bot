@@ -9,6 +9,12 @@ def test_detect_youtube_short():
 def test_detect_youtube_shorts():
     assert detect_platform("https://www.youtube.com/shorts/abc123") == "youtube"
 
+def test_detect_youtube_music():
+    assert detect_platform("https://music.youtube.com/watch?v=uueRqEalZ7s") == "youtube"
+
+def test_detect_youtube_music_with_params():
+    assert detect_platform("https://music.youtube.com/watch?v=uueRqEalZ7s&si=Xu33ojhvEQyWBemI") == "youtube"
+
 def test_detect_tiktok():
     assert detect_platform("https://www.tiktok.com/@user/video/123") == "tiktok"
 

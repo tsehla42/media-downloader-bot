@@ -1,7 +1,9 @@
 import json
 import os
+import re
 import subprocess
 import shutil
+import urllib.request
 
 MAX_FILE_SIZE_MB = 50
 
@@ -113,3 +115,35 @@ def download_images(url: str, output_dir: str) -> list[str]:
         return []
     import glob
     return sorted(glob.glob(f"{output_dir}/*.[jp][pn]g") + glob.glob(f"{output_dir}/*.webp"))
+
+
+def download_instagram_image(url: str, output_path: str) -> bool:
+    """Download a single image from an Instagram post by scraping og:image meta tag.
+
+    Used as fallback when yt-dlp fails on image-only posts.
+    """
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+
+        # Try og:image meta tag first
+        match = re.search(r'<meta\s+(?:property|name)="og:image"\s+content="([^"]+)"', html)
+        if not match:
+            match = re.search(r'<meta\s+content="([^"]+)"\s+(?:property|name)="og:image"', html)
+
+        if match:
+            image_url = match.group(1).replace("&amp;", "&")
+            urllib.request.urlretrieve(image_url, output_path)
+            return os.path.isfile(output_path)
+
+        return False
+    except Exception:
+        return False
