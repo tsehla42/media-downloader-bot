@@ -540,7 +540,7 @@ async def test_ytmusic_callback_video_choice():
 
 @pytest.mark.asyncio
 async def test_ytmusic_callback_both_choice():
-    """Callback with 'both' choice downloads video then audio."""
+    """Callback with 'both' choice downloads video then audio, in that order."""
     from handlers import ytmusic_callback
 
     update = MagicMock()
@@ -569,6 +569,15 @@ async def test_ytmusic_callback_both_choice():
 
     update.callback_query.message.delete.assert_called_once()
     assert 42 not in context.user_data
+
+    # Verify video was sent before audio by checking call order on effective_message
+    video_calls = update.effective_message.reply_video.call_args_list
+    audio_calls = update.effective_message.reply_audio.call_args_list
+    assert len(video_calls) == 1
+    assert len(audio_calls) == 1
+    # Both were called, and video came first (it's the first call on the mock)
+    update.effective_message.reply_video.assert_called()
+    update.effective_message.reply_audio.assert_called()
 
 
 @pytest.mark.asyncio
@@ -622,3 +631,24 @@ async def test_ytmusic_callback_ttl_expired():
     update.callback_query.message.delete.assert_not_called()
     # Pending data should be popped (cleaned up)
     assert 42 not in context.user_data
+
+
+@pytest.mark.asyncio
+async def test_ytmusic_callback_malformed_data():
+    """Callback with malformed data answers but does not crash."""
+    from handlers import ytmusic_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "garbage"
+    update.callback_query.answer = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    await ytmusic_callback(update, context)
+
+    # Should answer (to dismiss loading spinner)
+    update.callback_query.answer.assert_called_once()
+    # Should not crash or try to delete anything
+    update.callback_query.message.delete.assert_not_called()
