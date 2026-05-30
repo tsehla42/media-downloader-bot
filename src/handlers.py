@@ -48,14 +48,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "Commands:\n"
         "/help - Show supported platforms and commands\n"
         "/audio <url> - Download as audio (MP3)\n"
-        "/caption on|off - Toggle video captions\n\n"
-        f"Inline mode: @{bot_username} <url>"
+        "/caption on|off - Toggle video captions"
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command."""
-    bot_username = context.bot_data.get("bot_username", "botname")
     await update.message.reply_text(
         "Supported platforms:\n"
         "- YouTube (videos, shorts)\n"
@@ -66,8 +64,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/caption on - Show video captions\n"
         "/caption off - Remove video captions (default)\n\n"
         f"Max file size: {MAX_FILE_SIZE}MB\n"
-        "You can send multiple URLs in one message.\n\n"
-        f"Inline mode: @{bot_username} <url>"
+        "You can send multiple URLs in one message."
     )
 
 
