@@ -2,7 +2,7 @@
 
 ## What Is This
 
-A Telegram bot that downloads videos and images from YouTube, TikTok, and Instagram. Users send a URL, get the media back. Supports inline queries for use in any chat.
+A Telegram bot that downloads videos and images from YouTube, TikTok, and Instagram. Users send a URL, get the media back.
 
 ## Why It Exists
 
