@@ -22,7 +22,7 @@ class JSONFormatter(logging.Formatter):
         extra = getattr(record, "extra_data", {})
         log_data.update(extra)
 
-        return json.dumps(log_data)
+        return json.dumps(log_data, ensure_ascii=False)
 
 
 def log_request_received(
