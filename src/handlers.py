@@ -5,10 +5,16 @@ from telegram import Update, InputMediaPhoto
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
-from config import DOWNLOAD_DIR, MAX_FILE_SIZE, ALLOWED_USER_IDS
+from config import DOWNLOAD_DIR, MAX_FILE_SIZE, ALLOWED_USER_IDS, ALLOWED_GROUP_IDS
 from utils import detect_platform, is_valid_url, extract_urls, cleanup_file
 from downloader import get_metadata, download_video, download_audio, download_images
 from logging_config import with_request_logging
+
+
+def is_group_chat(update: Update) -> bool:
+    """Check if message is from a group chat."""
+    chat = update.effective_chat
+    return chat.type in ("group", "supergroup")
 
 
 async def _start_typing(chat_id: int, bot) -> asyncio.Task:
@@ -35,6 +41,13 @@ def _is_allowed(user_id: int) -> bool:
     if not ALLOWED_USER_IDS:
         return True
     return user_id in ALLOWED_USER_IDS
+
+
+def _is_allowed_group(chat_id: int) -> bool:
+    """Check if group is in allowlist (empty list = allow all groups)."""
+    if not ALLOWED_GROUP_IDS:
+        return True
+    return chat_id in ALLOWED_GROUP_IDS
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
