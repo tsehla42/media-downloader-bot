@@ -11,6 +11,17 @@ from downloader import get_metadata, download_video, download_audio, download_im
 from logging_config import with_request_logging
 
 
+AUDIO_ONLY_EXTS = {"m4a", "mp3", "opus", "wav", "aac"}
+
+
+def _has_video_available(metadata: dict) -> bool:
+    """Check if yt-dlp metadata indicates video is available."""
+    ext = metadata.get("ext")
+    if not ext:
+        return False
+    return ext not in AUDIO_ONLY_EXTS
+
+
 def is_group_chat(update: Update) -> bool:
     """Check if message is from a group chat."""
     chat = update.effective_chat

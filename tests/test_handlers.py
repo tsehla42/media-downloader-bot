@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from telegram.constants import ChatAction
-from handlers import start_command, help_command, handle_url, _download_and_send, caption_command, audio_command
+from handlers import start_command, help_command, handle_url, _download_and_send, caption_command, audio_command, _has_video_available
 
 @pytest.fixture
 def update():
@@ -373,3 +373,28 @@ async def test_handle_url_group_respects_allowlist(update, context):
         await handle_url(update, context)
         # Should not process because group not in allowlist
         update.message.reply_video.assert_not_called()
+
+
+def test_has_video_available_with_mp4():
+    """_has_video_available returns True for mp4 metadata."""
+    assert _has_video_available({"ext": "mp4"}) is True
+
+
+def test_has_video_available_with_webm():
+    """_has_video_available returns True for webm metadata."""
+    assert _has_video_available({"ext": "webm"}) is True
+
+
+def test_has_video_available_with_m4a():
+    """_has_video_available returns False for m4a (audio-only) metadata."""
+    assert _has_video_available({"ext": "m4a"}) is False
+
+
+def test_has_video_available_with_mp3():
+    """_has_video_available returns False for mp3 (audio-only) metadata."""
+    assert _has_video_available({"ext": "mp3"}) is False
+
+
+def test_has_video_available_missing_ext():
+    """_has_video_available returns False when ext key is missing."""
+    assert _has_video_available({}) is False
