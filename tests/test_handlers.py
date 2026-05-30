@@ -565,3 +565,33 @@ async def test_ytmusic_callback_expired_request():
     answer_text = update.callback_query.answer.call_args[0][0]
     assert "expired" in answer_text.lower()
     update.callback_query.message.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ytmusic_callback_ttl_expired():
+    """Callback with stale pending data (old timestamp) answers expired."""
+    from handlers import ytmusic_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "ytm|42|audio"
+    update.callback_query.message = MagicMock()
+    update.callback_query.message.delete = AsyncMock()
+    update.callback_query.answer = AsyncMock()
+
+    import time
+    stale_timestamp = time.time() - 600  # 10 minutes ago
+    context = MagicMock()
+    context.user_data = {42: {"url": "https://music.youtube.com/watch?v=abc", "title": "Test", "timestamp": stale_timestamp}}
+    context.bot.send_chat_action = AsyncMock()
+
+    await ytmusic_callback(update, context)
+
+    # Should answer with expired message
+    update.callback_query.answer.assert_called_once()
+    answer_text = update.callback_query.answer.call_args[0][0]
+    assert "expired" in answer_text.lower()
+    # Should NOT delete the message
+    update.callback_query.message.delete.assert_not_called()
+    # Pending data should be popped (cleaned up)
+    assert 42 not in context.user_data
