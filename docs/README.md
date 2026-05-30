@@ -10,12 +10,14 @@ Sharing media from these platforms in Telegram is annoying - links don't always 
 
 ## How It Works
 
-1. User sends a URL to the bot
-2. Bot detects the platform (YouTube/TikTok/Instagram)
-3. yt-dlp downloads the media via subprocess
-4. Bot uploads the file to Telegram
-5. Request is logged as structured JSON
-6. Temp files are cleaned up
+1. User sends a URL to the bot (P2P or group chat)
+2. Bot detects if group or P2P, filters URLs accordingly
+3. In groups: silently ignores unsupported URLs
+4. Bot detects the platform (YouTube/TikTok/Instagram)
+5. yt-dlp downloads the media via subprocess
+6. Bot uploads the file to Telegram
+7. Request is logged as structured JSON
+8. Temp files are cleaned up
 
 ## Docs
 

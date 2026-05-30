@@ -10,6 +10,7 @@ Modular design. Each module has one clear responsibility. yt-dlp is called as a 
 Loads settings from `.env` via python-dotenv. Exports constants:
 - `BOT_TOKEN` - Telegram bot token
 - `ALLOWED_USER_IDS` - Comma-separated user IDs (empty = allow all)
+- `ALLOWED_GROUP_IDS` - Comma-separated group chat IDs (empty = allow all groups)
 - `DOWNLOAD_DIR` - Temp directory for downloads (default: /tmp/bot-downloads)
 - `MAX_FILE_SIZE` - Max download size in MB (default: 50)
 - `MAX_CONCURRENT_DOWNLOADS` - Concurrency limit (default: 3)
@@ -31,11 +32,16 @@ Wraps yt-dlp binary calls via subprocess:
 - `download_images(url, dir)` - Downloads carousel/gallery images
 
 ### handlers.py
-Telegram message handlers:
+Telegram message handlers with group detection:
+- `is_group_chat(update)` - Checks if message is from group/supergroup
+- `_is_allowed_group(chat_id)` - Checks if group is in allowlist
 - `start_command` - Welcome message
 - `help_command` - Platform list and usage
 - `audio_command` - Download as MP3
-- `handle_url` - Main handler: detects URL, fetches metadata, downloads, sends to Telegram
+- `handle_url` - Main handler: detects group/P2P, filters URLs, downloads, sends to Telegram
+  - In groups: silently ignores unsupported URLs, processes supported ones
+  - In P2P: shows error messages for invalid/unsupported URLs
+  - Respects ALLOWED_GROUP_IDS config
 
 ### logging_config.py
 Structured JSON logging with zero external dependencies:
@@ -56,6 +62,7 @@ Entry point:
 - Creates `Application` with bot token
 - Registers all handlers
 - Starts polling
+- Global `error_handler` for unhandled exceptions
 
 ## Data Flow
 
@@ -63,33 +70,41 @@ Entry point:
 User sends URL
     │
     ▼
-@with_request_logging (decorator)
-    │
-    ├─ log_request_received() → logs "request_received" event
-    │
-    ▼
 handlers.handle_url()
     │
-    ├─ utils.detect_platform(url) → "youtube"
-    ├─ downloader.get_metadata(url) → {title, thumbnail, ...}
-    ├─ downloader.download_video(url, path) → True
-    └─ send file to Telegram, cleanup temp files
+    ├─ is_group_chat() → true/false
     │
-    ▼
-@with_request_logging (decorator)
+    ├─ [Group] Filter to supported URLs only
+    │   ├─ No supported URLs → silently ignore (return)
+    │   └─ Has supported URLs → continue
     │
-    ├─ log_request_completed() → logs "request_completed" event (success)
+    ├─ [P2P] Show error if no valid URLs
     │
-    ▼
-Done
-
-On exception:
+    ├─ _is_allowed_group() → check allowlist (groups only)
     │
-    ▼
-@with_request_logging (decorator)
+    ├─ Start typing indicator
     │
-    ├─ log_request_failed() → logs "request_failed" event (error)
-    └─ re-raises exception
+    ├─ @with_request_logging (decorator)
+    │   │
+    │   ├─ log_request_received() → logs "request_received" event
+    │   │
+    │   ▼
+    │   handlers._download_and_send()
+    │       │
+    │       ├─ utils.detect_platform(url) → "youtube"
+    │       ├─ downloader.get_metadata(url) → {title, thumbnail, ...}
+    │       ├─ downloader.download_video(url, path) → True
+    │       └─ send file to Telegram, cleanup temp files
+    │       │
+    │       ▼
+    │   @with_request_logging (decorator)
+    │       │
+    │       ├─ log_request_completed() → logs "request_completed" event (success)
+    │       │
+    │       ▼
+    │   Done
+    │
+    └─ Cancel typing indicator
 ```
 
 ## External Dependencies
