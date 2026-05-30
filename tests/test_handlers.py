@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from telegram.constants import ChatAction
-from handlers import start_command, help_command, handle_url, _download_and_send, caption_command, audio_command, _has_video_available
+from handlers import start_command, help_command, handle_url, _download_and_send, caption_command, audio_command, _has_video_available, ytmusic_callback
 
 @pytest.fixture
 def update():
@@ -445,3 +445,123 @@ async def test_ytmusic_with_video_sends_inline_keyboard():
 
     # Verify request marked as success
     assert context.user_data["_request_success"] is True
+
+
+@pytest.mark.asyncio
+async def test_ytmusic_callback_audio_choice():
+    """Callback with 'audio' choice downloads audio and deletes question message."""
+    from handlers import ytmusic_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "ytm|42|audio"
+    update.callback_query.message = MagicMock()
+    update.callback_query.message.delete = AsyncMock()
+    update.callback_query.answer = AsyncMock()
+    update.effective_message = MagicMock()
+    update.effective_message.reply_audio = AsyncMock()
+    update.effective_message.reply_text = AsyncMock()
+    update.effective_message.from_user = MagicMock()
+    update.effective_message.from_user.id = 42
+
+    context = MagicMock()
+    context.user_data = {42: {"url": "https://music.youtube.com/watch?v=abc", "title": "Test Song"}}
+    context.bot.send_chat_action = AsyncMock()
+
+    with patch("handlers.download_audio", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("handlers.cleanup_file"), \
+         patch("builtins.open", MagicMock()):
+        await ytmusic_callback(update, context)
+
+    update.callback_query.message.delete.assert_called_once()
+    update.callback_query.answer.assert_called_once()
+    assert 42 not in context.user_data
+
+
+@pytest.mark.asyncio
+async def test_ytmusic_callback_video_choice():
+    """Callback with 'video' choice downloads video and deletes question message."""
+    from handlers import ytmusic_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "ytm|42|video"
+    update.callback_query.message = MagicMock()
+    update.callback_query.message.delete = AsyncMock()
+    update.callback_query.answer = AsyncMock()
+    update.effective_message = MagicMock()
+    update.effective_message.reply_video = AsyncMock()
+    update.effective_message.reply_text = AsyncMock()
+    update.effective_message.from_user = MagicMock()
+    update.effective_message.from_user.id = 42
+
+    context = MagicMock()
+    context.user_data = {42: {"url": "https://music.youtube.com/watch?v=abc", "title": "Test Song"}}
+    context.bot.send_chat_action = AsyncMock()
+
+    with patch("handlers.download_video", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("handlers.cleanup_file"), \
+         patch("builtins.open", MagicMock()):
+        await ytmusic_callback(update, context)
+
+    update.callback_query.message.delete.assert_called_once()
+    update.callback_query.answer.assert_called_once()
+    assert 42 not in context.user_data
+
+
+@pytest.mark.asyncio
+async def test_ytmusic_callback_both_choice():
+    """Callback with 'both' choice downloads video then audio."""
+    from handlers import ytmusic_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "ytm|42|both"
+    update.callback_query.message = MagicMock()
+    update.callback_query.message.delete = AsyncMock()
+    update.callback_query.answer = AsyncMock()
+    update.effective_message = MagicMock()
+    update.effective_message.reply_video = AsyncMock()
+    update.effective_message.reply_audio = AsyncMock()
+    update.effective_message.reply_text = AsyncMock()
+    update.effective_message.from_user = MagicMock()
+    update.effective_message.from_user.id = 42
+
+    context = MagicMock()
+    context.user_data = {42: {"url": "https://music.youtube.com/watch?v=abc", "title": "Test Song"}}
+    context.bot.send_chat_action = AsyncMock()
+
+    with patch("handlers.download_video", return_value=True), \
+         patch("handlers.download_audio", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("handlers.cleanup_file"), \
+         patch("builtins.open", MagicMock()):
+        await ytmusic_callback(update, context)
+
+    update.callback_query.message.delete.assert_called_once()
+    assert 42 not in context.user_data
+
+
+@pytest.mark.asyncio
+async def test_ytmusic_callback_expired_request():
+    """Callback with no pending data answers 'expired' and does not delete."""
+    from handlers import ytmusic_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "ytm|999|audio"
+    update.callback_query.message = MagicMock()
+    update.callback_query.message.delete = AsyncMock()
+    update.callback_query.answer = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    await ytmusic_callback(update, context)
+
+    update.callback_query.answer.assert_called_once()
+    answer_text = update.callback_query.answer.call_args[0][0]
+    assert "expired" in answer_text.lower()
+    update.callback_query.message.delete.assert_not_called()

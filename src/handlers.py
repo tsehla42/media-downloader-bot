@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 import uuid
 from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
@@ -264,7 +265,7 @@ async def _download_and_send(
                     InlineKeyboardButton("Audio + Video", callback_data=f"ytm|{msg_id}|both"),
                 ]])
                 # Store pending request for callback handler
-                context.user_data[msg_id] = {"url": url, "title": title}
+                context.user_data[msg_id] = {"url": url, "title": title, "timestamp": time.time()}
                 await update.message.reply_text(
                     f"🎵 {title}\n\nChoose format:",
                     reply_markup=keyboard,
@@ -323,6 +324,144 @@ async def _download_and_send(
         if base:
             for ext in ["mp4", "webm", "mkv", "mp3", "m4a"]:
                 cleanup_file(f"{base}.{ext}")
+
+
+# Pending YouTube Music requests: user_data[msg_id] = {"url": str, "title": str, "timestamp": float}
+YTMUSIC_REQUEST_TTL = 300  # 5 minutes
+
+
+async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle YouTube Music format selection callback."""
+    query = update.callback_query
+
+    try:
+        _, msg_id_str, choice = query.data.split("|")
+        msg_id = int(msg_id_str)
+    except (ValueError, IndexError):
+        return
+
+    pending = context.user_data.pop(msg_id, None)
+    if not pending:
+        await query.answer("Request expired. Send the link again.")
+        return
+
+    # Check TTL — reject stale requests
+    request_time = pending.get("timestamp")
+    if request_time is not None and time.time() - request_time > YTMUSIC_REQUEST_TTL:
+        await query.answer("Request expired. Send the link again.")
+        return
+
+    await query.answer()
+
+    url = pending["url"]
+    title = pending.get("title", "video")
+
+    # Delete the question message with the keyboard
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+
+    tmp_id = uuid.uuid4().hex[:8]
+    base = os.path.join(DOWNLOAD_DIR, tmp_id)
+    output_path = f"{base}.%(ext)s"
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+    reply_params = {"message_id": msg_id}
+
+    try:
+        if choice == "audio":
+            success = download_audio(url, f"{base}.mp3")
+            if success and os.path.isfile(f"{base}.mp3"):
+                with open(f"{base}.mp3", "rb") as f:
+                    await update.effective_message.reply_audio(
+                        audio=f,
+                        title=title[:128],
+                        reply_parameters=reply_params,
+                    )
+            else:
+                await update.effective_message.reply_text(
+                    "Audio download failed.",
+                    reply_parameters=reply_params,
+                )
+
+        elif choice == "video":
+            success = download_video(url, output_path, MAX_FILE_SIZE)
+            if success:
+                downloaded = None
+                for ext in ["mp4", "webm", "mkv"]:
+                    candidate = f"{base}.{ext}"
+                    if os.path.isfile(candidate):
+                        downloaded = candidate
+                        break
+                if downloaded:
+                    with open(downloaded, "rb") as f:
+                        await update.effective_message.reply_video(
+                            video=f,
+                            caption="" if _user_caption_prefs.get(
+                                update.effective_message.from_user.id, True
+                            ) else title[:1024],
+                            reply_parameters=reply_params,
+                        )
+                else:
+                    await update.effective_message.reply_text(
+                        "Video download failed. File not found.",
+                        reply_parameters=reply_params,
+                    )
+            else:
+                await update.effective_message.reply_text(
+                    "Video download failed.",
+                    reply_parameters=reply_params,
+                )
+
+        elif choice == "both":
+            # Send video first, then audio
+            success = download_video(url, output_path, MAX_FILE_SIZE)
+            if success:
+                downloaded = None
+                for ext in ["mp4", "webm", "mkv"]:
+                    candidate = f"{base}.{ext}"
+                    if os.path.isfile(candidate):
+                        downloaded = candidate
+                        break
+                if downloaded:
+                    with open(downloaded, "rb") as f:
+                        await update.effective_message.reply_video(
+                            video=f,
+                            caption="" if _user_caption_prefs.get(
+                                update.effective_message.from_user.id, True
+                            ) else title[:1024],
+                            reply_parameters=reply_params,
+                        )
+            else:
+                await update.effective_message.reply_text(
+                    "Video download failed.",
+                    reply_parameters=reply_params,
+                )
+
+            # Then send audio
+            success = download_audio(url, f"{base}.mp3")
+            if success and os.path.isfile(f"{base}.mp3"):
+                with open(f"{base}.mp3", "rb") as f:
+                    await update.effective_message.reply_audio(
+                        audio=f,
+                        title=title[:128],
+                        reply_parameters=reply_params,
+                    )
+            else:
+                await update.effective_message.reply_text(
+                    "Audio download failed.",
+                    reply_parameters=reply_params,
+                )
+
+    except Exception as e:
+        await update.effective_message.reply_text(
+            f"Error: {e}",
+            reply_parameters=reply_params,
+        )
+    finally:
+        for ext in ["mp4", "webm", "mkv", "mp3", "m4a"]:
+            cleanup_file(f"{base}.{ext}")
 
 
 @with_request_logging
