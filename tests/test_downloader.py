@@ -1,4 +1,5 @@
 import json
+import sys
 from unittest.mock import patch, MagicMock
 from downloader import get_metadata, download_video, download_audio, download_instagram_image
 
@@ -70,35 +71,55 @@ def test_download_audio_uses_extract_audio():
         assert "--extract-audio" in call_args
         assert "--audio-format" in call_args
 
-def test_download_instagram_image_extracts_og_image():
-    html = '<html><head><meta property="og:image" content="https://example.com/photo.jpg"/></head></html>'
-    with patch("downloader.urllib.request.urlopen") as mock_urlopen:
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = html.encode()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
+def test_download_instagram_image_uses_instaloader():
+    mock_il = MagicMock()
+    with patch.dict("sys.modules", {"instaloader": mock_il}):
+        mock_L = MagicMock()
+        mock_il.Instaloader.return_value = mock_L
 
-        with patch("downloader.urllib.request.urlretrieve") as mock_retrieve:
-            mock_retrieve.return_value = None
-            with patch("downloader.os.path.isfile", return_value=True):
-                result = download_instagram_image("https://instagram.com/p/abc/", "/tmp/test.jpg")
-                assert result is True
-                mock_retrieve.assert_called_once_with("https://example.com/photo.jpg", "/tmp/test.jpg")
+        mock_post = MagicMock()
+        mock_post.typename = "GraphImage"
+        mock_post.is_video = False
+        mock_il.Post.from_shortcode.return_value = mock_post
+
+        with patch("downloader.os.listdir", return_value=["test_image.jpg"]):
+            with patch("downloader.shutil.copy2"):
+                with patch("downloader.os.path.isfile", return_value=True):
+                    with patch("downloader.tempfile.TemporaryDirectory"):
+                        result = download_instagram_image("https://instagram.com/p/ABC123/", "/tmp/test.jpg")
+                        assert result is True
 
 def test_download_instagram_image_returns_false_on_error():
-    with patch("downloader.urllib.request.urlopen", side_effect=Exception("Network error")):
+    mock_il = MagicMock()
+    mock_il.Instaloader.side_effect = Exception("Import error")
+    with patch.dict("sys.modules", {"instaloader": mock_il}):
         result = download_instagram_image("https://instagram.com/p/abc/", "/tmp/test.jpg")
         assert result is False
 
-def test_download_instagram_image_returns_false_when_no_og_image():
-    html = '<html><head><meta property="og:title" content="Test"/></head></html>'
-    with patch("downloader.urllib.request.urlopen") as mock_urlopen:
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = html.encode()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
+def test_download_instagram_image_returns_false_for_video():
+    mock_il = MagicMock()
+    with patch.dict("sys.modules", {"instaloader": mock_il}):
+        mock_L = MagicMock()
+        mock_il.Instaloader.return_value = mock_L
 
-        result = download_instagram_image("https://instagram.com/p/abc/", "/tmp/test.jpg")
+        mock_post = MagicMock()
+        mock_post.typename = "GraphVideo"
+        mock_post.is_video = True
+        mock_il.Post.from_shortcode.return_value = mock_post
+
+        result = download_instagram_image("https://instagram.com/p/ABC123/", "/tmp/test.jpg")
+        assert result is False
+
+def test_download_instagram_image_returns_false_for_carousel():
+    mock_il = MagicMock()
+    with patch.dict("sys.modules", {"instaloader": mock_il}):
+        mock_L = MagicMock()
+        mock_il.Instaloader.return_value = mock_L
+
+        mock_post = MagicMock()
+        mock_post.typename = "GraphSidecar"
+        mock_post.is_video = False
+        mock_il.Post.from_shortcode.return_value = mock_post
+
+        result = download_instagram_image("https://instagram.com/p/ABC123/", "/tmp/test.jpg")
         assert result is False

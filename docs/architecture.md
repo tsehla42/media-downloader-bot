@@ -19,17 +19,18 @@ Loads settings from `.env` via python-dotenv. Exports constants:
 
 ### utils.py
 Pure utility functions, no dependencies:
-- `detect_platform(url)` - Returns "youtube", "tiktok", "instagram", or None
+- `detect_platform(url)` - Returns "youtube", "tiktok", "instagram", or None (supports youtube.com, youtu.be, music.youtube.com)
 - `is_valid_url(text)` - Checks for HTTP(S) URL pattern
 - `extract_urls(text)` - Finds all URLs in text
 - `cleanup_file(path)` / `cleanup_dir(path)` - Safe file removal
 
 ### downloader.py
-Wraps yt-dlp binary calls via subprocess:
+Wraps yt-dlp binary calls via subprocess. Uses instaloader for Instagram image fallback:
 - `get_metadata(url)` - Runs `yt-dlp --dump-json`, returns dict with title/thumbnail/duration
 - `download_video(url, path, max_size, platform)` - Downloads video, retries with lower quality on failure
 - `download_audio(url, path)` - Extracts audio as MP3
 - `download_images(url, dir)` - Downloads carousel/gallery images
+- `download_instagram_image(url, path)` - Fallback for Instagram: uses instaloader to download single images when yt-dlp fails on image-only posts
 
 ### handlers.py
 Telegram message handlers with group detection:
@@ -42,6 +43,7 @@ Telegram message handlers with group detection:
   - In groups: silently ignores unsupported URLs, processes supported ones
   - In P2P: shows error messages for invalid/unsupported URLs
   - Respects ALLOWED_GROUP_IDS config
+- YouTube Music URLs (music.youtube.com) automatically sent as audio
 
 ### logging_config.py
 Structured JSON logging with zero external dependencies:
@@ -93,8 +95,13 @@ handlers.handle_url()
     │       │
     │       ├─ utils.detect_platform(url) → "youtube"
     │       ├─ downloader.get_metadata(url) → {title, thumbnail, ...}
-    │       ├─ downloader.download_video(url, path) → True
-    │       └─ send file to Telegram, cleanup temp files
+    │       │
+    │       ├─ [Instagram] If metadata fails → download_instagram_image() via instaloader
+    │       │
+    │       ├─ [YouTube Music] If music.youtube.com → download_audio() → reply_audio()
+    │       │   Otherwise → download_video() → reply_video()
+    │       │
+    │       └─ cleanup temp files
     │       │
     │       ▼
     │   @with_request_logging (decorator)
@@ -110,6 +117,7 @@ handlers.handle_url()
 ## External Dependencies
 
 - **yt-dlp** - Installed as system binary. Called via subprocess.
+- **instaloader** - Python library for Instagram image downloads. Used as fallback when yt-dlp fails on image-only posts.
 - **python-telegram-bot** - Telegram Bot API wrapper. Installed via pip.
 - **python-dotenv** - .env file loading.
 

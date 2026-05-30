@@ -3,7 +3,7 @@ import os
 import re
 import subprocess
 import shutil
-import urllib.request
+import tempfile
 
 MAX_FILE_SIZE_MB = 50
 
@@ -118,32 +118,50 @@ def download_images(url: str, output_dir: str) -> list[str]:
 
 
 def download_instagram_image(url: str, output_path: str) -> bool:
-    """Download a single image from an Instagram post by scraping og:image meta tag.
+    """Download a single image from an Instagram post using instaloader.
 
     Used as fallback when yt-dlp fails on image-only posts.
     """
     try:
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-            },
+        import instaloader
+        import shutil as _shutil
+
+        L = instaloader.Instaloader(
+            download_pictures=False,
+            download_video_thumbnails=False,
+            download_geotags=False,
+            download_comments=False,
+            save_metadata=False,
+            compress_json=False,
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            html = resp.read().decode("utf-8", errors="ignore")
 
-        # Try og:image meta tag first
-        match = re.search(r'<meta\s+(?:property|name)="og:image"\s+content="([^"]+)"', html)
-        if not match:
-            match = re.search(r'<meta\s+content="([^"]+)"\s+(?:property|name)="og:image"', html)
-
+        # Extract shortcode from URL (e.g., /p/ABC123/ or /reel/ABC123/)
+        shortcode = None
+        match = re.search(r'/(?:p|reel)/([A-Za-z0-9_-]+)', url)
         if match:
-            image_url = match.group(1).replace("&amp;", "&")
-            urllib.request.urlretrieve(image_url, output_path)
-            return os.path.isfile(output_path)
+            shortcode = match.group(1)
 
-        return False
+        if not shortcode:
+            return False
+
+        post = instaloader.Post.from_shortcode(L.context, shortcode)
+
+        # Only handle single image posts (not carousels or videos)
+        if post.typename == "GraphSidecar":
+            return False  # Carousels are handled elsewhere
+
+        if not post.is_video:
+            # Download the image
+            with tempfile.TemporaryDirectory() as tmpdir:
+                L.download_post(post, target=tmpdir)
+                # Find the downloaded image file
+                for f in os.listdir(tmpdir):
+                    if f.endswith(('.jpg', '.jpeg', '.png', '.webp')) and not f.endswith('_caption.jpg'):
+                        src = os.path.join(tmpdir, f)
+                        _shutil.copy2(src, output_path)
+                        return os.path.isfile(output_path)
+            return False
+
+        return False  # Videos are handled by yt-dlp
     except Exception:
         return False
