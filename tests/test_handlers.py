@@ -398,3 +398,50 @@ def test_has_video_available_with_mp3():
 def test_has_video_available_missing_ext():
     """_has_video_available returns False when ext key is missing."""
     assert _has_video_available({}) is False
+
+
+@pytest.mark.asyncio
+async def test_ytmusic_with_video_sends_inline_keyboard():
+    """YouTube Music with video available shows inline keyboard instead of downloading."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.reply_text = AsyncMock()
+    update.message.reply_audio = AsyncMock()
+    update.message.reply_video = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={"title": "Test Song", "ext": "mp4"}):
+        await _download_and_send(update, context, "https://music.youtube.com/watch?v=abc")
+
+    # Should NOT send audio or video directly
+    update.message.reply_audio.assert_not_called()
+    update.message.reply_video.assert_not_called()
+
+    # Should reply with inline keyboard
+    update.message.reply_text.assert_called_once()
+    kwargs = update.message.reply_text.call_args[1]
+    assert "reply_markup" in kwargs
+    markup = kwargs["reply_markup"]
+    from telegram import InlineKeyboardMarkup
+    assert isinstance(markup, InlineKeyboardMarkup)
+    buttons = markup.inline_keyboard[0]
+    assert len(buttons) == 3
+    assert buttons[0].text == "Audio"
+    assert buttons[1].text == "Video"
+    assert buttons[2].text == "Audio + Video"
+
+    # Verify callback data format
+    assert buttons[0].callback_data == "ytm|42|audio"
+    assert buttons[1].callback_data == "ytm|42|video"
+    assert buttons[2].callback_data == "ytm|42|both"
+
+    # Verify pending request stored in user_data
+    assert 42 in context.user_data
+    assert context.user_data[42]["url"] == "https://music.youtube.com/watch?v=abc"
+    assert context.user_data[42]["title"] == "Test Song"
+
+    # Verify request marked as success
+    assert context.user_data["_request_success"] is True

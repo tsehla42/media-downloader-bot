@@ -1,7 +1,7 @@
 import asyncio
 import os
 import uuid
-from telegram import Update, InputMediaPhoto
+from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
@@ -251,11 +251,29 @@ async def _download_and_send(
                         os.remove(img)
                 return
 
-        # YouTube Music: send as audio (these are typically songs with cover art, not real videos)
+        # YouTube Music: check if video is available, otherwise send as audio
         is_ytmusic = "music.youtube.com" in url
 
         if is_ytmusic:
-            success = download_audio(url, f"{base}.mp3")
+            if _has_video_available(metadata):
+                # Show inline keyboard for format selection
+                msg_id = update.message.message_id
+                keyboard = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("Audio", callback_data=f"ytm|{msg_id}|audio"),
+                    InlineKeyboardButton("Video", callback_data=f"ytm|{msg_id}|video"),
+                    InlineKeyboardButton("Audio + Video", callback_data=f"ytm|{msg_id}|both"),
+                ]])
+                # Store pending request for callback handler
+                context.user_data[msg_id] = {"url": url, "title": title}
+                await update.message.reply_text(
+                    f"🎵 {title}\n\nChoose format:",
+                    reply_markup=keyboard,
+                    reply_parameters=reply_params,
+                )
+                context.user_data["_request_success"] = True
+                return
+            else:
+                success = download_audio(url, f"{base}.mp3")
         else:
             success = download_video(url, output_path, MAX_FILE_SIZE, platform=platform)
 
