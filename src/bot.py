@@ -1,19 +1,33 @@
 import logging
 from logging_config import setup_logging
-from telegram import BotCommand
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
-    InlineQueryHandler,
+    ContextTypes,
     filters,
 )
 
 from config import BOT_TOKEN
 from handlers import start_command, help_command, handle_url, caption_command
-from inline import inline_query
 
 logger = logging.getLogger(__name__)
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error and send a telegram message to inform the user."""
+    logger.error("Exception while handling an update:", exc_info=context.error)
+
+    # Send a message to the user if possible
+    if isinstance(update, Update) and update.effective_chat:
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="An error occurred while processing your request. Please try again later.",
+            )
+        except Exception as e:
+            logger.error("Failed to send error message to user: %s", e)
 
 COMMANDS = [
     BotCommand("start", "Start the bot"),
@@ -39,14 +53,16 @@ def main() -> None:
 
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
+    # Add error handler
+    app.add_error_handler(error_handler)
+
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("caption", caption_command))
-    app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
 
     logger.info("Bot started")
-    app.run_polling(allowed_updates=["message", "inline_query"])
+    app.run_polling(allowed_updates=["message"])
 
 
 if __name__ == "__main__":
