@@ -269,3 +269,107 @@ async def test_handle_url_no_urls_found(update, context):
         assert "valid URL" in text
         kwargs = update.message.reply_text.call_args[1]
         assert kwargs["reply_parameters"] == {"message_id": update.message.message_id}
+
+
+@pytest.mark.asyncio
+async def test_handle_url_group_ignores_unsupported_urls(update, context):
+    """In groups, unsupported URLs are silently ignored (no error reply)."""
+    update.message.text = "https://example.com/video"
+    update.effective_chat.type = "group"
+
+    with patch("handlers.detect_platform", return_value=None):
+        await handle_url(update, context)
+        # Should NOT reply with error in groups
+        update.message.reply_text.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_handle_url_group_processes_supported_urls(update, context):
+    """In groups, supported URLs are processed normally."""
+    update.message.text = "https://youtube.com/watch?v=abc"
+    update.effective_chat.type = "group"
+
+    mock_typing_task = MagicMock()
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={"title": "Test"}), \
+         patch("handlers.download_video", return_value=True), \
+         patch("handlers.cleanup_file"), \
+         patch("os.path.isfile", return_value=True), \
+         patch("builtins.open", MagicMock()), \
+         patch("handlers._start_typing", return_value=mock_typing_task):
+        update.message.reply_video = AsyncMock()
+        await handle_url(update, context)
+        update.message.reply_video.assert_called_once()
+        update.message.reply_text.assert_not_called()
+        mock_typing_task.cancel.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_handle_url_group_mixed_urls(update, context):
+    """In groups, only supported URLs are downloaded, unsupported are ignored."""
+    update.message.text = "https://example.com/video https://youtube.com/watch?v=abc"
+    update.effective_chat.type = "group"
+
+    def mock_detect_platform(url):
+        if "youtube" in url:
+            return "youtube"
+        return None
+
+    mock_typing_task = MagicMock()
+
+    with patch("handlers.detect_platform", side_effect=mock_detect_platform), \
+         patch("handlers.get_metadata", return_value={"title": "Test"}), \
+         patch("handlers.download_video", return_value=True), \
+         patch("handlers.cleanup_file"), \
+         patch("os.path.isfile", return_value=True), \
+         patch("builtins.open", MagicMock()), \
+         patch("handlers._start_typing", return_value=mock_typing_task):
+        update.message.reply_video = AsyncMock()
+        await handle_url(update, context)
+        # Only YouTube URL should be processed
+        update.message.reply_video.assert_called_once()
+        update.message.reply_text.assert_not_called()
+        mock_typing_task.cancel.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_url_group_shows_error_for_failed_metadata(update, context):
+    """In groups, error messages are shown when supported URLs fail to download."""
+    update.message.text = "https://youtube.com/watch?v=abc"
+    update.effective_chat.type = "group"
+
+    mock_typing_task = MagicMock()
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value=None), \
+         patch("handlers._start_typing", return_value=mock_typing_task):
+        await handle_url(update, context)
+        # Should show error message for failed metadata
+        update.message.reply_text.assert_called_once()
+        text = update.message.reply_text.call_args[0][0]
+        assert "Could not fetch video info" in text
+        mock_typing_task.cancel.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_handle_url_p2p_still_shows_errors(update, context):
+    """In P2P, unsupported URLs still show error message."""
+    update.message.text = "https://example.com/video"
+    update.effective_chat.type = "private"
+
+    with patch("handlers.detect_platform", return_value=None):
+        await handle_url(update, context)
+        update.message.reply_text.assert_called_once()
+        text = update.message.reply_text.call_args[0][0]
+        assert "Unsupported" in text
+
+@pytest.mark.asyncio
+async def test_handle_url_group_respects_allowlist(update, context):
+    """Groups not in ALLOWED_GROUP_IDS are ignored."""
+    update.message.text = "https://youtube.com/watch?v=abc"
+    update.effective_chat.type = "group"
+    update.effective_chat.id = -999999
+
+    with patch("handlers.ALLOWED_GROUP_IDS", [-100100100]), \
+         patch("handlers.detect_platform", return_value="youtube"):
+        await handle_url(update, context)
+        # Should not process because group not in allowlist
+        update.message.reply_video.assert_not_called()
