@@ -338,6 +338,7 @@ async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         _, msg_id_str, choice = query.data.split("|")
         msg_id = int(msg_id_str)
     except (ValueError, IndexError):
+        await query.answer()
         return
 
     pending = context.user_data.pop(msg_id, None)
@@ -453,6 +454,12 @@ async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     "Audio download failed.",
                     reply_parameters=reply_params,
                 )
+
+        else:
+            await update.effective_message.reply_text(
+                "Unknown format choice.",
+                reply_parameters=reply_params,
+            )
 
     except Exception as e:
         await update.effective_message.reply_text(
