@@ -3,6 +3,7 @@ from logging_config import setup_logging
 from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
     ContextTypes,
@@ -10,7 +11,7 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN
-from handlers import start_command, help_command, handle_url, caption_command
+from handlers import start_command, help_command, handle_url, caption_command, ytmusic_callback
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,11 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("caption", caption_command))
+    app.add_handler(CallbackQueryHandler(ytmusic_callback, pattern="^ytm\\|"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
 
     logger.info("Bot started")
-    app.run_polling(allowed_updates=["message"])
+    app.run_polling(allowed_updates=["message", "callback_query"])
 
 
 if __name__ == "__main__":
