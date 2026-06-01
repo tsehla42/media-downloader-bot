@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import shutil
+import sys
 import tempfile
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,25 @@ def _find_ytdlp() -> str:
             "yt-dlp not found. Install with: pip install yt-dlp"
         )
     return path
+
+
+def _find_gallery_dl() -> str | None:
+    """Find gallery-dl binary path.
+
+    Checks shutil.which first, then falls back to the venv's bin/ directory
+    (needed when VS Code or Docker strips the venv from PATH).
+    """
+    path = shutil.which("gallery-dl")
+    if path:
+        return path
+
+    # Fallback: look next to the running Python executable (venv bin/ dir)
+    python_dir = os.path.dirname(os.path.abspath(sys.executable))
+    candidate = os.path.join(python_dir, "gallery-dl")
+    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+        return candidate
+
+    return None
 
 
 def get_metadata(url: str) -> dict | None:
@@ -141,7 +161,7 @@ def download_instagram_gallery_dl(url: str, output_dir: str, cookies: str = "") 
         logger.warning("gallery-dl: no cookies path provided")
         return []
 
-    gd_path = shutil.which("gallery-dl")
+    gd_path = _find_gallery_dl()
     if not gd_path:
         logger.warning("gallery-dl: binary not found in PATH")
         return []
