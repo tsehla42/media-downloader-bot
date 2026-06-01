@@ -768,3 +768,172 @@ async def test_download_and_send_instagram_gallery_dl_fails():
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args[0][0]
     assert "Could not fetch post" in text
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_bot_added():
+    """Handler logs when bot is added to a chat."""
+    from handlers import my_chat_member_handler
+
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = -100789
+    update.my_chat_member.chat.title = "Test Group"
+    update.my_chat_member.chat.type = "supergroup"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "left"
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "member"
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 123456
+    update.my_chat_member.from_user.first_name = "Admin"
+    update.my_chat_member.from_user.username = "admin"
+
+    context = MagicMock()
+
+    with patch("handlers.log_bot_added_to_chat") as mock_log:
+        await my_chat_member_handler(update, context)
+        mock_log.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_bot_removed():
+    """Handler logs when bot is removed from a chat."""
+    from handlers import my_chat_member_handler
+
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = -100789
+    update.my_chat_member.chat.title = "Test Group"
+    update.my_chat_member.chat.type = "group"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "member"
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "left"
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 123456
+    update.my_chat_member.from_user.first_name = "Admin"
+    update.my_chat_member.from_user.username = "admin"
+
+    context = MagicMock()
+
+    with patch("handlers.log_bot_removed_from_chat") as mock_log:
+        await my_chat_member_handler(update, context)
+        mock_log.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_bot_promoted():
+    """Handler logs when bot is promoted to admin."""
+    from handlers import my_chat_member_handler
+
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = -100789
+    update.my_chat_member.chat.title = "Test Group"
+    update.my_chat_member.chat.type = "supergroup"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "member"
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "administrator"
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 123456
+    update.my_chat_member.from_user.first_name = "Admin"
+    update.my_chat_member.from_user.username = "admin"
+
+    context = MagicMock()
+
+    with patch("handlers.log_bot_status_changed") as mock_log:
+        await my_chat_member_handler(update, context)
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        assert call_args[0][2] == "member"
+        assert call_args[0][3] == "administrator"
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_bot_demoted():
+    """Handler logs when bot is demoted from admin."""
+    from handlers import my_chat_member_handler
+
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = -100789
+    update.my_chat_member.chat.title = "Test Group"
+    update.my_chat_member.chat.type = "supergroup"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "administrator"
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "member"
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 123456
+    update.my_chat_member.from_user.first_name = "Admin"
+    update.my_chat_member.from_user.username = "admin"
+
+    context = MagicMock()
+
+    with patch("handlers.log_bot_status_changed") as mock_log:
+        await my_chat_member_handler(update, context)
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        assert call_args[0][2] == "administrator"
+        assert call_args[0][3] == "member"
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_ignores_no_update():
+    """Handler returns early when my_chat_member is None."""
+    from handlers import my_chat_member_handler
+
+    update = MagicMock()
+    update.my_chat_member = None
+    context = MagicMock()
+
+    await my_chat_member_handler(update, context)
+    # No assertions needed - just verify no exception
+
+
+@pytest.mark.asyncio
+async def test_start_command_logs_new_user():
+    """start_command logs when a new user starts the bot."""
+    from handlers import start_command
+
+    update = MagicMock()
+    update.message = AsyncMock()
+    update.message.from_user = MagicMock()
+    update.message.from_user.id = 99999
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {"bot_username": "testbot"}
+
+    with patch("handlers.is_new_user", return_value=True) as mock_is_new, \
+         patch("handlers.log_new_user") as mock_log:
+        await start_command(update, context)
+        mock_is_new.assert_called_once_with(99999)
+        mock_log.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_start_command_does_not_log_returning_user():
+    """start_command does not log when a returning user starts the bot."""
+    from handlers import start_command
+
+    update = MagicMock()
+    update.message = AsyncMock()
+    update.message.from_user = MagicMock()
+    update.message.from_user.id = 99999
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {"bot_username": "testbot"}
+
+    with patch("handlers.is_new_user", return_value=False) as mock_is_new, \
+         patch("handlers.log_new_user") as mock_log:
+        await start_command(update, context)
+        mock_is_new.assert_called_once_with(99999)
+        mock_log.assert_not_called()
