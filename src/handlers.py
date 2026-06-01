@@ -286,7 +286,7 @@ async def _download_and_send(
 
             context.user_data["_request_success"] = False
             await update.message.reply_text(
-                "Could not fetch video info. The content may be private or the URL invalid.",
+                "Could not fetch post. The content may be private or the URL is invalid.",
                 reply_parameters=reply_params,
             )
             return

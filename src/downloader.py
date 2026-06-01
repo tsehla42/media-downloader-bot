@@ -1,10 +1,13 @@
 import glob
 import json
+import logging
 import os
 import re
 import subprocess
 import shutil
 import tempfile
+
+logger = logging.getLogger(__name__)
 
 MAX_FILE_SIZE_MB = 50
 
@@ -135,20 +138,24 @@ def download_instagram_gallery_dl(url: str, output_dir: str, cookies: str = "") 
     Returns list of downloaded file paths, or empty list on failure.
     """
     if not cookies:
+        logger.warning("gallery-dl: no cookies path provided")
         return []
 
     gd_path = shutil.which("gallery-dl")
     if not gd_path:
+        logger.warning("gallery-dl: binary not found in PATH")
         return []
 
     # Resolve to absolute path so subprocess finds it regardless of cwd
     cookies = os.path.abspath(cookies)
     if not os.path.isfile(cookies):
+        logger.warning("gallery-dl: cookies file not found: %s", cookies)
         return []
 
     os.makedirs(output_dir, exist_ok=True)
     output_dir = os.path.abspath(output_dir)
 
+    logger.info("gallery-dl: downloading %s to %s (cookies: %s)", url, output_dir, cookies)
     result = subprocess.run(
         [
             gd_path,
@@ -162,14 +169,17 @@ def download_instagram_gallery_dl(url: str, output_dir: str, cookies: str = "") 
     )
 
     if result.returncode != 0:
+        logger.warning("gallery-dl: failed (code %d): %s", result.returncode, result.stderr[:200])
         return []
 
-    return sorted(
+    images = sorted(
         glob.glob(f"{output_dir}/**/*.jpg", recursive=True)
         + glob.glob(f"{output_dir}/**/*.jpeg", recursive=True)
         + glob.glob(f"{output_dir}/**/*.png", recursive=True)
         + glob.glob(f"{output_dir}/**/*.webp", recursive=True)
     )
+    logger.info("gallery-dl: found %d images", len(images))
+    return images
 
 
 def download_instagram_image(url: str, output_path: str) -> bool:
