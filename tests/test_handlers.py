@@ -259,6 +259,76 @@ async def test_handle_url_starts_typing_for_audio():
 
 
 @pytest.mark.asyncio
+async def test_audio_command_uses_title_for_filename():
+    """audio_command fetches metadata and uses title in filename and reply."""
+    update = MagicMock()
+    update.message.text = "/audio https://youtube.com/watch?v=abc"
+    update.message.message_id = 42
+    update.message.from_user.id = 123456
+    update.message.chat.id = 123456
+    update.message.reply_audio = AsyncMock()
+
+    context = MagicMock()
+    context.bot.send_chat_action = AsyncMock()
+    context.user_data = {}
+
+    mock_typing_task = MagicMock()
+
+    async def fake_start_typing(chat_id, bot):
+        return mock_typing_task
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={"title": "My Test Song"}), \
+         patch("handlers.download_audio", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=1024*1024), \
+         patch("handlers.cleanup_file"), \
+         patch("builtins.open", MagicMock()), \
+         patch("handlers._start_typing", side_effect=fake_start_typing):
+        await audio_command(update, context)
+
+    update.message.reply_audio.assert_called_once()
+    kwargs = update.message.reply_audio.call_args[1]
+    assert kwargs["title"] == "My Test Song"
+    assert kwargs["reply_parameters"] == {"message_id": 42}
+
+
+@pytest.mark.asyncio
+async def test_audio_command_no_metadata_omits_title():
+    """audio_command omits title when metadata unavailable."""
+    update = MagicMock()
+    update.message.text = "/audio https://youtube.com/watch?v=abc"
+    update.message.message_id = 42
+    update.message.from_user.id = 123456
+    update.message.chat.id = 123456
+    update.message.reply_audio = AsyncMock()
+
+    context = MagicMock()
+    context.bot.send_chat_action = AsyncMock()
+    context.user_data = {}
+
+    mock_typing_task = MagicMock()
+
+    async def fake_start_typing(chat_id, bot):
+        return mock_typing_task
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value=None), \
+         patch("handlers.download_audio", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=1024*1024), \
+         patch("handlers.cleanup_file"), \
+         patch("builtins.open", MagicMock()), \
+         patch("handlers._start_typing", side_effect=fake_start_typing):
+        await audio_command(update, context)
+
+    update.message.reply_audio.assert_called_once()
+    kwargs = update.message.reply_audio.call_args[1]
+    assert "title" not in kwargs
+    assert kwargs["reply_parameters"] == {"message_id": 42}
+
+
+@pytest.mark.asyncio
 async def test_handle_url_no_urls_found(update, context):
     """handle_url replies when extract_urls returns empty."""
     update.message.text = "https://example.com"
