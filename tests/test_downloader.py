@@ -1,7 +1,7 @@
 import json
 import sys
 from unittest.mock import patch, MagicMock
-from downloader import get_metadata, download_video, download_audio, download_instagram_image, download_instagram_gallery_dl
+from downloader import get_metadata, download_video, download_audio, download_instagram_image, download_instagram_gallery_dl, _find_gallery_dl
 
 SAMPLE_METADATA = {
     "id": "abc123",
@@ -127,7 +127,7 @@ def test_download_instagram_image_returns_false_for_carousel():
 
 def test_download_instagram_gallery_dl_calls_gallery_dl():
     with patch("downloader.subprocess.run") as mock_run, \
-         patch("downloader.shutil.which", return_value="/usr/bin/gallery-dl"), \
+         patch("downloader._find_gallery_dl", return_value="/usr/bin/gallery-dl"), \
          patch("downloader.os.path.isfile", return_value=True), \
          patch("downloader.glob.glob", side_effect=[
              ["/tmp/test_output/image.jpg"],  # *.jpg
@@ -155,7 +155,7 @@ def test_download_instagram_gallery_dl_calls_gallery_dl():
 
 def test_download_instagram_gallery_dl_returns_empty_on_failure():
     with patch("downloader.subprocess.run") as mock_run, \
-         patch("downloader.shutil.which", return_value="/usr/bin/gallery-dl"):
+         patch("downloader._find_gallery_dl", return_value="/usr/bin/gallery-dl"):
         mock_run.return_value = MagicMock(
             returncode=1,
             stdout="",
@@ -181,10 +181,22 @@ def test_download_instagram_gallery_dl_returns_empty_without_cookies():
 
 
 def test_download_instagram_gallery_dl_returns_empty_when_not_installed():
-    with patch("downloader.shutil.which", return_value=None):
+    with patch("downloader._find_gallery_dl", return_value=None):
         result = download_instagram_gallery_dl(
             "https://instagram.com/p/ABC123/",
             "/tmp/test_output",
             cookies="/tmp/cookies.txt"
         )
         assert result == []
+
+
+def test_find_gallery_dl_uses_venv_fallback():
+    """_find_gallery_dl falls back to venv bin/ when not in PATH."""
+    import sys
+    with patch("downloader.shutil.which", return_value=None), \
+         patch("downloader.sys.executable", "/home/user/.venv/bin/python"), \
+         patch("downloader.os.path.dirname", return_value="/home/user/.venv/bin"), \
+         patch("downloader.os.path.isfile", return_value=True), \
+         patch("downloader.os.access", return_value=True):
+        result = _find_gallery_dl()
+        assert result == "/home/user/.venv/bin/gallery-dl"
