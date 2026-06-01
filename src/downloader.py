@@ -148,7 +148,6 @@ def download_instagram_gallery_dl(url: str, output_dir: str, cookies: str = "") 
             gd_path,
             "-d", output_dir,
             "--cookies", cookies,
-            "--no-playlist",
             url,
         ],
         capture_output=True,
