@@ -14,6 +14,7 @@ Loads settings from `.env` via python-dotenv. Exports constants:
 - `DOWNLOAD_DIR` - Temp directory for downloads (default: /tmp/bot-downloads)
 - `MAX_FILE_SIZE` - Max download size in MB (default: 50)
 - `MAX_CONCURRENT_DOWNLOADS` - Concurrency limit (default: 3)
+- `INSTAGRAM_COOKIES` - Path to cookies.txt for gallery-dl Instagram auth (empty = no auth)
 - `LOG_OUTPUT` - Logging destination: "stdout" (dev) or "file" (prod)
 - `LOG_DIR` - Log file directory (default: logs)
 
@@ -25,12 +26,14 @@ Pure utility functions, no dependencies:
 - `cleanup_file(path)` / `cleanup_dir(path)` - Safe file removal
 
 ### downloader.py
-Wraps yt-dlp binary calls via subprocess. Uses instaloader for Instagram image fallback:
+Wraps yt-dlp and gallery-dl binary calls via subprocess. Uses instaloader as last-resort Instagram fallback:
+- `_find_ytdlp()` / `_find_gallery_dl()` - Locate binaries (checks PATH, then venv bin/ for VS Code compatibility)
 - `get_metadata(url)` - Runs `yt-dlp --dump-json`, returns dict with title/thumbnail/duration
 - `download_video(url, path, max_size, platform)` - Downloads video, retries with lower quality on failure
 - `download_audio(url, path)` - Extracts audio as MP3
-- `download_images(url, dir)` - Downloads carousel/gallery images
-- `download_instagram_image(url, path)` - Fallback for Instagram: uses instaloader to download single images when yt-dlp fails on image-only posts
+- `download_images(url, dir)` - Downloads carousel/gallery images via gallery-dl (with cookies), falls back to yt-dlp thumbnail extraction
+- `download_instagram_gallery_dl(url, dir, cookies)` - Downloads Instagram images using gallery-dl with browser-exported cookies for authentication
+- `download_instagram_image(url, path)` - Last-resort fallback: uses instaloader to download single images (no auth, often gets 403)
 
 ### handlers.py
 Telegram message handlers with group detection:
@@ -96,7 +99,8 @@ handlers.handle_url()
     │       ├─ utils.detect_platform(url) → "youtube"
     │       ├─ downloader.get_metadata(url) → {title, thumbnail, ...}
     │       │
-    │       ├─ [Instagram] If metadata fails → download_instagram_image() via instaloader
+    │       ├─ [Instagram] If metadata fails → download_instagram_gallery_dl() via gallery-dl
+    │       │   If gallery-dl fails → download_instagram_image() via instaloader (fallback)
     │       │
     │       ├─ [YouTube Music] If music.youtube.com → download_audio() → reply_audio()
     │       │   Otherwise → download_video() → reply_video()
@@ -117,7 +121,8 @@ handlers.handle_url()
 ## External Dependencies
 
 - **yt-dlp** - Installed as system binary. Called via subprocess.
-- **instaloader** - Python library for Instagram image downloads. Used as fallback when yt-dlp fails on image-only posts.
+- **gallery-dl** - Installed as system binary. Called via subprocess for Instagram image downloads with cookies authentication.
+- **instaloader** - Python library. Last-resort Instagram fallback (no auth, often gets 403 from Instagram's GraphQL API).
 - **python-telegram-bot** - Telegram Bot API wrapper. Installed via pip.
 - **python-dotenv** - .env file loading.
 
