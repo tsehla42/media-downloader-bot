@@ -27,10 +27,12 @@ media-downloader-bot/
 ├── docs/
 │   ├── README.md       # Project overview
 │   └── architecture.md # Module responsibilities and data flow
+├── logs/               # Persistent log files (gitignored, mounted as volume)
 ├── requirements.txt    # Dependencies
 ├── .env.example        # Config template
-├── Dockerfile          # Multi-stage build
-├── docker-compose.yml  # Container orchestration
+├── Dockerfile          # Multi-stage build (Python 3.12-slim, yt-dlp, gallery-dl, ffmpeg)
+├── docker-compose.yml  # Container orchestration with volume mounts
+├── .dockerignore       # Excludes .venv, __pycache__, logs, cookies.txt from build
 ├── compose.sh          # Build + deploy script
 └── conftest.py         # Adds src/ to Python path for tests
 ```
@@ -48,14 +50,16 @@ media-downloader-bot/
 
 ## Data Flow
 
-1. User sends URL -> `handlers.py` detects if group or P2P chat via `is_group_chat()`
-2. In groups: silently ignore unsupported URLs, only process supported ones
-3. `handlers.py` detects platform via `utils.detect_platform()`
-4. `handlers.py` calls `downloader.get_metadata()` to fetch title/thumbnail
-5. If metadata fails for Instagram: try `download_instagram_gallery_dl()` with cookies
-6. If URL is from music.youtube.com: download as audio (MP3), otherwise download as video
-7. `handlers.py` sends file to Telegram, cleans up temp files
-8. `@with_request_logging` decorator logs request lifecycle automatically:
+1. User sends URL or `/audio` command -> `handlers.py` routes to appropriate handler
+2. `/audio` → `audio_command()` → `download_audio()` → `reply_audio()` (logged via `@with_request_logging` + `_log` calls)
+3. Regular URL → `handle_url()` detects group or P2P chat via `is_group_chat()`
+4. In groups: silently ignore unsupported URLs, only process supported ones
+5. `handlers.py` detects platform via `utils.detect_platform()`
+6. `handlers.py` calls `downloader.get_metadata()` to fetch title/thumbnail
+7. If metadata fails for Instagram: try `download_instagram_gallery_dl()` with cookies
+8. If URL is from music.youtube.com: show format picker (Audio/Video/Both), otherwise download as video
+9. `handlers.py` sends file to Telegram, cleans up temp files
+10. `@with_request_logging` decorator logs request lifecycle automatically:
    - `request_received` when handler starts
    - `request_completed` when handler finishes (success or expected failure)
    - `request_failed` when handler throws exception
@@ -68,6 +72,7 @@ media-downloader-bot/
 - **User allowlist** - ALLOWED_USER_IDS in .env. Empty = allow all.
 - **Group auto-detect** - Bot silently ignores unsupported URLs in groups. Optional ALLOWED_GROUP_IDS restricts which groups.
 - **Structured logging** - JSON logs for easy querying. stdout for dev, rotating files for prod. Zero external dependencies.
+- **Docker deployment** - Multi-stage build with yt-dlp, gallery-dl, and ffmpeg. Persistent logs via volume mount to `./logs/`.
 
 ## Running Tests
 
@@ -88,6 +93,15 @@ All 78 tests use mocked subprocess calls - no real downloads needed.
 **Add logging to a handler:** Apply `@with_request_logging` decorator from `logging_config`. The decorator automatically logs request lifecycle (received/completed/failed).
 
 **Setup for groups:** Disable privacy mode in @BotFather (`/setprivacy` → Disable). Optionally set `ALLOWED_GROUP_IDS` in .env to restrict which groups. Add bot to target groups.
+
+**Run with Docker:**
+```bash
+cp .env.example .env  # Add BOT_TOKEN
+docker compose up -d --build
+docker logs -f media-downloader-bot  # Watch logs
+```
+
+**View persistent logs:** Logs are written to `./logs/` on the host (mounted as volume). Files: `requests.dev.jsonl`, `errors.dev.jsonl`.
 
 ## Docs Index
 
