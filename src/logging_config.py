@@ -4,16 +4,27 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from logging.handlers import RotatingFileHandler
+
+# Kyiv timezone: UTC+2 (winter) / UTC+3 (summer, EEST)
+# Python's datetime doesn't have native DST support without zoneinfo,
+# so we use a fixed offset that we toggle via env var or auto-detect.
+# For simplicity, use the zoneinfo library (Python 3.9+).
+try:
+    from zoneinfo import ZoneInfo
+    _KYIV_TZ = ZoneInfo("Europe/Kyiv")
+except ImportError:
+    # Fallback: fixed UTC+2 (winter time — safe default for most of the year)
+    _KYIV_TZ = timezone(timedelta(hours=2))
 
 
 class JSONFormatter(logging.Formatter):
-    """Custom formatter that outputs JSON."""
+    """Custom formatter that outputs JSON with Kyiv timezone."""
 
     def format(self, record: logging.LogRecord) -> str:
         log_data = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(_KYIV_TZ).isoformat(),
             "level": record.levelname,
             "message": record.getMessage(),
         }

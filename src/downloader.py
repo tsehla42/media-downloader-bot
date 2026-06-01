@@ -103,6 +103,7 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
 def download_audio(url: str, output_path: str) -> bool:
     """Extract audio as MP3."""
     ytdlp = _find_ytdlp()
+    logger.info("download_audio: running yt-dlp for %s", url)
     result = subprocess.run(
         [
             ytdlp,
@@ -116,6 +117,10 @@ def download_audio(url: str, output_path: str) -> bool:
         text=True,
         timeout=300,
     )
+    if result.returncode != 0:
+        logger.warning("download_audio: yt-dlp failed (code %d): %s", result.returncode, result.stderr[:500])
+    else:
+        logger.info("download_audio: yt-dlp ok for %s", url)
     return result.returncode == 0
 
 

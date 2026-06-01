@@ -45,7 +45,7 @@ def test_config_custom_log_dir():
 import json
 import logging
 import logging.handlers
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 
 def test_json_formatter_basic():
@@ -93,7 +93,7 @@ def test_json_formatter_with_extra():
 
 
 def test_json_formatter_timestamp_format():
-    """Timestamp is ISO 8601 UTC format."""
+    """Timestamp is ISO 8601 format with timezone offset (Kyiv: UTC+2/+3)."""
     from logging_config import JSONFormatter
 
     formatter = JSONFormatter()
@@ -111,7 +111,11 @@ def test_json_formatter_timestamp_format():
 
     # Parse timestamp to verify format
     ts = datetime.fromisoformat(data["timestamp"].replace("Z", "+00:00"))
-    assert ts.tzinfo == timezone.utc
+    # Kyiv timezone: UTC+2 (winter) or UTC+3 (summer)
+    assert ts.tzinfo is not None
+    offset = ts.tzinfo.utcoffset(ts)
+    assert offset in (timezone(timedelta(hours=2)).utcoffset(ts),
+                      timezone(timedelta(hours=3)).utcoffset(ts))
 
 
 def test_setup_logging_stdout():
