@@ -652,3 +652,72 @@ async def test_ytmusic_callback_malformed_data():
     update.callback_query.answer.assert_called_once()
     # Should not crash or try to delete anything
     update.callback_query.message.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_instagram_uses_gallery_dl_fallback():
+    """When yt-dlp fails on Instagram, _download_and_send tries gallery-dl first."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.reply_photo = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="instagram"), \
+         patch("handlers.get_metadata", return_value=None), \
+         patch("handlers.download_instagram_gallery_dl", return_value=["/tmp/img.jpg"]), \
+         patch("builtins.open", MagicMock()), \
+         patch("handlers.cleanup_file"):
+        await _download_and_send(update, context, "https://instagram.com/p/ABC123/")
+
+    update.message.reply_photo.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_instagram_falls_back_to_instaloader():
+    """When gallery-dl fails on Instagram, _download_and_send tries instaloader."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.reply_photo = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="instagram"), \
+         patch("handlers.get_metadata", return_value=None), \
+         patch("handlers.download_instagram_gallery_dl", return_value=[]), \
+         patch("handlers.download_instagram_image", return_value=True), \
+         patch("builtins.open", MagicMock()), \
+         patch("handlers.cleanup_file"):
+        await _download_and_send(update, context, "https://instagram.com/p/ABC123/")
+
+    update.message.reply_photo.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_instagram_all_fallbacks_fail():
+    """When both gallery-dl and instaloader fail, show error message."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.reply_photo = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="instagram"), \
+         patch("handlers.get_metadata", return_value=None), \
+         patch("handlers.download_instagram_gallery_dl", return_value=[]), \
+         patch("handlers.download_instagram_image", return_value=False):
+        await _download_and_send(update, context, "https://instagram.com/p/ABC123/")
+
+    update.message.reply_photo.assert_not_called()
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "Could not fetch video info" in text
