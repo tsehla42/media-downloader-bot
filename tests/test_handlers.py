@@ -177,7 +177,7 @@ async def test_download_and_send_metadata_failure():
         await _download_and_send(update, context, "https://youtube.com/watch?v=abc")
         update.message.reply_text.assert_called_once()
         text = update.message.reply_text.call_args[0][0]
-        assert "Could not fetch video info" in text
+        assert "Could not fetch post" in text
         kwargs = update.message.reply_text.call_args[1]
         assert kwargs["reply_parameters"] == {"message_id": 42}
 
@@ -346,7 +346,7 @@ async def test_handle_url_group_shows_error_for_failed_metadata(update, context)
         # Should show error message for failed metadata
         update.message.reply_text.assert_called_once()
         text = update.message.reply_text.call_args[0][0]
-        assert "Could not fetch video info" in text
+        assert "Could not fetch post" in text
         mock_typing_task.cancel.assert_called_once()
 
 @pytest.mark.asyncio
@@ -720,4 +720,4 @@ async def test_download_and_send_instagram_all_fallbacks_fail():
     update.message.reply_photo.assert_not_called()
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args[0][0]
-    assert "Could not fetch video info" in text
+    assert "Could not fetch post" in text
