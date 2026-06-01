@@ -163,24 +163,20 @@ def download_instagram_gallery_dl(url: str, output_dir: str, cookies: str = "") 
     Returns list of downloaded file paths, or empty list on failure.
     """
     if not cookies:
-        logger.warning("gallery-dl: no cookies path provided")
         return []
 
     gd_path = _find_gallery_dl()
     if not gd_path:
-        logger.warning("gallery-dl: binary not found in PATH")
         return []
 
     # Resolve to absolute path so subprocess finds it regardless of cwd
     cookies = os.path.abspath(cookies)
     if not os.path.isfile(cookies):
-        logger.warning("gallery-dl: cookies file not found: %s", cookies)
         return []
 
     os.makedirs(output_dir, exist_ok=True)
     output_dir = os.path.abspath(output_dir)
 
-    logger.info("gallery-dl: downloading %s to %s (cookies: %s)", url, output_dir, cookies)
     result = subprocess.run(
         [
             gd_path,
@@ -203,5 +199,4 @@ def download_instagram_gallery_dl(url: str, output_dir: str, cookies: str = "") 
         + glob.glob(f"{output_dir}/**/*.png", recursive=True)
         + glob.glob(f"{output_dir}/**/*.webp", recursive=True)
     )
-    logger.info("gallery-dl: found %d images", len(images))
     return images
