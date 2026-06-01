@@ -677,8 +677,8 @@ async def test_download_and_send_instagram_uses_gallery_dl_fallback():
 
 
 @pytest.mark.asyncio
-async def test_download_and_send_instagram_falls_back_to_instaloader():
-    """When gallery-dl fails on Instagram, _download_and_send tries instaloader."""
+async def test_download_and_send_instagram_gallery_dl_fails():
+    """When gallery-dl fails on Instagram, show error message."""
     update = MagicMock()
     update.message.message_id = 42
     update.message.from_user.id = 123
@@ -690,31 +690,7 @@ async def test_download_and_send_instagram_falls_back_to_instaloader():
 
     with patch("handlers.detect_platform", return_value="instagram"), \
          patch("handlers.get_metadata", return_value=None), \
-         patch("handlers.download_instagram_gallery_dl", return_value=[]), \
-         patch("handlers.download_instagram_image", return_value=True), \
-         patch("builtins.open", MagicMock()), \
-         patch("handlers.cleanup_file"):
-        await _download_and_send(update, context, "https://instagram.com/p/ABC123/")
-
-    update.message.reply_photo.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_download_and_send_instagram_all_fallbacks_fail():
-    """When both gallery-dl and instaloader fail, show error message."""
-    update = MagicMock()
-    update.message.message_id = 42
-    update.message.from_user.id = 123
-    update.message.reply_photo = AsyncMock()
-    update.message.reply_text = AsyncMock()
-
-    context = MagicMock()
-    context.user_data = {}
-
-    with patch("handlers.detect_platform", return_value="instagram"), \
-         patch("handlers.get_metadata", return_value=None), \
-         patch("handlers.download_instagram_gallery_dl", return_value=[]), \
-         patch("handlers.download_instagram_image", return_value=False):
+         patch("handlers.download_instagram_gallery_dl", return_value=[]):
         await _download_and_send(update, context, "https://instagram.com/p/ABC123/")
 
     update.message.reply_photo.assert_not_called()

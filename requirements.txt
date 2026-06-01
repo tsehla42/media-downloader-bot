@@ -1,6 +1,5 @@
 python-telegram-bot>=22.0
 python-dotenv>=1.0.0
-instaloader
 gallery-dl
 pytest
 pytest-asyncio

@@ -14,7 +14,7 @@ Sharing media from these platforms in Telegram is annoying - links don't always 
 2. Bot detects if group or P2P, filters URLs accordingly
 3. In groups: silently ignores unsupported URLs
 4. Bot detects the platform (YouTube, YouTube Music, TikTok, Instagram)
-5. yt-dlp downloads the media via subprocess (gallery-dl with cookies for Instagram images, instaloader as fallback)
+5. yt-dlp downloads the media via subprocess (gallery-dl with cookies for Instagram images)
 6. YouTube Music URLs automatically sent as audio (MP3)
 7. Bot uploads the file to Telegram
 8. Request is logged as structured JSON

@@ -1,7 +1,7 @@
 import json
 import sys
 from unittest.mock import patch, MagicMock
-from downloader import get_metadata, download_video, download_audio, download_instagram_image, download_instagram_gallery_dl, _find_gallery_dl
+from downloader import get_metadata, download_video, download_audio, download_instagram_gallery_dl, _find_gallery_dl
 
 SAMPLE_METADATA = {
     "id": "abc123",
@@ -70,59 +70,6 @@ def test_download_audio_uses_extract_audio():
         call_args = mock_run.call_args[0][0]
         assert "--extract-audio" in call_args
         assert "--audio-format" in call_args
-
-def test_download_instagram_image_uses_instaloader():
-    mock_il = MagicMock()
-    with patch.dict("sys.modules", {"instaloader": mock_il}):
-        mock_L = MagicMock()
-        mock_il.Instaloader.return_value = mock_L
-
-        mock_post = MagicMock()
-        mock_post.typename = "GraphImage"
-        mock_post.is_video = False
-        mock_il.Post.from_shortcode.return_value = mock_post
-
-        with patch("downloader.os.listdir", return_value=["test_image.jpg"]):
-            with patch("downloader.shutil.copy2"):
-                with patch("downloader.os.path.isfile", return_value=True):
-                    with patch("downloader.tempfile.TemporaryDirectory"):
-                        result = download_instagram_image("https://instagram.com/p/ABC123/", "/tmp/test.jpg")
-                        assert result is True
-
-def test_download_instagram_image_returns_false_on_error():
-    mock_il = MagicMock()
-    mock_il.Instaloader.side_effect = Exception("Import error")
-    with patch.dict("sys.modules", {"instaloader": mock_il}):
-        result = download_instagram_image("https://instagram.com/p/abc/", "/tmp/test.jpg")
-        assert result is False
-
-def test_download_instagram_image_returns_false_for_video():
-    mock_il = MagicMock()
-    with patch.dict("sys.modules", {"instaloader": mock_il}):
-        mock_L = MagicMock()
-        mock_il.Instaloader.return_value = mock_L
-
-        mock_post = MagicMock()
-        mock_post.typename = "GraphVideo"
-        mock_post.is_video = True
-        mock_il.Post.from_shortcode.return_value = mock_post
-
-        result = download_instagram_image("https://instagram.com/p/ABC123/", "/tmp/test.jpg")
-        assert result is False
-
-def test_download_instagram_image_returns_false_for_carousel():
-    mock_il = MagicMock()
-    with patch.dict("sys.modules", {"instaloader": mock_il}):
-        mock_L = MagicMock()
-        mock_il.Instaloader.return_value = mock_L
-
-        mock_post = MagicMock()
-        mock_post.typename = "GraphSidecar"
-        mock_post.is_video = False
-        mock_il.Post.from_shortcode.return_value = mock_post
-
-        result = download_instagram_image("https://instagram.com/p/ABC123/", "/tmp/test.jpg")
-        assert result is False
 
 
 def test_download_instagram_gallery_dl_calls_gallery_dl():
