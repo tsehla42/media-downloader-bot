@@ -131,16 +131,24 @@ def with_request_logging(handler):
             result = await handler(update, context)
             duration_ms = int((time.time() - start_time) * 1000)
             success = context.user_data.get("_request_success", True)
+            # Read metadata stored by handler
+            platform = context.user_data.get("_platform", platform)
+            content_type = context.user_data.get("_content_type")
+            file_size_mb = context.user_data.get("_file_size_mb")
             log_request_completed(
                 request_id=request_id,
                 url=url,
                 platform=platform,
                 duration_ms=duration_ms,
                 success=success,
+                content_type=content_type,
+                file_size_mb=file_size_mb,
             )
             return result
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
+            # Read platform stored by handler if available
+            platform = context.user_data.get("_platform", platform)
             log_request_failed(
                 request_id=request_id,
                 url=url,
