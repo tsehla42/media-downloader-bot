@@ -245,6 +245,7 @@ async def test_handle_url_starts_typing_for_audio():
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.download_audio", return_value=True), \
          patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=1024*1024), \
          patch("handlers.cleanup_file"), \
          patch("builtins.open", MagicMock()), \
          patch("handlers._start_typing", side_effect=fake_start_typing):
