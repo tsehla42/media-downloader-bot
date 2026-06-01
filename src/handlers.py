@@ -8,7 +8,7 @@ from telegram.ext import ContextTypes
 
 from config import DOWNLOAD_DIR, MAX_FILE_SIZE, ALLOWED_USER_IDS, ALLOWED_GROUP_IDS
 from utils import detect_platform, is_valid_url, extract_urls, cleanup_file
-from downloader import get_metadata, download_video, download_audio, download_images, download_instagram_image
+from downloader import get_metadata, download_video, download_audio, download_images, download_instagram_image, download_instagram_gallery_dl
 from logging_config import with_request_logging
 
 
@@ -239,11 +239,39 @@ async def _download_and_send(
 
         metadata = get_metadata(url)
         if not metadata:
-            # Fallback for Instagram: try to extract single image
+            # Fallback for Instagram: try gallery-dl, then instaloader
             if platform == "instagram":
                 tmp_id = uuid.uuid4().hex[:8]
-                img_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.jpg")
+                out_dir = os.path.join(DOWNLOAD_DIR, tmp_id)
                 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+                # Try gallery-dl first (with cookies)
+                from config import INSTAGRAM_COOKIES
+                images = download_instagram_gallery_dl(url, out_dir, INSTAGRAM_COOKIES)
+                if images:
+                    try:
+                        if len(images) == 1:
+                            with open(images[0], "rb") as f:
+                                await update.message.reply_photo(
+                                    photo=f,
+                                    reply_parameters=reply_params,
+                                )
+                        else:
+                            for i in range(0, len(images), 10):
+                                batch = images[i:i+10]
+                                media = [InputMediaPhoto(open(img, "rb")) for img in batch]
+                                await update.message.reply_media_group(
+                                    media=media,
+                                    reply_parameters=reply_params,
+                                )
+                        context.user_data["_request_success"] = True
+                        return
+                    finally:
+                        for img in images:
+                            cleanup_file(img)
+
+                # Fallback: instaloader (no auth, may not work)
+                img_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.jpg")
                 if download_instagram_image(url, img_path):
                     try:
                         with open(img_path, "rb") as f:
