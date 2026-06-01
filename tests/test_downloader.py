@@ -1,7 +1,7 @@
 import json
 import sys
 from unittest.mock import patch, MagicMock
-from downloader import get_metadata, download_video, download_audio, download_instagram_image
+from downloader import get_metadata, download_video, download_audio, download_instagram_image, download_instagram_gallery_dl
 
 SAMPLE_METADATA = {
     "id": "abc123",
@@ -123,3 +123,67 @@ def test_download_instagram_image_returns_false_for_carousel():
 
         result = download_instagram_image("https://instagram.com/p/ABC123/", "/tmp/test.jpg")
         assert result is False
+
+
+def test_download_instagram_gallery_dl_calls_gallery_dl():
+    with patch("downloader.subprocess.run") as mock_run, \
+         patch("downloader.shutil.which", return_value="/usr/bin/gallery-dl"), \
+         patch("downloader.glob.glob", side_effect=[
+             ["/tmp/test_output/image.jpg"],  # *.jpg
+             [],  # *.jpeg
+             [],  # *.png
+             [],  # *.webp
+         ]):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="",
+            stderr=""
+        )
+        with patch("downloader.os.makedirs"):
+            result = download_instagram_gallery_dl(
+                "https://instagram.com/p/ABC123/",
+                "/tmp/test_output",
+                cookies="/tmp/cookies.txt"
+            )
+            assert result == ["/tmp/test_output/image.jpg"]
+            call_args = mock_run.call_args[0][0]
+            assert "gallery-dl" in call_args[0]
+            assert "--cookies" in call_args
+            assert "/tmp/cookies.txt" in call_args
+
+
+def test_download_instagram_gallery_dl_returns_empty_on_failure():
+    with patch("downloader.subprocess.run") as mock_run, \
+         patch("downloader.shutil.which", return_value="/usr/bin/gallery-dl"):
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="ERROR: some error"
+        )
+        with patch("downloader.os.makedirs"):
+            result = download_instagram_gallery_dl(
+                "https://instagram.com/p/ABC123/",
+                "/tmp/test_output",
+                cookies="/tmp/cookies.txt"
+            )
+            assert result == []
+
+
+def test_download_instagram_gallery_dl_returns_empty_without_cookies():
+    with patch("downloader.os.makedirs"):
+        result = download_instagram_gallery_dl(
+            "https://instagram.com/p/ABC123/",
+            "/tmp/test_output",
+            cookies=""
+        )
+        assert result == []
+
+
+def test_download_instagram_gallery_dl_returns_empty_when_not_installed():
+    with patch("downloader.shutil.which", return_value=None):
+        result = download_instagram_gallery_dl(
+            "https://instagram.com/p/ABC123/",
+            "/tmp/test_output",
+            cookies="/tmp/cookies.txt"
+        )
+        assert result == []
