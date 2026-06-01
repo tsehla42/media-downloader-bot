@@ -12,6 +12,17 @@ from downloader import get_metadata, download_video, download_audio, download_im
 from logging_config import with_request_logging
 
 
+def _store_download_metadata(context: ContextTypes.DEFAULT_TYPE, content_type: str, file_path: str) -> None:
+    """Store download metadata (content_type, file_size_mb) in context.user_data for logging."""
+    context.user_data["_content_type"] = content_type
+    try:
+        if os.path.isfile(file_path):
+            file_size_bytes = os.path.getsize(file_path)
+            context.user_data["_file_size_mb"] = round(file_size_bytes / (1024 * 1024), 2)
+    except OSError:
+        pass
+
+
 AUDIO_ONLY_EXTS = {"m4a", "mp3", "opus", "wav", "aac"}
 AUDIO_TITLE_MAX = 64  # Telegram Bot API limit for reply_audio title
 
@@ -26,7 +37,7 @@ def _has_video_available(metadata: dict) -> bool:
 
 async def _download_and_send_video(
     url: str, base: str, output_path: str,
-    caption: str, reply_params: dict, message
+    caption: str, reply_params: dict, message, context: ContextTypes.DEFAULT_TYPE = None
 ) -> bool:
     """Download video and send it via message.reply_video.
 
@@ -52,6 +63,8 @@ async def _download_and_send_video(
             caption=caption,
             reply_parameters=reply_params,
         )
+    if context:
+        _store_download_metadata(context, "video", downloaded)
     return True
 
 
@@ -73,6 +86,8 @@ async def _start_typing(chat_id: int, bot) -> asyncio.Task:
                 await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
         except asyncio.CancelledError:
             pass
+        except Exception:
+            pass  # Silently ignore typing errors (e.g. bot kicked from chat)
     return asyncio.create_task(_loop())
 
 
@@ -229,6 +244,7 @@ async def _download_and_send(
 
     try:
         platform = detect_platform(url)
+        context.user_data["_platform"] = platform or ""
         if not platform:
             context.user_data["_request_success"] = False
             await update.message.reply_text(
@@ -250,12 +266,15 @@ async def _download_and_send(
                 images = download_instagram_gallery_dl(url, out_dir, INSTAGRAM_COOKIES)
                 if images:
                     try:
+                        total_size = 0
                         if len(images) == 1:
                             with open(images[0], "rb") as f:
                                 await update.message.reply_photo(
                                     photo=f,
                                     reply_parameters=reply_params,
                                 )
+                            if os.path.isfile(images[0]):
+                                total_size = os.path.getsize(images[0])
                         else:
                             for i in range(0, len(images), 10):
                                 batch = images[i:i+10]
@@ -264,6 +283,11 @@ async def _download_and_send(
                                     media=media,
                                     reply_parameters=reply_params,
                                 )
+                            for img in images:
+                                if os.path.isfile(img):
+                                    total_size += os.path.getsize(img)
+                        context.user_data["_content_type"] = "image"
+                        context.user_data["_file_size_mb"] = round(total_size / (1024 * 1024), 2) if total_size > 0 else None
                         context.user_data["_request_success"] = True
                         return
                     finally:
@@ -286,6 +310,7 @@ async def _download_and_send(
         if platform == "instagram" and metadata.get("extractor") == "instagram":
             images = download_images(url, os.path.join(DOWNLOAD_DIR, tmp_id))
             if images:
+                total_size = 0
                 for i in range(0, len(images), 10):
                     batch = images[i:i+10]
                     media = [InputMediaPhoto(open(img, "rb")) for img in batch]
@@ -294,7 +319,11 @@ async def _download_and_send(
                         reply_parameters=reply_params,
                     )
                     for img in batch:
+                        if os.path.isfile(img):
+                            total_size += os.path.getsize(img)
                         os.remove(img)
+                context.user_data["_content_type"] = "image"
+                context.user_data["_file_size_mb"] = round(total_size / (1024 * 1024), 2) if total_size > 0 else None
                 return
 
         # YouTube Music: check if video is available, otherwise send as audio
@@ -327,6 +356,7 @@ async def _download_and_send(
                             title=title[:AUDIO_TITLE_MAX],
                             reply_parameters=reply_params,
                         )
+                    _store_download_metadata(context, "audio", f"{base}.mp3")
                 else:
                     context.user_data["_request_success"] = False
                     await update.message.reply_text(
@@ -337,7 +367,7 @@ async def _download_and_send(
         else:
             caption = "" if _user_caption_prefs.get(update.message.from_user.id, True) else title[:1024]
             video_ok = await _download_and_send_video(
-                url, base, output_path, caption, reply_params, update.message
+                url, base, output_path, caption, reply_params, update.message, context
             )
             if not video_ok:
                 context.user_data["_request_success"] = False
@@ -411,6 +441,7 @@ async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                         title=title[:AUDIO_TITLE_MAX],
                         reply_parameters=reply_params,
                     )
+                _store_download_metadata(context, "audio", f"{base}.mp3")
             else:
                 await update.effective_message.reply_text(
                     "Audio download failed.",
@@ -422,7 +453,7 @@ async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 update.effective_message.from_user.id, True
             ) else title[:1024]
             video_ok = await _download_and_send_video(
-                url, base, output_path, caption, reply_params, update.effective_message
+                url, base, output_path, caption, reply_params, update.effective_message, context
             )
             if not video_ok:
                 await update.effective_message.reply_text(
@@ -436,7 +467,7 @@ async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 update.effective_message.from_user.id, True
             ) else title[:1024]
             video_ok = await _download_and_send_video(
-                url, base, output_path, caption, reply_params, update.effective_message
+                url, base, output_path, caption, reply_params, update.effective_message, context
             )
             if not video_ok:
                 await update.effective_message.reply_text(
@@ -454,6 +485,7 @@ async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                         title=title[:AUDIO_TITLE_MAX],
                         reply_parameters=reply_params,
                     )
+                _store_download_metadata(context, "audio", f"{base}.mp3")
             else:
                 await update.effective_message.reply_text(
                     "Audio download failed.",
