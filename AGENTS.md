@@ -6,7 +6,7 @@ Entry point for AI agents working on this project. Start here to understand the 
 
 A Telegram bot that downloads videos and images from YouTube, TikTok, and Instagram. Users paste a URL, get the media back.
 
-**Tech stack:** Python 3.12+, python-telegram-bot, yt-dlp (subprocess), gallery-dl (Instagram images with cookies), instaloader (fallback), pytest
+**Tech stack:** Python 3.12+, python-telegram-bot, yt-dlp (subprocess), gallery-dl (Instagram images with cookies), pytest
 
 ## Project Structure
 
@@ -41,7 +41,7 @@ media-downloader-bot/
 |---|---|---|
 | `src/config.py` | .env file | Loads BOT_TOKEN, ALLOWED_USER_IDS, ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, LOG_OUTPUT, LOG_DIR |
 | `src/utils.py` | nothing | Platform detection from URL (supports youtube.com, youtu.be, music.youtube.com), URL validation, file cleanup |
-| `src/downloader.py` | yt-dlp, gallery-dl, instaloader | yt-dlp subprocess calls: get_metadata, download_video, download_audio, download_images. gallery-dl for Instagram image downloads with cookies. instaloader as last-resort fallback |
+| `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: get_metadata, download_video, download_audio, download_images. gallery-dl for Instagram image downloads with cookies |
 | `src/logging_config.py` | config | Structured JSON logging: JSONFormatter, setup_logging, with_request_logging decorator |
 | `src/handlers.py` | config, utils, downloader, logging_config | Telegram handlers with group detection, orchestrates download flow, logs requests. YouTube Music URLs automatically sent as audio |
 | `src/bot.py` | config, handlers, logging_config | Entry point, wires everything together, initializes logging, global error handler |
@@ -52,7 +52,7 @@ media-downloader-bot/
 2. In groups: silently ignore unsupported URLs, only process supported ones
 3. `handlers.py` detects platform via `utils.detect_platform()`
 4. `handlers.py` calls `downloader.get_metadata()` to fetch title/thumbnail
-5. If metadata fails for Instagram: try `download_instagram_gallery_dl()` with cookies, then fallback to `download_instagram_image()` using instaloader
+5. If metadata fails for Instagram: try `download_instagram_gallery_dl()` with cookies
 6. If URL is from music.youtube.com: download as audio (MP3), otherwise download as video
 7. `handlers.py` sends file to Telegram, cleans up temp files
 8. `@with_request_logging` decorator logs request lifecycle automatically:
@@ -75,7 +75,7 @@ media-downloader-bot/
 python -m pytest tests/ -v
 ```
 
-All 83 tests use mocked subprocess calls - no real downloads needed.
+All 78 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 
