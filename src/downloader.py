@@ -1,3 +1,4 @@
+import glob
 import json
 import os
 import re
@@ -113,8 +114,46 @@ def download_images(url: str, output_dir: str) -> list[str]:
     )
     if result.returncode != 0:
         return []
-    import glob
     return sorted(glob.glob(f"{output_dir}/*.[jp][pn]g") + glob.glob(f"{output_dir}/*.webp"))
+
+
+def download_instagram_gallery_dl(url: str, output_dir: str, cookies: str = "") -> list[str]:
+    """Download images from Instagram using gallery-dl.
+
+    Requires gallery-dl binary and a cookies.txt file for authentication.
+    Returns list of downloaded file paths, or empty list on failure.
+    """
+    if not cookies:
+        return []
+
+    gd_path = shutil.which("gallery-dl")
+    if not gd_path:
+        return []
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    result = subprocess.run(
+        [
+            gd_path,
+            "-d", output_dir,
+            "--cookies", cookies,
+            "--no-playlist",
+            url,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    if result.returncode != 0:
+        return []
+
+    return sorted(
+        glob.glob(f"{output_dir}/*.jpg")
+        + glob.glob(f"{output_dir}/*.jpeg")
+        + glob.glob(f"{output_dir}/*.png")
+        + glob.glob(f"{output_dir}/*.webp")
+    )
 
 
 def download_instagram_image(url: str, output_path: str) -> bool:
