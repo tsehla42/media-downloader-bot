@@ -97,14 +97,25 @@ def download_audio(url: str, output_path: str) -> bool:
 
 
 def download_images(url: str, output_dir: str) -> list[str]:
-    """Download images from carousel/gallery post. Returns list of file paths."""
+    """Download images from carousel/gallery post using gallery-dl.
+
+    Falls back to yt-dlp thumbnail extraction if gallery-dl is unavailable.
+    Returns list of file paths.
+    """
+    # Try gallery-dl first (handles carousels well with cookies)
+    from config import INSTAGRAM_COOKIES
+    images = download_instagram_gallery_dl(url, output_dir, INSTAGRAM_COOKIES)
+    if images:
+        return images
+
+    # Fallback: yt-dlp can extract thumbnails from video posts
     ytdlp = _find_ytdlp()
     os.makedirs(output_dir, exist_ok=True)
     result = subprocess.run(
         [
             ytdlp,
             "-o", f"{output_dir}/%(id)s.%(ext)s",
-            "--write-images",
+            "--write-thumbnail",
             "--no-download",
             url,
         ],
