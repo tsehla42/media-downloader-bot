@@ -11,7 +11,7 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN
-from handlers import start_command, help_command, handle_url, caption_command, audio_command, ytmusic_callback
+from handlers import start_command, help_command, handle_url, caption_command, audio_command, ytmusic_callback, my_chat_member_handler
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +63,10 @@ def main() -> None:
     app.add_handler(CommandHandler("audio", audio_command))
     app.add_handler(CallbackQueryHandler(ytmusic_callback, pattern="^ytm\\|"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, my_chat_member_handler))
 
     logger.info("Bot started")
-    app.run_polling(allowed_updates=["message", "callback_query"])
+    app.run_polling(allowed_updates=["message", "callback_query", "my_chat_member"])
 
 
 if __name__ == "__main__":

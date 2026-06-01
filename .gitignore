@@ -41,3 +41,6 @@ logs/
 
 # Instagram cookies
 cookies.txt
+
+# Seen users tracking
+seen_users.json

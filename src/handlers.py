@@ -9,7 +9,46 @@ from telegram.ext import ContextTypes
 from config import DOWNLOAD_DIR, MAX_FILE_SIZE, ALLOWED_USER_IDS, ALLOWED_GROUP_IDS
 from utils import detect_platform, is_valid_url, extract_urls, cleanup_file, cleanup_dir
 from downloader import get_metadata, download_video, download_audio, download_images, download_instagram_gallery_dl
-from logging_config import with_request_logging
+from logging_config import (
+    with_request_logging,
+    log_bot_added_to_chat,
+    log_bot_removed_from_chat,
+    log_bot_status_changed,
+    log_new_user,
+    is_new_user,
+)
+
+
+async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle bot membership changes (added, removed, promoted, demoted)."""
+    chat_member_update = update.my_chat_member
+    if not chat_member_update:
+        return
+
+    chat = chat_member_update.chat
+    old_status = chat_member_update.old_chat_member.status
+    new_status = chat_member_update.new_chat_member.status
+    from_user = chat_member_update.from_user
+
+    # Bot was added to chat
+    if old_status in ("left", "kicked"):
+        log_bot_added_to_chat(chat, from_user)
+        return
+
+    # Bot was removed from chat
+    if new_status in ("left", "kicked"):
+        log_bot_removed_from_chat(chat, from_user)
+        return
+
+    # Bot was promoted to admin
+    if old_status == "member" and new_status == "administrator":
+        log_bot_status_changed(chat, from_user, old_status, new_status)
+        return
+
+    # Bot was demoted from admin
+    if old_status == "administrator" and new_status == "member":
+        log_bot_status_changed(chat, from_user, old_status, new_status)
+        return
 
 
 def _store_download_metadata(context: ContextTypes.DEFAULT_TYPE, content_type: str, file_path: str) -> None:
@@ -100,6 +139,10 @@ def _is_allowed_group(chat_id: int) -> bool:
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.message.from_user
+    if is_new_user(user.id):
+        log_new_user(user)
+
     bot_username = context.bot_data.get("bot_username", "botname")
     await update.message.reply_text(
         "Media Downloader Bot\n\n"

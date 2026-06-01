@@ -18,6 +18,41 @@ except ImportError:
     # Fallback: fixed UTC+2 (winter time — safe default for most of the year)
     _KYIV_TZ = timezone(timedelta(hours=2))
 
+# Seen users tracker for first-time user detection
+_seen_users_file = "seen_users.json"
+_seen_users: set = set()
+
+
+def _load_seen_users() -> set:
+    """Load seen user IDs from file."""
+    global _seen_users
+    if _seen_users:
+        return _seen_users
+    try:
+        if os.path.exists(_seen_users_file):
+            with open(_seen_users_file, "r") as f:
+                data = json.load(f)
+                _seen_users = set(data.get("user_ids", []))
+    except (json.JSONDecodeError, OSError):
+        _seen_users = set()
+    return _seen_users
+
+
+def _save_seen_users() -> None:
+    """Save seen user IDs to file."""
+    with open(_seen_users_file, "w") as f:
+        json.dump({"user_ids": list(_seen_users)}, f)
+
+
+def is_new_user(user_id: int) -> bool:
+    """Check if user is new, and mark as seen."""
+    seen = _load_seen_users()
+    if user_id in seen:
+        return False
+    seen.add(user_id)
+    _save_seen_users()
+    return True
+
 
 class JSONFormatter(logging.Formatter):
     """Custom formatter that outputs JSON with Kyiv timezone."""
@@ -111,6 +146,79 @@ def log_request_failed(
     logging.error("request_failed", extra={"extra_data": log_data})
 
 
+def log_new_user(user) -> None:
+    """Log when a first-time user starts the bot."""
+    log_data = {
+        "event": "new_user_started",
+        "message": "New user started bot",
+        "user": {
+            "id": user.id,
+            "name": getattr(user, "first_name", None),
+            "username": getattr(user, "username", None),
+        },
+    }
+    logging.info("new_user_started", extra={"extra_data": log_data})
+
+
+def log_bot_added_to_chat(chat, added_by) -> None:
+    """Log when the bot is added to a chat."""
+    log_data = {
+        "event": "bot_added_to_chat",
+        "message": "Bot added to chat",
+        "chat": {
+            "id": chat.id,
+            "name": getattr(chat, "title", None),
+            "type": getattr(chat, "type", None),
+        },
+        "added_by": {
+            "id": added_by.id,
+            "name": getattr(added_by, "first_name", None),
+            "username": getattr(added_by, "username", None),
+        },
+    }
+    logging.info("bot_added_to_chat", extra={"extra_data": log_data})
+
+
+def log_bot_removed_from_chat(chat, removed_by) -> None:
+    """Log when the bot is removed from a chat."""
+    log_data = {
+        "event": "bot_removed_from_chat",
+        "message": "Bot removed from chat",
+        "chat": {
+            "id": chat.id,
+            "name": getattr(chat, "title", None),
+            "type": getattr(chat, "type", None),
+        },
+        "removed_by": {
+            "id": removed_by.id,
+            "name": getattr(removed_by, "first_name", None),
+            "username": getattr(removed_by, "username", None),
+        },
+    }
+    logging.info("bot_removed_from_chat", extra={"extra_data": log_data})
+
+
+def log_bot_status_changed(chat, user, old_status, new_status) -> None:
+    """Log when bot is promoted or demoted in a chat."""
+    log_data = {
+        "event": "bot_status_changed",
+        "message": f"Bot status changed from {old_status} to {new_status}",
+        "chat": {
+            "id": chat.id,
+            "name": getattr(chat, "title", None),
+            "type": getattr(chat, "type", None),
+        },
+        "user": {
+            "id": user.id,
+            "name": getattr(user, "first_name", None),
+            "username": getattr(user, "username", None),
+        },
+        "old_status": old_status,
+        "new_status": new_status,
+    }
+    logging.info("bot_status_changed", extra={"extra_data": log_data})
+
+
 def with_request_logging(handler):
     """Decorator that adds request_received/completed/failed logging to handlers."""
     @functools.wraps(handler)
@@ -177,12 +285,13 @@ _initialized = False
 
 def setup_logging() -> None:
     """Configure logging based on LOG_OUTPUT environment variable."""
-    global _initialized
+    global _initialized, _seen_users_file
     if _initialized:
         return
     _initialized = True
 
-    from config import LOG_OUTPUT, LOG_DIR
+    from config import LOG_OUTPUT, LOG_DIR, SEEN_USERS_FILE
+    _seen_users_file = SEEN_USERS_FILE
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)

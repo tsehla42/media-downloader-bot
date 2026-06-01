@@ -18,3 +18,5 @@ INSTAGRAM_COOKIES = os.environ.get("INSTAGRAM_COOKIES", "")
 
 LOG_OUTPUT = os.environ.get("LOG_OUTPUT", "stdout")
 LOG_DIR = os.environ.get("LOG_DIR", "logs")
+
+SEEN_USERS_FILE = os.environ.get("SEEN_USERS_FILE", "seen_users.json")
