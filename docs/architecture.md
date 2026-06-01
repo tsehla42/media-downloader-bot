@@ -30,7 +30,7 @@ Wraps yt-dlp and gallery-dl binary calls via subprocess:
 - `_find_ytdlp()` / `_find_gallery_dl()` - Locate binaries (checks PATH, then venv bin/ for VS Code compatibility)
 - `get_metadata(url)` - Runs `yt-dlp --dump-json`, returns dict with title/thumbnail/duration
 - `download_video(url, path, max_size, platform)` - Downloads video, retries with lower quality on failure
-- `download_audio(url, path)` - Extracts audio as MP3
+- `download_audio(url, path)` - Extracts audio as MP3 (logs yt-dlp stderr on failure)
 - `download_images(url, dir)` - Downloads carousel/gallery images via gallery-dl (with cookies), falls back to yt-dlp thumbnail extraction
 - `download_instagram_gallery_dl(url, dir, cookies)` - Downloads Instagram images using gallery-dl with browser-exported cookies for authentication
 
@@ -40,16 +40,16 @@ Telegram message handlers with group detection:
 - `_is_allowed_group(chat_id)` - Checks if group is in allowlist
 - `start_command` - Welcome message
 - `help_command` - Platform list and usage
-- `audio_command` - Download as MP3
+- `audio_command` - Download as MP3 (registered as CommandHandler, sets platform/success metadata for logging)
 - `handle_url` - Main handler: detects group/P2P, filters URLs, downloads, sends to Telegram
   - In groups: silently ignores unsupported URLs, processes supported ones
   - In P2P: shows error messages for invalid/unsupported URLs
   - Respects ALLOWED_GROUP_IDS config
-- YouTube Music URLs (music.youtube.com) automatically sent as audio
+- YouTube Music URLs (music.youtube.com) automatically shown as format picker (Audio/Video/Both)
 
 ### logging_config.py
 Structured JSON logging with zero external dependencies:
-- `JSONFormatter` - Custom `logging.Formatter` that outputs JSON with timestamp, level, message, and extra fields (with `ensure_ascii=False` for Unicode support)
+- `JSONFormatter` - Custom `logging.Formatter` that outputs JSON with timestamp (Europe/Kyiv timezone, UTC+2/+3), level, message, and extra fields (with `ensure_ascii=False` for Unicode support)
 - `setup_logging()` - Configures logging based on `LOG_OUTPUT` env var
   - stdout mode: StreamHandler for development
   - file mode: RotatingFileHandler for `requests.jsonl` (all levels), plus stderr for errors
@@ -71,10 +71,13 @@ Entry point:
 ## Data Flow
 
 ```
-User sends URL
+User sends URL or /audio command
     │
     ▼
 handlers.handle_url()
+    │
+    ├─ /audio → audio_command() → download_audio() → reply_audio()
+    │   (logged via @with_request_logging on handle_url + _log calls in audio_command)
     │
     ├─ is_group_chat() → true/false
     │
@@ -100,7 +103,7 @@ handlers.handle_url()
     │       │
     │       ├─ [Instagram] If metadata fails → download_instagram_gallery_dl() via gallery-dl
     │       │
-    │       ├─ [YouTube Music] If music.youtube.com → download_audio() → reply_audio()
+    │       ├─ [YouTube Music] If music.youtube.com → show format picker (Audio/Video/Both)
     │       │   Otherwise → download_video() → reply_video()
     │       │
     │       └─ cleanup temp files
@@ -120,6 +123,7 @@ handlers.handle_url()
 
 - **yt-dlp** - Installed as system binary. Called via subprocess.
 - **gallery-dl** - Installed as system binary. Called via subprocess for Instagram image downloads with cookies authentication.
+- **ffmpeg** - Required for audio extraction (MP3 conversion). Installed in Docker image.
 - **python-telegram-bot** - Telegram Bot API wrapper. Installed via pip.
 - **python-dotenv** - .env file loading.
 
@@ -132,7 +136,7 @@ Logs are written in JSON format for easy querying with `jq` and log aggregators.
 Request received:
 ```json
 {
-  "timestamp": "2026-05-30T13:16:36.527047+00:00",
+  "timestamp": "2026-06-01T16:16:36.527047+03:00",
   "level": "INFO",
   "message": "Request received",
   "event": "request_received",
@@ -147,7 +151,7 @@ Request received:
 Request completed:
 ```json
 {
-  "timestamp": "2026-05-30T13:16:39.195279+00:00",
+  "timestamp": "2026-06-01T16:16:39.195279+03:00",
   "level": "INFO",
   "message": "Request completed",
   "event": "request_completed",
@@ -164,7 +168,7 @@ Request completed:
 Request failed:
 ```json
 {
-  "timestamp": "2026-05-30T13:16:35.123456+00:00",
+  "timestamp": "2026-06-01T16:16:35.123456+03:00",
   "level": "ERROR",
   "message": "Request failed: yt-dlp timeout",
   "event": "request_failed",
@@ -210,3 +214,27 @@ cat logs/requests.jsonl | jq 'select(.request_id == "3df4888f")'
 - No version coupling between bot code and yt-dlp
 - Easier to debug (can run yt-dlp commands manually)
 - Matches how all successful yt-dlp wrappers work (Seal, VidBee, etc.)
+
+## Docker Deployment
+
+Multi-stage build for minimal image size:
+
+**Build stage:** Installs gcc for Python package compilation.
+
+**Runtime stage:** Python 3.12-slim with:
+- `yt-dlp` - Video/audio downloading
+- `gallery-dl` - Instagram image downloading with cookies
+- `ffmpeg` - Audio extraction (MP3 conversion)
+
+**Volume mounts:**
+- `./logs:/usr/src/app/logs` - Persistent log files
+- `./cookies.txt:/app/cookies.txt:ro` - Instagram cookies (read-only)
+- `bot-downloads:/tmp/bot-downloads` - Temporary download directory
+
+**Commands:**
+```bash
+docker compose up -d --build    # Build and start
+docker compose down             # Stop and remove
+docker compose down -v          # Stop, remove, and delete volumes
+docker logs -f media-downloader-bot  # Watch logs
+```

@@ -38,5 +38,11 @@ python bot.py
 Or with Docker:
 ```bash
 cp .env.example .env
-./compose.sh
+# Edit .env with your BOT_TOKEN
+docker compose up -d --build
+docker logs -f media-downloader-bot
 ```
+
+**Persistent logs** are written to `./logs/` on the host (survives container restarts).
+
+**Instagram cookies** are mounted read-only from `./cookies.txt` into the container.
