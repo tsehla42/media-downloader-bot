@@ -38,3 +38,6 @@ docs/superpowers
 # Logs
 logs/
 *.jsonl
+
+# Instagram cookies
+cookies.txt
