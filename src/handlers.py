@@ -7,7 +7,7 @@ from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from config import DOWNLOAD_DIR, MAX_FILE_SIZE, ALLOWED_USER_IDS, ALLOWED_GROUP_IDS
-from utils import detect_platform, is_valid_url, extract_urls, cleanup_file
+from utils import detect_platform, is_valid_url, extract_urls, cleanup_file, cleanup_dir
 from downloader import get_metadata, download_video, download_audio, download_images, download_instagram_image, download_instagram_gallery_dl
 from logging_config import with_request_logging
 
@@ -267,8 +267,7 @@ async def _download_and_send(
                         context.user_data["_request_success"] = True
                         return
                     finally:
-                        for img in images:
-                            cleanup_file(img)
+                        cleanup_dir(out_dir)
 
                 # Fallback: instaloader (no auth, may not work)
                 img_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.jpg")
