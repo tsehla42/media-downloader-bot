@@ -159,6 +159,7 @@ async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
 
+@with_request_logging
 async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     import logging
     _log = logging.getLogger(__name__)
@@ -201,20 +202,33 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
 
+    # Fetch metadata for title (used in filename and reply_audio title)
+    metadata = get_metadata(url)
+    title = metadata.get("title") if metadata else None
+
     tmp_id = uuid.uuid4().hex[:8]
-    output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.mp3")
+    filename = f"{title}.{tmp_id}.mp3" if title else f"{tmp_id}.mp3"
+    output_path = os.path.join(DOWNLOAD_DIR, filename)
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+    typing_task = await _start_typing(update.message.chat.id, context.bot)
     try:
         _log.info("audio: downloading %s -> %s", url, output_path)
         success = download_audio(url, output_path)
         if success and os.path.isfile(output_path):
             _log.info("audio: download ok, size=%d bytes", os.path.getsize(output_path))
             with open(output_path, "rb") as f:
-                await update.message.reply_audio(
-                    audio=f,
-                    reply_parameters=reply_params,
-                )
+                if title:
+                    await update.message.reply_audio(
+                        audio=f,
+                        title=title[:AUDIO_TITLE_MAX],
+                        reply_parameters=reply_params,
+                    )
+                else:
+                    await update.message.reply_audio(
+                        audio=f,
+                        reply_parameters=reply_params,
+                    )
             _store_download_metadata(context, "audio", output_path)
         else:
             _log.warning("audio: download failed for %s", url)
@@ -231,6 +245,7 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             reply_parameters=reply_params,
         )
     finally:
+        typing_task.cancel()
         cleanup_file(output_path)
 
 
