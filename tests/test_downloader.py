@@ -128,6 +128,7 @@ def test_download_instagram_image_returns_false_for_carousel():
 def test_download_instagram_gallery_dl_calls_gallery_dl():
     with patch("downloader.subprocess.run") as mock_run, \
          patch("downloader.shutil.which", return_value="/usr/bin/gallery-dl"), \
+         patch("downloader.os.path.isfile", return_value=True), \
          patch("downloader.glob.glob", side_effect=[
              ["/tmp/test_output/image.jpg"],  # *.jpg
              [],  # *.jpeg

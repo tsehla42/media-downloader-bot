@@ -141,7 +141,13 @@ def download_instagram_gallery_dl(url: str, output_dir: str, cookies: str = "") 
     if not gd_path:
         return []
 
+    # Resolve to absolute path so subprocess finds it regardless of cwd
+    cookies = os.path.abspath(cookies)
+    if not os.path.isfile(cookies):
+        return []
+
     os.makedirs(output_dir, exist_ok=True)
+    output_dir = os.path.abspath(output_dir)
 
     result = subprocess.run(
         [
@@ -159,10 +165,10 @@ def download_instagram_gallery_dl(url: str, output_dir: str, cookies: str = "") 
         return []
 
     return sorted(
-        glob.glob(f"{output_dir}/*.jpg")
-        + glob.glob(f"{output_dir}/*.jpeg")
-        + glob.glob(f"{output_dir}/*.png")
-        + glob.glob(f"{output_dir}/*.webp")
+        glob.glob(f"{output_dir}/**/*.jpg", recursive=True)
+        + glob.glob(f"{output_dir}/**/*.jpeg", recursive=True)
+        + glob.glob(f"{output_dir}/**/*.png", recursive=True)
+        + glob.glob(f"{output_dir}/**/*.webp", recursive=True)
     )
 
 
