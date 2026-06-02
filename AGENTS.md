@@ -43,9 +43,9 @@ media-downloader-bot/
 |---|---|---|
 | `src/config.py` | .env file | Loads BOT_TOKEN, ALLOWED_USER_IDS, ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, LOG_OUTPUT, LOG_DIR |
 | `src/utils.py` | nothing | Platform detection from URL (supports youtube.com, youtu.be, music.youtube.com), URL validation, file cleanup |
-| `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: get_metadata, download_video, download_audio, download_images. gallery-dl for Instagram image downloads with cookies |
+| `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: get_metadata, download_video, download_audio, download_images. All functions log start/success/failure. gallery-dl for Instagram image downloads with cookies |
 | `src/logging_config.py` | config | Structured JSON logging: JSONFormatter, setup_logging, with_request_logging decorator |
-| `src/handlers.py` | config, utils, downloader, logging_config | Telegram handlers with group detection, orchestrates download flow, logs requests. YouTube Music URLs automatically sent as audio |
+| `src/handlers.py` | config, utils, downloader, logging_config | Telegram handlers with group detection, orchestrates download flow, logs requests. YouTube Music URLs show format picker (Audio/Video/Both). "Both" downloads run concurrently via asyncio. |
 | `src/bot.py` | config, handlers, logging_config | Entry point, wires everything together, initializes logging, global error handler |
 
 ## Data Flow
@@ -57,7 +57,7 @@ media-downloader-bot/
 5. `handlers.py` detects platform via `utils.detect_platform()`
 6. `handlers.py` calls `downloader.get_metadata()` to fetch title/thumbnail
 7. If metadata fails for Instagram: try `download_instagram_gallery_dl()` with cookies
-8. If URL is from music.youtube.com: show format picker (Audio/Video/Both), otherwise download as video
+8. If URL is from music.youtube.com: show format picker (Audio/Video/Both). "Both" downloads video+audio concurrently via `asyncio.to_thread()`, sends video first then audio. Otherwise download as video
 9. `handlers.py` sends file to Telegram, cleans up temp files
 10. `@with_request_logging` decorator logs request lifecycle automatically:
    - `request_received` when handler starts
@@ -86,7 +86,7 @@ Never commit `allowed_contacts.json` — it contains user IDs and is generated l
 python -m pytest tests/ -v
 ```
 
-All 78 tests use mocked subprocess calls - no real downloads needed.
+All 96 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 
