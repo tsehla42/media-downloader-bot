@@ -29,7 +29,8 @@ MAX_CONCURRENT_DOWNLOADS = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "3"))
 
 INSTAGRAM_COOKIES = os.environ.get("INSTAGRAM_COOKIES", "")
 
-LOG_OUTPUT = os.environ.get("LOG_OUTPUT", "stdout")
+MODE = os.environ.get("MODE", "development")
+LOG_OUTPUT = os.environ.get("LOG_OUTPUT", "both")
 LOG_DIR = os.environ.get("LOG_DIR", "logs")
 
 SEEN_USERS_FILE = os.environ.get("SEEN_USERS_FILE", "seen_users.json")

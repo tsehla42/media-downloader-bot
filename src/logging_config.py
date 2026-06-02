@@ -292,14 +292,30 @@ def with_request_logging(handler):
 _initialized = False
 
 
+def _resolve_log_file(mode: str) -> str:
+    """Map MODE to log filename."""
+    mode = mode.lower().strip()
+    if mode in ("dev", "development"):
+        return "requests.dev.jsonl"
+    return "requests.jsonl"
+
+
 def setup_logging() -> None:
-    """Configure logging based on LOG_OUTPUT environment variable."""
+    """Configure logging based on MODE and LOG_OUTPUT environment variables.
+
+    MODE=development|dev  → logs to requests.dev.jsonl
+    MODE=production|prod  → logs to requests.jsonl
+
+    LOG_OUTPUT=console|stdout → console only
+    LOG_OUTPUT=file           → file only
+    LOG_OUTPUT=both           → console + file (default)
+    """
     global _initialized, _seen_users_file
     if _initialized:
         return
     _initialized = True
 
-    from config import LOG_OUTPUT, LOG_DIR, SEEN_USERS_FILE
+    from config import MODE, LOG_OUTPUT, LOG_DIR, SEEN_USERS_FILE
     _seen_users_file = SEEN_USERS_FILE
 
     root = logging.getLogger()
@@ -307,55 +323,26 @@ def setup_logging() -> None:
 
     formatter = JSONFormatter()
 
-    if LOG_OUTPUT == "file":
+    # Normalize LOG_OUTPUT aliases
+    output = LOG_OUTPUT.lower().strip()
+    if output == "stdout":
+        output = "console"
+
+    log_file = _resolve_log_file(MODE)
+    want_console = output in ("console", "both")
+    want_file = output in ("file", "both")
+
+    if want_file:
         os.makedirs(LOG_DIR, exist_ok=True)
-
-        # Requests log - all levels
-        request_handler = RotatingFileHandler(
-            os.path.join(LOG_DIR, "requests.jsonl"),
+        handler = RotatingFileHandler(
+            os.path.join(LOG_DIR, log_file),
             maxBytes=10 * 1024 * 1024,  # 10MB
             backupCount=5,
         )
-        request_handler.setFormatter(formatter)
-        root.addHandler(request_handler)
+        handler.setFormatter(formatter)
+        root.addHandler(handler)
 
-        # Errors log - errors only
-        error_handler = RotatingFileHandler(
-            os.path.join(LOG_DIR, "errors.jsonl"),
-            maxBytes=10 * 1024 * 1024,  # 10MB
-            backupCount=5,
-        )
-        error_handler.setLevel(logging.ERROR)
-        error_handler.setFormatter(formatter)
-        root.addHandler(error_handler)
-
-        # Also log errors to stderr
-        stderr_handler = logging.StreamHandler()
-        stderr_handler.setLevel(logging.ERROR)
-        stderr_handler.setFormatter(formatter)
-        root.addHandler(stderr_handler)
-    else:
-        # Stdout mode
+    if want_console:
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(formatter)
         root.addHandler(stream_handler)
-
-        # Also write to dev log files (same structure as prod)
-        os.makedirs(LOG_DIR, exist_ok=True)
-
-        dev_request_handler = RotatingFileHandler(
-            os.path.join(LOG_DIR, "requests.dev.jsonl"),
-            maxBytes=10 * 1024 * 1024,
-            backupCount=5,
-        )
-        dev_request_handler.setFormatter(formatter)
-        root.addHandler(dev_request_handler)
-
-        dev_error_handler = RotatingFileHandler(
-            os.path.join(LOG_DIR, "errors.dev.jsonl"),
-            maxBytes=10 * 1024 * 1024,
-            backupCount=5,
-        )
-        dev_error_handler.setLevel(logging.ERROR)
-        dev_error_handler.setFormatter(formatter)
-        root.addHandler(dev_error_handler)
