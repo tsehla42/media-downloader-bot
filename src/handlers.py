@@ -138,7 +138,20 @@ def _is_allowed_group(chat_id: int) -> bool:
     return chat_id in ALLOWED_GROUP_IDS
 
 
+def _is_authorized(update: Update) -> bool:
+    """Check if request is authorized. Groups always allowed, DMs checked against ALLOWED_USER_IDS."""
+    if is_group_chat(update):
+        return _is_allowed_group(update.effective_chat.id)
+    if update.message and update.message.from_user:
+        return _is_allowed(update.message.from_user.id)
+    return False
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update):
+        await update.message.reply_text("You are not authorized to use this bot")
+        return
+
     user = update.message.from_user
     if is_new_user(user.id):
         log_new_user(user)
@@ -157,6 +170,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update):
+        await update.message.reply_text("You are not authorized to use this bot")
+        return
+
     await update.message.reply_text(
         "Supported platforms:\n"
         "- YouTube (videos, shorts)\n"
@@ -172,7 +189,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_allowed(update.message.from_user.id):
+    if not _is_authorized(update):
+        await update.message.reply_text(
+            "You are not authorized to use this bot",
+            reply_parameters={"message_id": update.message.message_id},
+        )
         return
 
     text = update.message.text.replace("/caption", "").strip().lower()
@@ -208,7 +229,7 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     _log = logging.getLogger(__name__)
     reply_params = {"message_id": update.message.message_id}
 
-    if not _is_allowed(update.message.from_user.id):
+    if not _is_authorized(update):
         context.user_data["_request_success"] = False
         await update.message.reply_text(
             "You are not authorized to use this bot",
@@ -449,6 +470,8 @@ YTMUSIC_REQUEST_TTL = 300  # 5 minutes
 
 
 async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    import logging
+    _log = logging.getLogger(__name__)
     query = update.callback_query
 
     try:
@@ -489,6 +512,7 @@ async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     try:
         if choice == "audio":
+            _log.info("ytmusic_callback: starting audio download for %s", url)
             success = download_audio(url, f"{base}.mp3")
             if success and os.path.isfile(f"{base}.mp3"):
                 with open(f"{base}.mp3", "rb") as f:
@@ -498,55 +522,94 @@ async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                         reply_parameters=reply_params,
                     )
                 _store_download_metadata(context, "audio", f"{base}.mp3")
+                _log.info("ytmusic_callback: audio sent for %s", url)
             else:
+                _log.warning("ytmusic_callback: audio download failed for %s", url)
                 await update.effective_message.reply_text(
                     "Audio download failed",
                     reply_parameters=reply_params,
                 )
 
         elif choice == "video":
+            _log.info("ytmusic_callback: starting video download for %s", url)
             caption = "" if _user_caption_prefs.get(
                 update.effective_message.from_user.id, True
             ) else title[:1024]
             video_ok = await _download_and_send_video(
                 url, base, output_path, caption, reply_params, update.effective_message, context
             )
-            if not video_ok:
+            if video_ok:
+                _log.info("ytmusic_callback: video sent for %s", url)
+            else:
+                _log.warning("ytmusic_callback: video download failed for %s", url)
                 await update.effective_message.reply_text(
                     "Video download failed",
                     reply_parameters=reply_params,
                 )
 
         elif choice == "both":
-            # Send video first, then audio
-            caption = "" if _user_caption_prefs.get(
-                update.effective_message.from_user.id, True
-            ) else title[:1024]
-            video_ok = await _download_and_send_video(
-                url, base, output_path, caption, reply_params, update.effective_message, context
-            )
-            if not video_ok:
+            _log.info("ytmusic_callback: starting both download for %s", url)
+
+            # Download video and audio concurrently
+            video_task = asyncio.to_thread(download_video, url, output_path, MAX_FILE_SIZE)
+            audio_task = asyncio.to_thread(download_audio, url, f"{base}.mp3")
+            results = await asyncio.gather(video_task, audio_task, return_exceptions=True)
+            video_ok = results[0] is True
+            audio_ok = results[1] is True
+
+            for i, (label, result) in enumerate([("video", results[0]), ("audio", results[1])]):
+                if isinstance(result, Exception):
+                    _log.warning("ytmusic_callback: %s download raised exception for %s: %s", label, url, result)
+
+            # Send video first
+            if video_ok:
+                downloaded = None
+                for ext in ["mp4", "webm", "mkv"]:
+                    candidate = f"{base}.{ext}"
+                    if os.path.isfile(candidate):
+                        downloaded = candidate
+                        break
+                if downloaded:
+                    caption = "" if _user_caption_prefs.get(
+                        update.effective_message.from_user.id, True
+                    ) else title[:1024]
+                    with open(downloaded, "rb") as f:
+                        await update.effective_message.reply_video(
+                            video=f,
+                            caption=caption,
+                            reply_parameters=reply_params,
+                        )
+                    _store_download_metadata(context, "both", downloaded)
+                    _log.info("ytmusic_callback: video sent for %s", url)
+                else:
+                    await update.effective_message.reply_text(
+                        "Video download failed",
+                        reply_parameters=reply_params,
+                    )
+            else:
                 await update.effective_message.reply_text(
                     "Video download failed",
                     reply_parameters=reply_params,
                 )
 
-            # Continue to audio even if video failed — user wanted both,
-            # give them what's available
-            success = download_audio(url, f"{base}.mp3")
-            if success and os.path.isfile(f"{base}.mp3"):
+            # Then send audio
+            if audio_ok and os.path.isfile(f"{base}.mp3"):
                 with open(f"{base}.mp3", "rb") as f:
                     await update.effective_message.reply_audio(
                         audio=f,
                         title=title[:AUDIO_TITLE_MAX],
                         reply_parameters=reply_params,
                     )
-                _store_download_metadata(context, "audio", f"{base}.mp3")
+                if not video_ok:
+                    _store_download_metadata(context, "both", f"{base}.mp3")
+                _log.info("ytmusic_callback: audio sent for %s", url)
             else:
                 await update.effective_message.reply_text(
                     "Audio download failed",
                     reply_parameters=reply_params,
                 )
+
+            _log.info("ytmusic_callback: both download completed for %s (video=%s, audio=%s)", url, video_ok, audio_ok)
 
         else:
             await update.effective_message.reply_text(
@@ -569,7 +632,11 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not update.message or not update.message.text:
         return
 
-    if not _is_allowed(update.message.from_user.id):
+    if not _is_authorized(update):
+        await update.message.reply_text(
+            "You are not authorized to use this bot",
+            reply_parameters={"message_id": update.message.message_id},
+        )
         return
 
     text = update.message.text.strip()
@@ -609,10 +676,6 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             "Unsupported platform. I support YouTube, TikTok, and Instagram",
             reply_parameters={"message_id": update.message.message_id},
         )
-        return
-
-    # Check group allowlist
-    if is_group_chat(update) and not _is_allowed_group(update.effective_chat.id):
         return
 
     # Start typing indicator (works in both P2P and groups)

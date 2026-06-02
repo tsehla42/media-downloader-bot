@@ -68,6 +68,7 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     if platform == "tiktok":
         extra_args.extend(["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"])
 
+    logger.info("download_video: running yt-dlp for %s", url)
     result = subprocess.run(
         [
             ytdlp,
@@ -83,7 +84,10 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     )
 
     if result.returncode == 0:
+        logger.info("download_video: yt-dlp ok for %s", url)
         return True
+
+    logger.info("download_video: retrying with lower quality for %s", url)
 
     result = subprocess.run(
         [
@@ -97,6 +101,11 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
         text=True,
         timeout=300,
     )
+
+    if result.returncode != 0:
+        logger.warning("download_video: yt-dlp failed (code %d): %s", result.returncode, result.stderr[:500])
+    else:
+        logger.info("download_video: yt-dlp ok (fallback) for %s", url)
     return result.returncode == 0
 
 
