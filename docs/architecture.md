@@ -215,26 +215,32 @@ cat logs/requests.jsonl | jq 'select(.request_id == "3df4888f")'
 - Easier to debug (can run yt-dlp commands manually)
 - Matches how all successful yt-dlp wrappers work (Seal, VidBee, etc.)
 
-## Docker Deployment
+## Deployment
 
-Multi-stage build for minimal image size:
+**Image:** Multi-stage build — build stage compiles Python deps, runtime stage is Python 3.12-slim with yt-dlp, gallery-dl, and ffmpeg.
 
-**Build stage:** Installs gcc for Python package compilation.
+**Container:**
+- Runs as non-root `appuser`
+- `restart: unless-stopped` — survives reboots
+- Env vars loaded from `.env` file
+- Logs written to a bind-mounted `logs/` directory
 
-**Runtime stage:** Python 3.12-slim with:
-- `yt-dlp` - Video/audio downloading
-- `gallery-dl` - Instagram image downloading with cookies
-- `ffmpeg` - Audio extraction (MP3 conversion)
+**Volumes:**
+- `./logs:/usr/src/app/logs` — persistent structured JSON logs
+- `./cookies.txt:/app/cookies.txt:ro` — Instagram browser cookies (read-only)
+- `bot-downloads:/tmp/bot-downloads` — temp download directory (named volume)
 
-**Volume mounts:**
-- `./logs:/usr/src/app/logs` - Persistent log files
-- `./cookies.txt:/app/cookies.txt:ro` - Instagram cookies (read-only)
-- `bot-downloads:/tmp/bot-downloads` - Temporary download directory
-
-**Commands:**
+**Deploying updates:**
 ```bash
-docker compose up -d --build    # Build and start
-docker compose down             # Stop and remove
-docker compose down -v          # Stop, remove, and delete volumes
-docker logs -f media-downloader-bot  # Watch logs
+./compose.sh  # Rebuilds image (no cache) and restarts container
 ```
+
+**Useful commands:**
+```bash
+docker compose logs -f           # Watch live logs
+docker compose down              # Stop and remove
+docker compose down -v           # Stop, remove, delete volumes
+docker compose exec bot bash     # Shell into running container
+```
+
+For detailed deployment notes (hostnames, paths, secrets), see `docs/deployment-private.md` (gitignored).
