@@ -223,9 +223,18 @@ def with_request_logging(handler):
     """Decorator that adds request_received/completed/failed logging to handlers."""
     @functools.wraps(handler)
     async def wrapper(update, context):
+        from utils import is_valid_url, extract_urls
+
         # Skip logging for updates without message or callback_query
         if not update.message and not update.callback_query:
             return await handler(update, context)
+
+        # Only log if the message actually contains a valid URL
+        text = getattr(update.message, 'text', '') if update.message else ''
+        if text:
+            urls = extract_urls(text)
+            if not urls or not is_valid_url(text):
+                return await handler(update, context)
 
         request_id = uuid.uuid4().hex[:8]
         context.user_data["request_id"] = request_id
@@ -233,7 +242,7 @@ def with_request_logging(handler):
         # Extract user/chat from update
         user = update.message.from_user if update.message else update.callback_query.from_user
         chat = update.message.chat if update.message else update.callback_query.message.chat
-        url = getattr(update.message, 'text', '') or ''
+        url = text  # Already validated above
         platform = ""  # Platform unknown at handler start
 
         log_request_received(
