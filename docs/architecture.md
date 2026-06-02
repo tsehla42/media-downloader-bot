@@ -29,8 +29,8 @@ Pure utility functions, no dependencies:
 Wraps yt-dlp and gallery-dl binary calls via subprocess:
 - `_find_ytdlp()` / `_find_gallery_dl()` - Locate binaries (checks PATH, then venv bin/ for VS Code compatibility)
 - `get_metadata(url)` - Runs `yt-dlp --dump-json`, returns dict with title/thumbnail/duration
-- `download_video(url, path, max_size, platform)` - Downloads video, retries with lower quality on failure
-- `download_audio(url, path)` - Extracts audio as MP3 (logs yt-dlp stderr on failure)
+- `download_video(url, path, max_size, platform)` - Downloads video, retries with lower quality on failure. Logs start/success/failure.
+- `download_audio(url, path)` - Extracts audio as MP3. Logs start/success/failure.
 - `download_images(url, dir)` - Downloads carousel/gallery images via gallery-dl (with cookies), falls back to yt-dlp thumbnail extraction
 - `download_instagram_gallery_dl(url, dir, cookies)` - Downloads Instagram images using gallery-dl with browser-exported cookies for authentication
 
@@ -45,7 +45,11 @@ Telegram message handlers with group detection:
   - In groups: silently ignores unsupported URLs, processes supported ones
   - In P2P: shows error messages for invalid/unsupported URLs
   - Respects ALLOWED_GROUP_IDS config
-- YouTube Music URLs (music.youtube.com) automatically shown as format picker (Audio/Video/Both)
+- `ytmusic_callback` - Handles YouTube Music format picker (Audio/Video/Both)
+  - "Both" downloads video+audio concurrently via `asyncio.to_thread()` + `asyncio.gather()`
+  - Sends video first, then audio with minimal gap
+  - All branches have structured logging (`_log.info`/`_log.warning`)
+  - `content_type` metadata set to "both" for combined downloads
 
 ### logging_config.py
 Structured JSON logging with zero external dependencies:
@@ -104,6 +108,7 @@ handlers.handle_url()
     │       ├─ [Instagram] If metadata fails → download_instagram_gallery_dl() via gallery-dl
     │       │
     │       ├─ [YouTube Music] If music.youtube.com → show format picker (Audio/Video/Both)
+    │       │   "Both" → asyncio.gather(download_video, download_audio) → send video → send audio
     │       │   Otherwise → download_video() → reply_video()
     │       │
     │       └─ cleanup temp files
