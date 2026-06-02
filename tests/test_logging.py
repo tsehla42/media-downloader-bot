@@ -5,19 +5,41 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _clean_logging():
+    """Reset logging state between tests."""
+    import logging
+    import logging_config
+
+    logging_config._initialized = False
+    root = logging.getLogger()
+    root.handlers.clear()
+    yield
+    logging_config._initialized = False
+    root.handlers.clear()
+
+
 def test_config_default_log_output():
-    """LOG_OUTPUT defaults to 'stdout'."""
-    with patch.dict(os.environ, {}, clear=True):
-        # Reimport to get fresh defaults
+    """LOG_OUTPUT defaults to 'both'."""
+    with patch.dict(os.environ, {}, clear=True), patch("dotenv.load_dotenv"):
         import importlib
         import config
         importlib.reload(config)
-        assert config.LOG_OUTPUT == "stdout"
+        assert config.LOG_OUTPUT == "both"
+
+
+def test_config_default_mode():
+    """MODE defaults to 'development'."""
+    with patch.dict(os.environ, {}, clear=True), patch("dotenv.load_dotenv"):
+        import importlib
+        import config
+        importlib.reload(config)
+        assert config.MODE == "development"
 
 
 def test_config_default_log_dir():
     """LOG_DIR defaults to 'logs'."""
-    with patch.dict(os.environ, {}, clear=True):
+    with patch.dict(os.environ, {}, clear=True), patch("dotenv.load_dotenv"):
         import importlib
         import config
         importlib.reload(config)
@@ -31,6 +53,15 @@ def test_config_custom_log_output():
         import config
         importlib.reload(config)
         assert config.LOG_OUTPUT == "file"
+
+
+def test_config_custom_mode():
+    """MODE can be set to 'production'."""
+    with patch.dict(os.environ, {"MODE": "production"}):
+        import importlib
+        import config
+        importlib.reload(config)
+        assert config.MODE == "production"
 
 
 def test_config_custom_log_dir():
@@ -118,15 +149,75 @@ def test_json_formatter_timestamp_format():
                       timezone(timedelta(hours=3)).utcoffset(ts))
 
 
-def test_setup_logging_stdout():
-    """setup_logging configures stdout handler when LOG_OUTPUT=stdout."""
+def test_setup_logging_console_only():
+    """setup_logging configures console handler when LOG_OUTPUT=console."""
     import importlib
 
     import config
-    import logging_config
     from logging_config import setup_logging
 
-    logging_config._initialized = False
+    with patch.dict(os.environ, {"LOG_OUTPUT": "console"}):
+        importlib.reload(config)
+        setup_logging()
+
+    root = logging.getLogger()
+    stream_handlers = [h for h in root.handlers if isinstance(h, logging.StreamHandler)]
+    file_handlers = [h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
+    assert len(stream_handlers) >= 1
+    assert len(file_handlers) == 0
+
+
+def test_setup_logging_file_only():
+    """setup_logging configures file handler when LOG_OUTPUT=file."""
+    import importlib
+
+    import config
+    from logging_config import setup_logging
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch.dict(os.environ, {"LOG_OUTPUT": "file", "LOG_DIR": tmpdir, "MODE": "production"}):
+            importlib.reload(config)
+            setup_logging()
+
+        root = logging.getLogger()
+        file_handlers = [h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
+        # Exclude pytest's LogCaptureHandler (subclass of StreamHandler)
+        our_stream = [h for h in root.handlers
+                      if isinstance(h, logging.StreamHandler)
+                      and type(h) is logging.StreamHandler]
+        assert len(file_handlers) >= 1
+        assert len(our_stream) == 0
+
+        assert os.path.exists(os.path.join(tmpdir, "requests.jsonl"))
+
+
+def test_setup_logging_both():
+    """setup_logging configures both console and file when LOG_OUTPUT=both."""
+    import importlib
+
+    import config
+    from logging_config import setup_logging
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch.dict(os.environ, {"LOG_OUTPUT": "both", "LOG_DIR": tmpdir, "MODE": "production"}):
+            importlib.reload(config)
+            setup_logging()
+
+        root = logging.getLogger()
+        file_handlers = [h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
+        stream_handlers = [h for h in root.handlers if isinstance(h, logging.StreamHandler)]
+        assert len(file_handlers) >= 1
+        assert len(stream_handlers) >= 1
+
+        assert os.path.exists(os.path.join(tmpdir, "requests.jsonl"))
+
+
+def test_setup_logging_stdout_alias():
+    """setup_logging treats LOG_OUTPUT=stdout as console."""
+    import importlib
+
+    import config
+    from logging_config import setup_logging
 
     with patch.dict(os.environ, {"LOG_OUTPUT": "stdout"}):
         importlib.reload(config)
@@ -134,31 +225,41 @@ def test_setup_logging_stdout():
 
     root = logging.getLogger()
     stream_handlers = [h for h in root.handlers if isinstance(h, logging.StreamHandler)]
+    file_handlers = [h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
     assert len(stream_handlers) >= 1
+    assert len(file_handlers) == 0
 
 
-def test_setup_logging_file():
-    """setup_logging configures file handlers when LOG_OUTPUT=file."""
+def test_setup_logging_development_log_file():
+    """MODE=dev produces requests.dev.jsonl."""
     import importlib
 
     import config
-    import logging_config
     from logging_config import setup_logging
 
-    logging_config._initialized = False
-
     with tempfile.TemporaryDirectory() as tmpdir:
-        with patch.dict(os.environ, {"LOG_OUTPUT": "file", "LOG_DIR": tmpdir}):
+        with patch.dict(os.environ, {"LOG_OUTPUT": "file", "LOG_DIR": tmpdir, "MODE": "dev"}):
             importlib.reload(config)
             setup_logging()
 
-        root = logging.getLogger()
-        file_handlers = [h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
-        assert len(file_handlers) >= 2  # requests + errors
+        assert os.path.exists(os.path.join(tmpdir, "requests.dev.jsonl"))
+        assert not os.path.exists(os.path.join(tmpdir, "requests.jsonl"))
 
-        # Check files were created
+
+def test_setup_logging_production_log_file():
+    """MODE=prod produces requests.jsonl."""
+    import importlib
+
+    import config
+    from logging_config import setup_logging
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch.dict(os.environ, {"LOG_OUTPUT": "file", "LOG_DIR": tmpdir, "MODE": "prod"}):
+            importlib.reload(config)
+            setup_logging()
+
         assert os.path.exists(os.path.join(tmpdir, "requests.jsonl"))
-        assert os.path.exists(os.path.join(tmpdir, "errors.jsonl"))
+        assert not os.path.exists(os.path.join(tmpdir, "requests.dev.jsonl"))
 
 
 def test_setup_logging_idempotent():
@@ -166,12 +267,9 @@ def test_setup_logging_idempotent():
     import importlib
 
     import config
-    import logging_config
     from logging_config import setup_logging
 
-    logging_config._initialized = False
-
-    with patch.dict(os.environ, {"LOG_OUTPUT": "stdout"}):
+    with patch.dict(os.environ, {"LOG_OUTPUT": "console"}):
         importlib.reload(config)
         setup_logging()
         handler_count = len(logging.getLogger().handlers)

@@ -15,7 +15,8 @@ Loads settings from `.env` via python-dotenv. Exports constants:
 - `MAX_FILE_SIZE` - Max download size in MB (default: 50)
 - `MAX_CONCURRENT_DOWNLOADS` - Concurrency limit (default: 3)
 - `INSTAGRAM_COOKIES` - Path to cookies.txt for gallery-dl Instagram auth (empty = no auth)
-- `LOG_OUTPUT` - Logging destination: "stdout" (dev) or "file" (prod)
+- `MODE` - Environment mode: "development" (default) or "production". Determines log file name.
+- `LOG_OUTPUT` - Logging destination: "console", "file", or "both" (default). "stdout" is an alias for "console".
 - `LOG_DIR` - Log file directory (default: logs)
 
 ### utils.py
@@ -54,9 +55,12 @@ Telegram message handlers with group detection:
 ### logging_config.py
 Structured JSON logging with zero external dependencies:
 - `JSONFormatter` - Custom `logging.Formatter` that outputs JSON with timestamp (Europe/Kyiv timezone, UTC+2/+3), level, message, and extra fields (with `ensure_ascii=False` for Unicode support)
-- `setup_logging()` - Configures logging based on `LOG_OUTPUT` env var
-  - stdout mode: StreamHandler for development
-  - file mode: RotatingFileHandler for `requests.jsonl` (all levels), plus stderr for errors
+- `_resolve_log_file(mode)` - Maps MODE to log filename: dev/development → `requests.dev.jsonl`, production → `requests.jsonl`
+- `setup_logging()` - Configures logging based on `MODE` and `LOG_OUTPUT` env vars
+  - `LOG_OUTPUT=console` (or "stdout"): StreamHandler only
+  - `LOG_OUTPUT=file`: RotatingFileHandler only (10MB, 5 backups)
+  - `LOG_OUTPUT=both` (default): Both console and file handlers
+  - File name determined by MODE: dev → `requests.dev.jsonl`, prod → `requests.jsonl`
 - `with_request_logging()` - Decorator that wraps handlers and logs request lifecycle:
   - `request_received` when handler starts
   - `request_completed` when handler finishes (success or expected failure)
@@ -134,7 +138,7 @@ handlers.handle_url()
 
 ## Structured Logging
 
-Logs are written in JSON format for easy querying with `jq` and log aggregators. All events go to a single `requests.jsonl` file.
+Logs are written in JSON format for easy querying with `jq` and log aggregators. The log file name depends on MODE: `requests.dev.jsonl` for development, `requests.jsonl` for production.
 
 ### Log Schema
 
@@ -189,19 +193,21 @@ Request failed:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOG_OUTPUT` | `stdout` | `stdout` for dev, `file` for production |
+| `MODE` | `development` | `development`/`dev` or `production`/`prod`. Determines log file name. |
+| `LOG_OUTPUT` | `both` | `console` (or `stdout`), `file`, or `both`. Controls output destinations. |
 | `LOG_DIR` | `logs` | Directory for log files |
 
-### File Rotation (Production)
+### File Rotation
 
-- `logs/requests.jsonl` - All request lifecycle events (10MB, 5 backups)
-- `logs/errors.jsonl` - Error logs only (10MB, 5 backups)
+- `logs/requests.dev.jsonl` - Development mode (10MB, 5 backups)
+- `logs/requests.jsonl` - Production mode (10MB, 5 backups)
 
 ### Example Queries
 
 ```bash
-# All YouTube requests
+# All YouTube requests (adjust file name based on MODE)
 cat logs/requests.jsonl | jq 'select(.platform == "youtube")'
+cat logs/requests.dev.jsonl | jq 'select(.platform == "youtube")'
 
 # Failed requests
 cat logs/requests.jsonl | jq 'select(.event == "request_failed")'
