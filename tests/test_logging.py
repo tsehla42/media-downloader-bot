@@ -279,13 +279,21 @@ def test_log_request_failed_basic():
         assert log_data["error_type"] == "TimeoutError"
 
 
+def _make_update_with_url(url="https://youtube.com/watch?v=abc"):
+    """Create a mock update with a valid URL in message text."""
+    mock_update = MagicMock()
+    mock_update.message.text = url
+    mock_update.callback_query = None
+    return mock_update
+
+
 def test_decorator_generates_request_id():
     """Decorator generates UUID and stores in context.user_data."""
     from logging_config import with_request_logging
 
     mock_context = MagicMock()
     mock_context.user_data = {}
-    mock_update = MagicMock()
+    mock_update = _make_update_with_url()
 
     @with_request_logging
     async def dummy_handler(update, context):
@@ -306,7 +314,7 @@ def test_decorator_logs_request_received():
 
     mock_context = MagicMock()
     mock_context.user_data = {}
-    mock_update = MagicMock()
+    mock_update = _make_update_with_url()
 
     @with_request_logging
     async def dummy_handler(update, context):
@@ -327,7 +335,7 @@ def test_decorator_logs_request_completed():
 
     mock_context = MagicMock()
     mock_context.user_data = {}
-    mock_update = MagicMock()
+    mock_update = _make_update_with_url()
 
     @with_request_logging
     async def dummy_handler(update, context):
@@ -349,7 +357,7 @@ def test_decorator_logs_request_failed():
 
     mock_context = MagicMock()
     mock_context.user_data = {}
-    mock_update = MagicMock()
+    mock_update = _make_update_with_url()
 
     @with_request_logging
     async def dummy_handler(update, context):
@@ -373,7 +381,7 @@ def test_decorator_reraises_exception():
 
     mock_context = MagicMock()
     mock_context.user_data = {}
-    mock_update = MagicMock()
+    mock_update = _make_update_with_url()
 
     @with_request_logging
     async def dummy_handler(update, context):
@@ -391,7 +399,7 @@ def test_decorator_calculates_duration():
 
     mock_context = MagicMock()
     mock_context.user_data = {}
-    mock_update = MagicMock()
+    mock_update = _make_update_with_url()
 
     @with_request_logging
     async def dummy_handler(update, context):
