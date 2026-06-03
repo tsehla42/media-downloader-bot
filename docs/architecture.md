@@ -19,55 +19,80 @@ Loads settings from `.env` via python-dotenv. Exports constants:
 - `LOG_OUTPUT` - Logging destination: "console", "file", or "both" (default). "stdout" is an alias for "console".
 - `LOG_DIR` - Log file directory (default: logs)
 
+### auth.py
+Authorization checks, depends on config:
+- `is_authorized(update)` - Checks if request is authorized (groups checked against ALLOWED_GROUP_IDS, DMs against ALLOWED_USER_IDS)
+- `is_group_chat(update)` - Checks if message is from group/supergroup
+- `_is_allowed(user_id)` - Checks if user is in allowlist (empty = allow all)
+- `_is_allowed_group(chat_id)` - Checks if group is in allowlist (empty = allow all)
+
+### commands.py
+User-facing commands, depends on auth, config, logging_config:
+- `_user_caption_prefs` - Per-user caption preferences dict (user_id -> bool)
+- `get_caption_for_user(user_id, title)` - Returns caption string based on preference (empty if disabled)
+- `start_command(update, context)` - Welcome message, logs new users
+- `help_command(update, context)` - Supported platforms and commands list
+- `caption_command(update, context)` - Toggle video captions on/off
+
+### telegram_utils.py
+Telegram helper utilities, no dependencies:
+- `typing_indicator(chat_id, bot)` - Async context manager that shows typing indicator while active
+- `send_images(message, images, reply_params)` - Sends single photo or batched media groups, returns total size in bytes
+
+### platforms/__init__.py
+Platform detection and registry, no dependencies:
+- `SUPPORTED_PLATFORMS` - Dict mapping platform names to their domains
+- `detect_platform(url)` - Returns "youtube", "tiktok", "instagram", or None
+
+### platforms/youtube.py
+YouTube and YouTube Music download logic, depends on downloader, commands, telegram_utils:
+- `_has_video_available(metadata)` - Checks if metadata indicates video (not audio-only)
+- `_download_and_send_video(url, base, output_path, caption, reply_params, message, context)` - Downloads and sends video
+- `_store_download_metadata(context, content_type, file_path)` - Stores download metadata for logging
+- `handle_youtube(update, context, url)` - Handles regular YouTube URLs
+- `handle_ytmusic(update, context, url, metadata, title, base, output_path, reply_params)` - Handles YouTube Music (format picker or audio-only)
+- `ytmusic_callback(update, context)` - Handles format picker callback (Audio/Video/Video+Audio)
+- `_ytmusic_pending` - Shared dict for pending format requests
+- `AUDIO_TITLE_MAX` - Telegram Bot API limit for audio title (64 chars)
+
+### platforms/tiktok.py
+TikTok download logic with gallery-dl fallback, depends on downloader, telegram_utils:
+- `handle_tiktok(update, context, url)` - Tries video download, falls back to gallery-dl for photo posts
+
+### platforms/instagram.py
+Instagram download logic with gallery-dl fallback, depends on downloader, telegram_utils:
+- `handle_instagram(update, context, url)` - Handles both metadata-success (yt-dlp) and metadata-failure (gallery-dl with cookies) paths
+
 ### utils.py
 Pure utility functions, no dependencies:
-- `detect_platform(url)` - Returns "youtube", "tiktok", "instagram", or None (supports youtube.com, youtu.be, music.youtube.com)
 - `is_valid_url(text)` - Checks for HTTP(S) URL pattern
 - `extract_urls(text)` - Finds all URLs in text
+- `ensure_download_dir(path)` - Creates download directory if needed
 - `cleanup_file(path)` / `cleanup_dir(path)` - Safe file removal
 
 ### downloader.py
 Wraps yt-dlp and gallery-dl binary calls via subprocess:
-- `_find_ytdlp()` / `_find_gallery_dl()` - Locate binaries (checks PATH, then venv bin/ for VS Code compatibility)
+- `_find_ytdlp()` / `_find_gallery_dl()` - Locate binaries
 - `get_metadata(url)` - Runs `yt-dlp --dump-json`, returns dict with title/thumbnail/duration
-- `download_video(url, path, max_size, platform)` - Downloads video, retries with lower quality on failure. Logs start/success/failure.
-- `download_audio(url, path)` - Extracts audio as MP3. Logs start/success/failure.
-- `download_images(url, dir)` - Downloads carousel/gallery images via gallery-dl (with cookies), falls back to yt-dlp thumbnail extraction
-- `download_instagram_gallery_dl(url, dir, cookies)` - Downloads Instagram images using gallery-dl with browser-exported cookies for authentication
+- `download_video(url, path, max_size, platform)` - Downloads video, retries with lower quality on failure
+- `download_audio(url, path)` - Extracts audio as MP3
+- `download_images(url, dir)` - Downloads carousel/gallery images via gallery-dl
+- `download_gallery_dl_images(url, dir, cookies)` - Downloads images using gallery-dl
 
 ### handlers.py
-Telegram message handlers with group detection:
-- `is_group_chat(update)` - Checks if message is from group/supergroup
-- `_is_allowed_group(chat_id)` - Checks if group is in allowlist
-- `start_command` - Welcome message
-- `help_command` - Platform list and usage
-- `audio_command` - Download as MP3 (registered as CommandHandler, sets platform/success metadata for logging)
-- `handle_url` - Main handler: detects group/P2P, filters URLs, downloads, sends to Telegram
-  - In groups: silently ignores unsupported URLs, processes supported ones
-  - In P2P: shows error messages for invalid/unsupported URLs
-  - Respects ALLOWED_GROUP_IDS config
-- `ytmusic_callback` - Handles YouTube Music format picker (Audio/Video/Both)
-  - "Both" downloads video+audio concurrently via `asyncio.to_thread()` + `asyncio.gather()`
-  - Sends video first, then audio with minimal gap
-  - All branches have structured logging (`_log.info`/`_log.warning`)
-  - `content_type` metadata set to "both" for combined downloads
+Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloader:
+- `my_chat_member_handler(update, context)` - Handles bot membership changes (added, removed, promoted, demoted)
+- `audio_command(update, context)` - Download as MP3 (registered as CommandHandler)
+- `_download_and_send(update, context, url)` - Orchestrates download: delegates to platform-specific handlers
+- `handle_url(update, context)` - Main handler: detects group/P2P, filters URLs, starts typing, delegates to _download_and_send
 
 ### logging_config.py
 Structured JSON logging with zero external dependencies:
-- `JSONFormatter` - Custom `logging.Formatter` that outputs JSON with timestamp (Europe/Kyiv timezone, UTC+2/+3), level, message, and extra fields (with `ensure_ascii=False` for Unicode support)
-- `_resolve_log_file(mode)` - Maps MODE to log filename: dev/development → `requests.dev.jsonl`, production → `requests.jsonl`
+- `JSONFormatter` - Custom `logging.Formatter` that outputs JSON with timestamp (Europe/Kyiv timezone)
+- `_resolve_log_file(mode)` - Maps MODE to log filename
 - `setup_logging()` - Configures logging based on `MODE` and `LOG_OUTPUT` env vars
-  - `LOG_OUTPUT=console` (or "stdout"): StreamHandler only
-  - `LOG_OUTPUT=file`: RotatingFileHandler only (10MB, 5 backups)
-  - `LOG_OUTPUT=both` (default): Both console and file handlers
-  - File name determined by MODE: dev → `requests.dev.jsonl`, prod → `requests.jsonl`
-- `with_request_logging()` - Decorator that wraps handlers and logs request lifecycle:
-  - `request_received` when handler starts
-  - `request_completed` when handler finishes (success or expected failure)
-  - `request_failed` when handler throws exception
-- `log_request_received()` - Logs when a request is received
-- `log_request_completed()` - Logs when a request completes
-- `log_request_failed()` - Logs when a request fails with an exception
+- `with_request_logging()` - Decorator that wraps handlers and logs request lifecycle
+- `log_request_received()` / `log_request_completed()` / `log_request_failed()` - Log request events
 
 ### bot.py
 Entry point:
@@ -85,7 +110,7 @@ User sends URL or /audio command
 handlers.handle_url()
     │
     ├─ /audio → audio_command() → download_audio() → reply_audio()
-    │   (logged via @with_request_logging on handle_url + _log calls in audio_command)
+    │   (logged via @with_request_logging)
     │
     ├─ is_group_chat() → true/false
     │
@@ -95,9 +120,7 @@ handlers.handle_url()
     │
     ├─ [P2P] Show error if no valid URLs
     │
-    ├─ _is_allowed_group() → check allowlist (groups only)
-    │
-    ├─ Start typing indicator
+    ├─ Start typing indicator (telegram_utils.typing_indicator)
     │
     ├─ @with_request_logging (decorator)
     │   │
@@ -106,21 +129,29 @@ handlers.handle_url()
     │   ▼
     │   handlers._download_and_send()
     │       │
-    │       ├─ utils.detect_platform(url) → "youtube"
-    │       ├─ downloader.get_metadata(url) → {title, thumbnail, ...}
+    │       ├─ platforms.detect_platform(url) → "youtube"/"tiktok"/"instagram"
     │       │
-    │       ├─ [Instagram] If metadata fails → download_instagram_gallery_dl() via gallery-dl
+    │       ├─ [Instagram] → platforms.instagram.handle_instagram()
+    │       │   ├─ If metadata fails → gallery-dl with cookies
+    │       │   └─ If metadata succeeds → download_images()
     │       │
-    │       ├─ [YouTube Music] If music.youtube.com → show format picker (Audio/Video/Both)
-    │       │   "Both" → asyncio.gather(download_video, download_audio) → send video → send audio
-    │       │   Otherwise → download_video() → reply_video()
+    │       ├─ [TikTok] → platforms.tiktok.handle_tiktok()
+    │       │   ├─ Try video download
+    │       │   └─ If fails → gallery-dl for photo posts
+    │       │
+    │       ├─ [YouTube Music] → platforms.youtube.handle_ytmusic()
+    │       │   ├─ If video available → show format picker
+    │       │   └─ If audio-only → download directly
+    │       │
+    │       ├─ [YouTube] → platforms.youtube.handle_youtube()
+    │       │   └─ download_video() → reply_video()
     │       │
     │       └─ cleanup temp files
     │       │
     │       ▼
     │   @with_request_logging (decorator)
     │       │
-    │       ├─ log_request_completed() → logs "request_completed" event (success)
+    │       ├─ log_request_completed() → logs "request_completed" event
     │       │
     │       ▼
     │   Done
@@ -131,7 +162,7 @@ handlers.handle_url()
 ## External Dependencies
 
 - **yt-dlp** - Installed as system binary. Called via subprocess.
-- **gallery-dl** - Installed as system binary. Called via subprocess for Instagram image downloads with cookies authentication.
+- **gallery-dl** - Installed as system binary. Called via subprocess for Instagram image downloads (with cookies) and TikTok photo posts (no cookies needed).
 - **ffmpeg** - Required for audio extraction (MP3 conversion). Installed in Docker image.
 - **python-telegram-bot** - Telegram Bot API wrapper. Installed via pip.
 - **python-dotenv** - .env file loading.

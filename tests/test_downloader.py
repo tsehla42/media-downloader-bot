@@ -1,7 +1,7 @@
 import json
 import sys
 from unittest.mock import patch, MagicMock
-from downloader import get_metadata, download_video, download_audio, download_instagram_gallery_dl, _find_gallery_dl
+from downloader import get_metadata, download_video, download_audio, download_gallery_dl_images, _find_gallery_dl
 
 SAMPLE_METADATA = {
     "id": "abc123",
@@ -72,7 +72,7 @@ def test_download_audio_uses_extract_audio():
         assert "--audio-format" in call_args
 
 
-def test_download_instagram_gallery_dl_calls_gallery_dl():
+def test_download_gallery_dl_images_calls_gallery_dl():
     with patch("downloader.subprocess.run") as mock_run, \
          patch("downloader._find_gallery_dl", return_value="/usr/bin/gallery-dl"), \
          patch("downloader.os.path.isfile", return_value=True), \
@@ -88,7 +88,7 @@ def test_download_instagram_gallery_dl_calls_gallery_dl():
             stderr=""
         )
         with patch("downloader.os.makedirs"):
-            result = download_instagram_gallery_dl(
+            result = download_gallery_dl_images(
                 "https://instagram.com/p/ABC123/",
                 "/tmp/test_output",
                 cookies="/tmp/cookies.txt"
@@ -100,7 +100,7 @@ def test_download_instagram_gallery_dl_calls_gallery_dl():
             assert "/tmp/cookies.txt" in call_args
 
 
-def test_download_instagram_gallery_dl_returns_empty_on_failure():
+def test_download_gallery_dl_images_returns_empty_on_failure():
     with patch("downloader.subprocess.run") as mock_run, \
          patch("downloader._find_gallery_dl", return_value="/usr/bin/gallery-dl"):
         mock_run.return_value = MagicMock(
@@ -109,7 +109,7 @@ def test_download_instagram_gallery_dl_returns_empty_on_failure():
             stderr="ERROR: some error"
         )
         with patch("downloader.os.makedirs"):
-            result = download_instagram_gallery_dl(
+            result = download_gallery_dl_images(
                 "https://instagram.com/p/ABC123/",
                 "/tmp/test_output",
                 cookies="/tmp/cookies.txt"
@@ -117,19 +117,36 @@ def test_download_instagram_gallery_dl_returns_empty_on_failure():
             assert result == []
 
 
-def test_download_instagram_gallery_dl_returns_empty_without_cookies():
-    with patch("downloader.os.makedirs"):
-        result = download_instagram_gallery_dl(
-            "https://instagram.com/p/ABC123/",
-            "/tmp/test_output",
-            cookies=""
+def test_download_gallery_dl_images_works_without_cookies():
+    """gallery-dl can download without cookies (e.g. TikTok)."""
+    with patch("downloader.subprocess.run") as mock_run, \
+         patch("downloader._find_gallery_dl", return_value="/usr/bin/gallery-dl"), \
+         patch("downloader.glob.glob", side_effect=[
+             ["/tmp/test_output/image.jpg"],  # *.jpg
+             [],  # *.jpeg
+             [],  # *.png
+             [],  # *.webp
+         ]):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="",
+            stderr=""
         )
-        assert result == []
+        with patch("downloader.os.makedirs"):
+            result = download_gallery_dl_images(
+                "https://tiktok.com/@user/photo/123",
+                "/tmp/test_output",
+                cookies=""
+            )
+            assert result == ["/tmp/test_output/image.jpg"]
+            # Verify --cookies was NOT passed
+            call_args = mock_run.call_args[0][0]
+            assert "--cookies" not in call_args
 
 
-def test_download_instagram_gallery_dl_returns_empty_when_not_installed():
+def test_download_gallery_dl_images_returns_empty_when_not_installed():
     with patch("downloader._find_gallery_dl", return_value=None):
-        result = download_instagram_gallery_dl(
+        result = download_gallery_dl_images(
             "https://instagram.com/p/ABC123/",
             "/tmp/test_output",
             cookies="/tmp/cookies.txt"

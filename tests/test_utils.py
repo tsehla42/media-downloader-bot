@@ -1,4 +1,5 @@
-from utils import detect_platform, is_valid_url
+from platforms import detect_platform
+from utils import is_valid_url
 
 def test_detect_youtube_watch():
     assert detect_platform("https://www.youtube.com/watch?v=dQw4w9WgXcQ") == "youtube"

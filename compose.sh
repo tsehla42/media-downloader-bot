@@ -3,6 +3,6 @@ set -euo pipefail
 
 PROJECT=media-downloader-bot
 
-docker compose build --no-cache
+time docker compose build --no-cache
 
 COMPOSE_PROJECT_NAME=$PROJECT docker compose up -d
