@@ -11,7 +11,9 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN
-from handlers import start_command, help_command, handle_url, caption_command, audio_command, ytmusic_callback, my_chat_member_handler
+from handlers import handle_url, audio_command, my_chat_member_handler
+from platforms.youtube import ytmusic_callback
+from commands import start_command, help_command, caption_command
 
 logger = logging.getLogger(__name__)
 

@@ -1,29 +1,10 @@
+"""Utility functions for URL validation, directory management, and file cleanup."""
+
 import os
 import re
 import shutil
-from urllib.parse import urlparse
-
-SUPPORTED_PLATFORMS = {
-    "youtube": ["youtube.com", "youtu.be", "music.youtube.com"],
-    "tiktok": ["tiktok.com", "vm.tiktok.com", "vt.tiktok.com", "m.tiktok.com", "douyin.com"],
-    "instagram": ["instagram.com"],
-}
 
 URL_PATTERN = re.compile(r"https?://\S+")
-
-
-def detect_platform(url: str) -> str | None:
-    """Detect which platform a URL belongs to."""
-    try:
-        parsed = urlparse(url)
-        host = parsed.hostname or ""
-        host = re.sub(r"^www\.", "", host)
-        for platform, domains in SUPPORTED_PLATFORMS.items():
-            if host in domains:
-                return platform
-    except Exception:
-        pass
-    return None
 
 
 def is_valid_url(text: str) -> bool:

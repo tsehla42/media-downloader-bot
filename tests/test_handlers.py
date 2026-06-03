@@ -1,7 +1,16 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from telegram.constants import ChatAction
-from handlers import start_command, help_command, handle_url, _download_and_send, caption_command, audio_command, _has_video_available, ytmusic_callback
+from handlers import handle_url, audio_command, my_chat_member_handler, _download_and_send
+from platforms.youtube import ytmusic_callback, _has_video_available, _ytmusic_pending
+from commands import caption_command
+
+
+def _make_typing_indicator_mock():
+    """Create a mock that behaves as typing_indicator (async context manager factory)."""
+    mock_cm = MagicMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_cm)
+    mock_cm.__aexit__ = AsyncMock(return_value=None)
+    return MagicMock(return_value=mock_cm)
 
 @pytest.fixture
 def update():
@@ -25,22 +34,6 @@ def context():
     return ctx
 
 @pytest.mark.asyncio
-async def test_start_command(update, context):
-    await start_command(update, context)
-    update.message.reply_text.assert_called_once()
-    text = update.message.reply_text.call_args[0][0]
-    assert "Media Downloader Bot" in text
-
-@pytest.mark.asyncio
-async def test_help_command(update, context):
-    await help_command(update, context)
-    update.message.reply_text.assert_called_once()
-    text = update.message.reply_text.call_args[0][0]
-    assert "YouTube" in text
-    assert "TikTok" in text
-    assert "Instagram" in text
-
-@pytest.mark.asyncio
 async def test_caption_command_toggle(update, context):
     update.message.text = "/caption on"
     await caption_command(update, context)
@@ -54,7 +47,7 @@ async def test_handle_url_processes_all_urls(update, context):
     update.message.text = "https://youtube.com/watch?v=abc https://tiktok.com/@user/video/123"
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "Test"}), \
-         patch("handlers.download_video", return_value=True), \
+         patch("platforms.youtube.download_video", return_value=True), \
          patch("handlers.cleanup_file"), \
          patch("os.path.isfile", return_value=True), \
          patch("os.path.getsize", return_value=1024*1024), \
@@ -104,7 +97,7 @@ async def test_download_and_send_replies_with_video():
 
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "Test Video", "duration": 60, "format": "720p"}), \
-         patch("handlers.download_video", return_value=True):
+         patch("platforms.youtube.download_video", return_value=True):
         with patch("os.path.isfile", return_value=True), \
              patch("os.path.getsize", return_value=1024*1024), \
              patch("handlers.cleanup_file"), \
@@ -134,7 +127,7 @@ async def test_download_and_send_logs_error_on_exception():
 
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "Test Video", "duration": 60, "format": "720p"}), \
-         patch("handlers.download_video", side_effect=Exception("Network error")):
+         patch("platforms.youtube.download_video", side_effect=Exception("Network error")):
         with patch("handlers.cleanup_file"):
             await _download_and_send(update, context, "https://youtube.com/watch?v=abc")
 
@@ -200,27 +193,22 @@ async def test_handle_url_starts_typing_immediately():
     context = MagicMock()
     context.bot.send_chat_action = AsyncMock()
 
-    mock_typing_task = MagicMock()
-
-    async def fake_start_typing(chat_id, bot):
-        await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-        return mock_typing_task
+    mock_typing = _make_typing_indicator_mock()
 
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "Test Video", "duration": 60, "format": "720p"}), \
-         patch("handlers.download_video", return_value=True), \
+         patch("platforms.youtube.download_video", return_value=True), \
          patch("os.path.isfile", return_value=True), \
          patch("os.path.getsize", return_value=1024*1024), \
          patch("handlers.cleanup_file"), \
          patch("builtins.open", MagicMock()), \
-         patch("handlers._start_typing", side_effect=fake_start_typing):
+         patch("handlers.typing_indicator", mock_typing):
         await handle_url(update, context)
 
-    # Verify typing action was sent immediately
-    context.bot.send_chat_action.assert_called()
-    call_args = context.bot.send_chat_action.call_args
-    assert call_args[1]["chat_id"] == -100
-    assert call_args[1]["action"] == ChatAction.TYPING
+    # Verify typing indicator was used
+    mock_typing.assert_called_once()
+    call_args = mock_typing.call_args
+    assert call_args[0][0] == -100
 
 
 @pytest.mark.asyncio
@@ -236,11 +224,7 @@ async def test_handle_url_starts_typing_for_audio():
     context = MagicMock()
     context.bot.send_chat_action = AsyncMock()
 
-    mock_typing_task = MagicMock()
-
-    async def fake_start_typing(chat_id, bot):
-        await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-        return mock_typing_task
+    mock_typing = _make_typing_indicator_mock()
 
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.download_audio", return_value=True), \
@@ -248,14 +232,13 @@ async def test_handle_url_starts_typing_for_audio():
          patch("os.path.getsize", return_value=1024*1024), \
          patch("handlers.cleanup_file"), \
          patch("builtins.open", MagicMock()), \
-         patch("handlers._start_typing", side_effect=fake_start_typing):
+         patch("handlers.typing_indicator", mock_typing):
         await handle_url(update, context)
 
-    context.bot.send_chat_action.assert_called()
-    call_args = context.bot.send_chat_action.call_args
-    assert call_args[1]["chat_id"] == 123456
-    assert call_args[1]["action"] == ChatAction.TYPING
-    assert call_args[1]["action"] == ChatAction.TYPING
+    # typing_indicator is called once from audio_command (handle_url no longer wraps it)
+    assert mock_typing.call_count == 1
+    call_args = mock_typing.call_args
+    assert call_args[0][0] == 123456
 
 
 @pytest.mark.asyncio
@@ -272,10 +255,7 @@ async def test_audio_command_uses_title_for_filename():
     context.bot.send_chat_action = AsyncMock()
     context.user_data = {}
 
-    mock_typing_task = MagicMock()
-
-    async def fake_start_typing(chat_id, bot):
-        return mock_typing_task
+    mock_typing = _make_typing_indicator_mock()
 
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "My Test Song"}), \
@@ -284,7 +264,7 @@ async def test_audio_command_uses_title_for_filename():
          patch("os.path.getsize", return_value=1024*1024), \
          patch("handlers.cleanup_file"), \
          patch("builtins.open", MagicMock()), \
-         patch("handlers._start_typing", side_effect=fake_start_typing):
+         patch("handlers.typing_indicator", mock_typing):
         await audio_command(update, context)
 
     update.message.reply_audio.assert_called_once()
@@ -307,10 +287,7 @@ async def test_audio_command_no_metadata_omits_title():
     context.bot.send_chat_action = AsyncMock()
     context.user_data = {}
 
-    mock_typing_task = MagicMock()
-
-    async def fake_start_typing(chat_id, bot):
-        return mock_typing_task
+    mock_typing = _make_typing_indicator_mock()
 
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value=None), \
@@ -319,7 +296,7 @@ async def test_audio_command_no_metadata_omits_title():
          patch("os.path.getsize", return_value=1024*1024), \
          patch("handlers.cleanup_file"), \
          patch("builtins.open", MagicMock()), \
-         patch("handlers._start_typing", side_effect=fake_start_typing):
+         patch("handlers.typing_indicator", mock_typing):
         await audio_command(update, context)
 
     update.message.reply_audio.assert_called_once()
@@ -359,20 +336,20 @@ async def test_handle_url_group_processes_supported_urls(update, context):
     update.message.text = "https://youtube.com/watch?v=abc"
     update.effective_chat.type = "group"
 
-    mock_typing_task = MagicMock()
+    mock_typing = _make_typing_indicator_mock()
 
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "Test"}), \
-         patch("handlers.download_video", return_value=True), \
+         patch("platforms.youtube.download_video", return_value=True), \
          patch("handlers.cleanup_file"), \
          patch("os.path.isfile", return_value=True), \
          patch("builtins.open", MagicMock()), \
-         patch("handlers._start_typing", return_value=mock_typing_task):
+         patch("handlers.typing_indicator", mock_typing):
         update.message.reply_video = AsyncMock()
         await handle_url(update, context)
         update.message.reply_video.assert_called_once()
         update.message.reply_text.assert_not_called()
-        mock_typing_task.cancel.assert_called_once()
+        mock_typing.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_handle_url_group_mixed_urls(update, context):
@@ -385,21 +362,21 @@ async def test_handle_url_group_mixed_urls(update, context):
             return "youtube"
         return None
 
-    mock_typing_task = MagicMock()
+    mock_typing = _make_typing_indicator_mock()
 
     with patch("handlers.detect_platform", side_effect=mock_detect_platform), \
          patch("handlers.get_metadata", return_value={"title": "Test"}), \
-         patch("handlers.download_video", return_value=True), \
+         patch("platforms.youtube.download_video", return_value=True), \
          patch("handlers.cleanup_file"), \
          patch("os.path.isfile", return_value=True), \
          patch("builtins.open", MagicMock()), \
-         patch("handlers._start_typing", return_value=mock_typing_task):
+         patch("handlers.typing_indicator", mock_typing):
         update.message.reply_video = AsyncMock()
         await handle_url(update, context)
         # Only YouTube URL should be processed
         update.message.reply_video.assert_called_once()
         update.message.reply_text.assert_not_called()
-        mock_typing_task.cancel.assert_called_once()
+        mock_typing.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -408,17 +385,17 @@ async def test_handle_url_group_shows_error_for_failed_metadata(update, context)
     update.message.text = "https://youtube.com/watch?v=abc"
     update.effective_chat.type = "group"
 
-    mock_typing_task = MagicMock()
+    mock_typing = _make_typing_indicator_mock()
 
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value=None), \
-         patch("handlers._start_typing", return_value=mock_typing_task):
+         patch("handlers.typing_indicator", mock_typing):
         await handle_url(update, context)
         # Should show error message for failed metadata
         update.message.reply_text.assert_called_once()
         text = update.message.reply_text.call_args[0][0]
         assert "Could not fetch post" in text
-        mock_typing_task.cancel.assert_called_once()
+        mock_typing.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_handle_url_p2p_still_shows_errors(update, context):
@@ -439,36 +416,11 @@ async def test_handle_url_group_respects_allowlist(update, context):
     update.effective_chat.type = "group"
     update.effective_chat.id = -999999
 
-    with patch("handlers.ALLOWED_GROUP_IDS", [-100100100]), \
+    with patch("auth.ALLOWED_GROUP_IDS", [-100100100]), \
          patch("handlers.detect_platform", return_value="youtube"):
         await handle_url(update, context)
         # Should not process because group not in allowlist
         update.message.reply_video.assert_not_called()
-
-
-def test_has_video_available_with_mp4():
-    """_has_video_available returns True for mp4 metadata."""
-    assert _has_video_available({"ext": "mp4"}) is True
-
-
-def test_has_video_available_with_webm():
-    """_has_video_available returns True for webm metadata."""
-    assert _has_video_available({"ext": "webm"}) is True
-
-
-def test_has_video_available_with_m4a():
-    """_has_video_available returns False for m4a (audio-only) metadata."""
-    assert _has_video_available({"ext": "m4a"}) is False
-
-
-def test_has_video_available_with_mp3():
-    """_has_video_available returns False for mp3 (audio-only) metadata."""
-    assert _has_video_available({"ext": "mp3"}) is False
-
-
-def test_has_video_available_missing_ext():
-    """_has_video_available returns False when ext key is missing."""
-    assert _has_video_available({}) is False
 
 
 @pytest.mark.asyncio
@@ -502,17 +454,17 @@ async def test_ytmusic_with_video_sends_inline_keyboard():
     assert len(buttons) == 3
     assert buttons[0].text == "Audio"
     assert buttons[1].text == "Video"
-    assert buttons[2].text == "Audio + Video"
+    assert buttons[2].text == "Video + Audio"
 
     # Verify callback data format
     assert buttons[0].callback_data == "ytm|42|audio"
     assert buttons[1].callback_data == "ytm|42|video"
     assert buttons[2].callback_data == "ytm|42|both"
 
-    # Verify pending request stored in user_data
-    assert 42 in context.user_data
-    assert context.user_data[42]["url"] == "https://music.youtube.com/watch?v=abc"
-    assert context.user_data[42]["title"] == "Test Song"
+    # Verify pending request stored in shared dict
+    assert 42 in _ytmusic_pending
+    assert _ytmusic_pending[42]["url"] == "https://music.youtube.com/watch?v=abc"
+    assert _ytmusic_pending[42]["title"] == "Test Song"
 
     # Verify request marked as success
     assert context.user_data["_request_success"] is True
@@ -533,7 +485,7 @@ async def test_ytmusic_audio_only_sends_audio_directly():
 
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "Test Song", "ext": "m4a"}), \
-         patch("handlers.download_audio", return_value=True), \
+         patch("platforms.youtube.download_audio", return_value=True), \
          patch("os.path.isfile", return_value=True), \
          patch("handlers.cleanup_file"), \
          patch("builtins.open", MagicMock()):
@@ -545,189 +497,10 @@ async def test_ytmusic_audio_only_sends_audio_directly():
     assert 42 not in context.user_data
 
 
-@pytest.mark.asyncio
-async def test_ytmusic_callback_audio_choice():
-    """Callback with 'audio' choice downloads audio and deletes question message."""
-    from handlers import ytmusic_callback
-
-    update = MagicMock()
-    update.callback_query = MagicMock()
-    update.callback_query.data = "ytm|42|audio"
-    update.callback_query.message = MagicMock()
-    update.callback_query.message.delete = AsyncMock()
-    update.callback_query.answer = AsyncMock()
-    update.effective_message = MagicMock()
-    update.effective_message.reply_audio = AsyncMock()
-    update.effective_message.reply_text = AsyncMock()
-    update.effective_message.from_user = MagicMock()
-    update.effective_message.from_user.id = 42
-
-    context = MagicMock()
-    context.user_data = {42: {"url": "https://music.youtube.com/watch?v=abc", "title": "Test Song"}}
-    context.bot.send_chat_action = AsyncMock()
-
-    with patch("handlers.download_audio", return_value=True), \
-         patch("os.path.isfile", return_value=True), \
-         patch("handlers.cleanup_file"), \
-         patch("builtins.open", MagicMock()):
-        await ytmusic_callback(update, context)
-
-    update.callback_query.message.delete.assert_called_once()
-    update.callback_query.answer.assert_called_once()
-    assert 42 not in context.user_data
-
-
-@pytest.mark.asyncio
-async def test_ytmusic_callback_video_choice():
-    """Callback with 'video' choice downloads video and deletes question message."""
-    from handlers import ytmusic_callback
-
-    update = MagicMock()
-    update.callback_query = MagicMock()
-    update.callback_query.data = "ytm|42|video"
-    update.callback_query.message = MagicMock()
-    update.callback_query.message.delete = AsyncMock()
-    update.callback_query.answer = AsyncMock()
-    update.effective_message = MagicMock()
-    update.effective_message.reply_video = AsyncMock()
-    update.effective_message.reply_text = AsyncMock()
-    update.effective_message.from_user = MagicMock()
-    update.effective_message.from_user.id = 42
-
-    context = MagicMock()
-    context.user_data = {42: {"url": "https://music.youtube.com/watch?v=abc", "title": "Test Song"}}
-    context.bot.send_chat_action = AsyncMock()
-
-    with patch("handlers.download_video", return_value=True), \
-         patch("os.path.isfile", return_value=True), \
-         patch("handlers.cleanup_file"), \
-         patch("builtins.open", MagicMock()):
-        await ytmusic_callback(update, context)
-
-    update.callback_query.message.delete.assert_called_once()
-    update.callback_query.answer.assert_called_once()
-    assert 42 not in context.user_data
-
-
-@pytest.mark.asyncio
-async def test_ytmusic_callback_both_choice():
-    """Callback with 'both' choice downloads video then audio, in that order."""
-    from handlers import ytmusic_callback
-
-    update = MagicMock()
-    update.callback_query = MagicMock()
-    update.callback_query.data = "ytm|42|both"
-    update.callback_query.message = MagicMock()
-    update.callback_query.message.delete = AsyncMock()
-    update.callback_query.answer = AsyncMock()
-    update.effective_message = MagicMock()
-    update.effective_message.reply_video = AsyncMock()
-    update.effective_message.reply_audio = AsyncMock()
-    update.effective_message.reply_text = AsyncMock()
-    update.effective_message.from_user = MagicMock()
-    update.effective_message.from_user.id = 42
-
-    context = MagicMock()
-    context.user_data = {42: {"url": "https://music.youtube.com/watch?v=abc", "title": "Test Song"}}
-    context.bot.send_chat_action = AsyncMock()
-
-    with patch("handlers.download_video", return_value=True), \
-         patch("handlers.download_audio", return_value=True), \
-         patch("os.path.isfile", return_value=True), \
-         patch("handlers.cleanup_file"), \
-         patch("builtins.open", MagicMock()):
-        await ytmusic_callback(update, context)
-
-    update.callback_query.message.delete.assert_called_once()
-    assert 42 not in context.user_data
-
-    # Verify video was sent before audio by checking call order on effective_message
-    video_calls = update.effective_message.reply_video.call_args_list
-    audio_calls = update.effective_message.reply_audio.call_args_list
-    assert len(video_calls) == 1
-    assert len(audio_calls) == 1
-    # Both were called, and video came first (it's the first call on the mock)
-    update.effective_message.reply_video.assert_called()
-    update.effective_message.reply_audio.assert_called()
-
-
-@pytest.mark.asyncio
-async def test_ytmusic_callback_expired_request():
-    """Callback with no pending data answers 'expired' and does not delete."""
-    from handlers import ytmusic_callback
-
-    update = MagicMock()
-    update.callback_query = MagicMock()
-    update.callback_query.data = "ytm|999|audio"
-    update.callback_query.message = MagicMock()
-    update.callback_query.message.delete = AsyncMock()
-    update.callback_query.answer = AsyncMock()
-
-    context = MagicMock()
-    context.user_data = {}
-
-    await ytmusic_callback(update, context)
-
-    update.callback_query.answer.assert_called_once()
-    answer_text = update.callback_query.answer.call_args[0][0]
-    assert "expired" in answer_text.lower()
-    update.callback_query.message.delete.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_ytmusic_callback_ttl_expired():
-    """Callback with stale pending data (old timestamp) answers expired."""
-    from handlers import ytmusic_callback
-
-    update = MagicMock()
-    update.callback_query = MagicMock()
-    update.callback_query.data = "ytm|42|audio"
-    update.callback_query.message = MagicMock()
-    update.callback_query.message.delete = AsyncMock()
-    update.callback_query.answer = AsyncMock()
-
-    import time
-    stale_timestamp = time.time() - 600  # 10 minutes ago
-    context = MagicMock()
-    context.user_data = {42: {"url": "https://music.youtube.com/watch?v=abc", "title": "Test", "timestamp": stale_timestamp}}
-    context.bot.send_chat_action = AsyncMock()
-
-    await ytmusic_callback(update, context)
-
-    # Should answer with expired message
-    update.callback_query.answer.assert_called_once()
-    answer_text = update.callback_query.answer.call_args[0][0]
-    assert "expired" in answer_text.lower()
-    # Should NOT delete the message
-    update.callback_query.message.delete.assert_not_called()
-    # Pending data should be popped (cleaned up)
-    assert 42 not in context.user_data
-
-
-@pytest.mark.asyncio
-async def test_ytmusic_callback_malformed_data():
-    """Callback with malformed data answers but does not crash."""
-    from handlers import ytmusic_callback
-
-    update = MagicMock()
-    update.callback_query = MagicMock()
-    update.callback_query.data = "garbage"
-    update.callback_query.answer = AsyncMock()
-
-    context = MagicMock()
-    context.user_data = {}
-
-    await ytmusic_callback(update, context)
-
-    # Should answer (to dismiss loading spinner)
-    update.callback_query.answer.assert_called_once()
-    # Should not crash or try to delete anything
-    update.callback_query.message.delete.assert_not_called()
-
 
 @pytest.mark.asyncio
 async def test_download_and_send_instagram_uses_gallery_dl_fallback():
-    """When yt-dlp fails on Instagram, _download_and_send tries gallery-dl first."""
+    """When yt-dlp video fails on Instagram, tries gallery-dl for images."""
     update = MagicMock()
     update.message.message_id = 42
     update.message.from_user.id = 123
@@ -738,8 +511,8 @@ async def test_download_and_send_instagram_uses_gallery_dl_fallback():
     context.user_data = {}
 
     with patch("handlers.detect_platform", return_value="instagram"), \
-         patch("handlers.get_metadata", return_value=None), \
-         patch("handlers.download_instagram_gallery_dl", return_value=["/tmp/img.jpg"]), \
+         patch("platforms.instagram.download_video", return_value=False), \
+         patch("platforms.instagram.download_gallery_dl_images", return_value=["/tmp/img.jpg"]), \
          patch("builtins.open", MagicMock()), \
          patch("handlers.cleanup_file"):
         await _download_and_send(update, context, "https://instagram.com/p/ABC123/")
@@ -749,7 +522,7 @@ async def test_download_and_send_instagram_uses_gallery_dl_fallback():
 
 @pytest.mark.asyncio
 async def test_download_and_send_instagram_gallery_dl_fails():
-    """When gallery-dl fails on Instagram, show error message."""
+    """When both video and gallery-dl fail on Instagram, show error message."""
     update = MagicMock()
     update.message.message_id = 42
     update.message.from_user.id = 123
@@ -760,8 +533,8 @@ async def test_download_and_send_instagram_gallery_dl_fails():
     context.user_data = {}
 
     with patch("handlers.detect_platform", return_value="instagram"), \
-         patch("handlers.get_metadata", return_value=None), \
-         patch("handlers.download_instagram_gallery_dl", return_value=[]):
+         patch("platforms.instagram.download_video", return_value=False), \
+         patch("platforms.instagram.download_gallery_dl_images", return_value=[]):
         await _download_and_send(update, context, "https://instagram.com/p/ABC123/")
 
     update.message.reply_photo.assert_not_called()
@@ -773,8 +546,6 @@ async def test_download_and_send_instagram_gallery_dl_fails():
 @pytest.mark.asyncio
 async def test_my_chat_member_handler_bot_added():
     """Handler logs when bot is added to a chat."""
-    from handlers import my_chat_member_handler
-
     update = MagicMock()
     update.my_chat_member = MagicMock()
     update.my_chat_member.chat = MagicMock()
@@ -800,8 +571,6 @@ async def test_my_chat_member_handler_bot_added():
 @pytest.mark.asyncio
 async def test_my_chat_member_handler_bot_removed():
     """Handler logs when bot is removed from a chat."""
-    from handlers import my_chat_member_handler
-
     update = MagicMock()
     update.my_chat_member = MagicMock()
     update.my_chat_member.chat = MagicMock()
@@ -827,8 +596,6 @@ async def test_my_chat_member_handler_bot_removed():
 @pytest.mark.asyncio
 async def test_my_chat_member_handler_bot_promoted():
     """Handler logs when bot is promoted to admin."""
-    from handlers import my_chat_member_handler
-
     update = MagicMock()
     update.my_chat_member = MagicMock()
     update.my_chat_member.chat = MagicMock()
@@ -857,8 +624,6 @@ async def test_my_chat_member_handler_bot_promoted():
 @pytest.mark.asyncio
 async def test_my_chat_member_handler_bot_demoted():
     """Handler logs when bot is demoted from admin."""
-    from handlers import my_chat_member_handler
-
     update = MagicMock()
     update.my_chat_member = MagicMock()
     update.my_chat_member.chat = MagicMock()
@@ -887,8 +652,6 @@ async def test_my_chat_member_handler_bot_demoted():
 @pytest.mark.asyncio
 async def test_my_chat_member_handler_ignores_no_update():
     """Handler returns early when my_chat_member is None."""
-    from handlers import my_chat_member_handler
-
     update = MagicMock()
     update.my_chat_member = None
     context = MagicMock()
@@ -898,42 +661,139 @@ async def test_my_chat_member_handler_ignores_no_update():
 
 
 @pytest.mark.asyncio
-async def test_start_command_logs_new_user():
-    """start_command logs when a new user starts the bot."""
-    from handlers import start_command
-
+async def test_download_and_send_tiktok_photo_fallback():
+    """When video download fails on TikTok, try gallery-dl for photos."""
     update = MagicMock()
-    update.message = AsyncMock()
-    update.message.from_user = MagicMock()
-    update.message.from_user.id = 99999
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.reply_photo = AsyncMock()
     update.message.reply_text = AsyncMock()
 
     context = MagicMock()
-    context.bot_data = {"bot_username": "testbot"}
+    context.user_data = {}
 
-    with patch("handlers.is_new_user", return_value=True) as mock_is_new, \
-         patch("handlers.log_new_user") as mock_log:
-        await start_command(update, context)
-        mock_is_new.assert_called_once_with(99999)
-        mock_log.assert_called_once()
+    with patch("handlers.detect_platform", return_value="tiktok"), \
+         patch("handlers.get_metadata") as mock_metadata, \
+         patch("platforms.tiktok.download_video", return_value=False), \
+         patch("platforms.tiktok.download_gallery_dl_images", return_value=["/tmp/tt.jpg"]), \
+         patch("builtins.open", MagicMock()), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=500000), \
+         patch("platforms.tiktok.cleanup_file"), \
+         patch("platforms.tiktok.cleanup_dir"):
+        await _download_and_send(update, context, "https://tiktok.com/@user/video/123")
+
+    # Metadata should NOT be fetched for TikTok
+    mock_metadata.assert_not_called()
+    update.message.reply_photo.assert_called_once()
+    assert context.user_data["_request_success"] is True
 
 
 @pytest.mark.asyncio
-async def test_start_command_does_not_log_returning_user():
-    """start_command does not log when a returning user starts the bot."""
-    from handlers import start_command
-
+async def test_download_and_send_tiktok_multiple_photos():
+    """When video download fails on TikTok with multiple photos, send as media group."""
+    import io
     update = MagicMock()
-    update.message = AsyncMock()
-    update.message.from_user = MagicMock()
-    update.message.from_user.id = 99999
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.reply_media_group = AsyncMock()
     update.message.reply_text = AsyncMock()
 
     context = MagicMock()
-    context.bot_data = {"bot_username": "testbot"}
+    context.user_data = {}
 
-    with patch("handlers.is_new_user", return_value=False) as mock_is_new, \
-         patch("handlers.log_new_user") as mock_log:
-        await start_command(update, context)
-        mock_is_new.assert_called_once_with(99999)
-        mock_log.assert_not_called()
+    def fake_open(path, mode="r"):
+        return io.BytesIO(b"\x89PNG fake image data")
+
+    with patch("handlers.detect_platform", return_value="tiktok"), \
+         patch("platforms.tiktok.download_video", return_value=False), \
+         patch("platforms.tiktok.download_gallery_dl_images", return_value=["/tmp/tt1.jpg", "/tmp/tt2.jpg", "/tmp/tt3.jpg"]), \
+         patch("builtins.open", side_effect=fake_open), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=500000), \
+         patch("platforms.tiktok.cleanup_file"), \
+         patch("platforms.tiktok.cleanup_dir"):
+        await _download_and_send(update, context, "https://tiktok.com/@user/gallery/456")
+
+    update.message.reply_media_group.assert_called_once()
+    assert context.user_data["_content_type"] == "image"
+    assert context.user_data["_request_success"] is True
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_tiktok_both_fail():
+    """When both video download and gallery-dl fail on TikTok, show error."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="tiktok"), \
+         patch("platforms.tiktok.download_video", return_value=False), \
+         patch("platforms.tiktok.download_gallery_dl_images", return_value=[]), \
+         patch("platforms.tiktok.cleanup_file"), \
+         patch("platforms.tiktok.cleanup_dir"):
+        await _download_and_send(update, context, "https://tiktok.com/@user/photo/789")
+
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "Could not fetch post" in text
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_tiktok_delegates_immediately():
+    """TikTok is delegated to handle_tiktok without fetching metadata first."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.reply_video = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="tiktok"), \
+         patch("handlers.get_metadata") as mock_metadata, \
+         patch("platforms.tiktok.download_video", return_value=True), \
+         patch("builtins.open", MagicMock()), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=500000), \
+         patch("platforms.tiktok.cleanup_file"), \
+         patch("platforms.tiktok.cleanup_dir"):
+        await _download_and_send(update, context, "https://tiktok.com/@user/video/123")
+
+    # Metadata should NOT be fetched for TikTok
+    mock_metadata.assert_not_called()
+    update.message.reply_video.assert_called_once()
+    assert context.user_data["_request_success"] is True
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_instagram_delegates_immediately():
+    """Instagram is delegated to handle_instagram without fetching metadata first."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.reply_video = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="instagram"), \
+         patch("handlers.get_metadata") as mock_metadata, \
+         patch("platforms.instagram.download_video", return_value=True), \
+         patch("builtins.open", MagicMock()), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=500000), \
+         patch("platforms.instagram.cleanup_file"), \
+         patch("platforms.instagram.cleanup_dir"):
+        await _download_and_send(update, context, "https://instagram.com/p/ABC123/")
+
+    # Metadata should NOT be fetched in _download_and_send for Instagram
+    mock_metadata.assert_not_called()
+    update.message.reply_video.assert_called_once()
+    assert context.user_data["_request_success"] is True

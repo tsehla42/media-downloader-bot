@@ -141,7 +141,7 @@ def download_images(url: str, output_dir: str) -> list[str]:
     """
     # Try gallery-dl first (handles carousels well with cookies)
     from config import INSTAGRAM_COOKIES
-    images = download_instagram_gallery_dl(url, output_dir, INSTAGRAM_COOKIES)
+    images = download_gallery_dl_images(url, output_dir, INSTAGRAM_COOKIES)
     if images:
         return images
 
@@ -165,34 +165,30 @@ def download_images(url: str, output_dir: str) -> list[str]:
     return sorted(glob.glob(f"{output_dir}/*.[jp][pn]g") + glob.glob(f"{output_dir}/*.webp"))
 
 
-def download_instagram_gallery_dl(url: str, output_dir: str, cookies: str = "") -> list[str]:
-    """Download images from Instagram using gallery-dl.
+def download_gallery_dl_images(url: str, output_dir: str, cookies: str = "") -> list[str]:
+    """Download images using gallery-dl.
 
-    Requires gallery-dl binary and a cookies.txt file for authentication.
+    Requires gallery-dl binary. Cookies needed for Instagram, not for TikTok.
     Returns list of downloaded file paths, or empty list on failure.
     """
-    if not cookies:
-        return []
-
     gd_path = _find_gallery_dl()
     if not gd_path:
-        return []
-
-    # Resolve to absolute path so subprocess finds it regardless of cwd
-    cookies = os.path.abspath(cookies)
-    if not os.path.isfile(cookies):
         return []
 
     os.makedirs(output_dir, exist_ok=True)
     output_dir = os.path.abspath(output_dir)
 
+    cmd = [gd_path, "-d", output_dir]
+    if cookies:
+        # Resolve to absolute path so subprocess finds it regardless of cwd
+        cookies = os.path.abspath(cookies)
+        if not os.path.isfile(cookies):
+            return []
+        cmd.extend(["--cookies", cookies])
+    cmd.append(url)
+
     result = subprocess.run(
-        [
-            gd_path,
-            "-d", output_dir,
-            "--cookies", cookies,
-            url,
-        ],
+        cmd,
         capture_output=True,
         text=True,
         timeout=60,

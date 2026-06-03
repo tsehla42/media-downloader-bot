@@ -1,22 +1,27 @@
-import asyncio
+import logging
 import os
-import time
 import uuid
-from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.constants import ChatAction
+from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import DOWNLOAD_DIR, MAX_FILE_SIZE, ALLOWED_USER_IDS, ALLOWED_GROUP_IDS
-from utils import detect_platform, is_valid_url, extract_urls, cleanup_file, cleanup_dir
-from downloader import get_metadata, download_video, download_audio, download_images, download_instagram_gallery_dl
+_log = logging.getLogger(__name__)
+
+from config import DOWNLOAD_DIR
+from utils import is_valid_url, extract_urls, cleanup_file
+from platforms import detect_platform
+from platforms.youtube import handle_youtube, handle_ytmusic, AUDIO_TITLE_MAX, _store_download_metadata
+from platforms.instagram import handle_instagram
+from platforms.tiktok import handle_tiktok
+from downloader import get_metadata, download_audio
+from commands import get_caption_for_user
+from auth import is_authorized, is_group_chat
 from logging_config import (
     with_request_logging,
     log_bot_added_to_chat,
     log_bot_removed_from_chat,
     log_bot_status_changed,
-    log_new_user,
-    is_new_user,
 )
+from telegram_utils import typing_indicator
 
 
 async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -51,185 +56,11 @@ async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
 
-def _store_download_metadata(context: ContextTypes.DEFAULT_TYPE, content_type: str, file_path: str) -> None:
-    context.user_data["_content_type"] = content_type
-    try:
-        if os.path.isfile(file_path):
-            file_size_bytes = os.path.getsize(file_path)
-            context.user_data["_file_size_mb"] = round(file_size_bytes / (1024 * 1024), 2)
-    except OSError:
-        pass
-
-
-AUDIO_ONLY_EXTS = {"m4a", "mp3", "opus", "wav", "aac"}
-AUDIO_TITLE_MAX = 64  # Telegram Bot API limit for reply_audio title
-
-
-def _has_video_available(metadata: dict) -> bool:
-    ext = metadata.get("ext")
-    if not ext:
-        return False
-    return ext not in AUDIO_ONLY_EXTS
-
-
-async def _download_and_send_video(
-    url: str, base: str, output_path: str,
-    caption: str, reply_params: dict, message, context: ContextTypes.DEFAULT_TYPE = None
-) -> bool:
-    success = download_video(url, output_path, MAX_FILE_SIZE)
-    if not success:
-        return False
-
-    downloaded = None
-    for ext in ["mp4", "webm", "mkv"]:
-        candidate = f"{base}.{ext}"
-        if os.path.isfile(candidate):
-            downloaded = candidate
-            break
-
-    if not downloaded:
-        return False
-
-    with open(downloaded, "rb") as f:
-        await message.reply_video(
-            video=f,
-            caption=caption,
-            reply_parameters=reply_params,
-        )
-    if context:
-        _store_download_metadata(context, "video", downloaded)
-    return True
-
-
-def is_group_chat(update: Update) -> bool:
-    chat = update.effective_chat
-    return chat.type in ("group", "supergroup")
-
-
-async def _start_typing(chat_id: int, bot) -> asyncio.Task:
-    # Send first typing action immediately so indicator appears right away
-    await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-
-    async def _loop():
-        try:
-            while True:
-                await asyncio.sleep(4)
-                await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass  # Silently ignore typing errors (e.g. bot kicked from chat)
-    return asyncio.create_task(_loop())
-
-
-# Per-user caption preferences: user_id -> bool (True = remove caption)
-_user_caption_prefs: dict[int, bool] = {}
-
-
-def _is_allowed(user_id: int) -> bool:
-    if not ALLOWED_USER_IDS:
-        return True
-    return user_id in ALLOWED_USER_IDS
-
-
-def _is_allowed_group(chat_id: int) -> bool:
-    if not ALLOWED_GROUP_IDS:
-        return True
-    return chat_id in ALLOWED_GROUP_IDS
-
-
-def _is_authorized(update: Update) -> bool:
-    """Check if request is authorized. Groups always allowed, DMs checked against ALLOWED_USER_IDS."""
-    if is_group_chat(update):
-        return _is_allowed_group(update.effective_chat.id)
-    if update.message and update.message.from_user:
-        return _is_allowed(update.message.from_user.id)
-    return False
-
-
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_authorized(update):
-        await update.message.reply_text("You are not authorized to use this bot")
-        return
-
-    user = update.message.from_user
-    if is_new_user(user.id):
-        log_new_user(user)
-
-    bot_username = context.bot_data.get("bot_username", "botname")
-    await update.message.reply_text(
-        "Media Downloader Bot\n\n"
-        "Send me a YouTube, TikTok, or Instagram URL and I'll download it for you\n"
-        "You can send multiple URLs in one message or send them one by one.\n"
-        f"Max file size: {MAX_FILE_SIZE}MB\n\n"
-        "Commands:\n"
-        "/help - Show supported platforms and commands\n"
-        "/audio <url> - Download as audio (MP3)\n"
-        "/caption on|off - Toggle video captions"
-    )
-
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_authorized(update):
-        await update.message.reply_text("You are not authorized to use this bot")
-        return
-
-    await update.message.reply_text(
-        "Supported platforms:\n"
-        "- YouTube (videos, shorts)\n"
-        "- TikTok (videos, no watermark)\n"
-        "- Instagram (reels, posts, carousels)\n\n"
-        "Commands:\n"
-        "/audio <url> - Download as audio (MP3)\n"
-        "/caption on - Show video captions\n"
-        "/caption off - Remove video captions (default)\n\n"
-        f"Max file size: {MAX_FILE_SIZE}MB\n"
-        "You can send multiple URLs in one message."
-    )
-
-
-async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_authorized(update):
-        await update.message.reply_text(
-            "You are not authorized to use this bot",
-            reply_parameters={"message_id": update.message.message_id},
-        )
-        return
-
-    text = update.message.text.replace("/caption", "").strip().lower()
-    user_id = update.message.from_user.id
-
-    if text in ("on", "1", "true", "yes"):
-        _user_caption_prefs[user_id] = False
-        await update.message.reply_text(
-            "Captions enabled. Videos will include the title",
-            reply_parameters={"message_id": update.message.message_id},
-        )
-    elif text in ("off", "0", "false", "no"):
-        _user_caption_prefs[user_id] = True
-        await update.message.reply_text(
-            "Captions removed. Videos will be sent without description",
-            reply_parameters={"message_id": update.message.message_id},
-        )
-    else:
-        current = _user_caption_prefs.get(user_id, True)
-        state = "OFF (no captions)" if current else "ON (captions shown)"
-        await update.message.reply_text(
-            f"Current caption setting: {state}\n\n"
-            "Usage:\n"
-            "/caption on - Show video captions\n"
-            "/caption off - Remove video captions (default)",
-            reply_parameters={"message_id": update.message.message_id},
-        )
-
-
 @with_request_logging
 async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    import logging
-    _log = logging.getLogger(__name__)
     reply_params = {"message_id": update.message.message_id}
 
-    if not _is_authorized(update):
+    if not is_authorized(update):
         context.user_data["_request_success"] = False
         await update.message.reply_text(
             "You are not authorized to use this bot",
@@ -275,177 +106,107 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     output_path = os.path.join(DOWNLOAD_DIR, filename)
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-    typing_task = await _start_typing(update.message.chat.id, context.bot)
-    try:
-        _log.info("audio: downloading %s -> %s", url, output_path)
-        success = download_audio(url, output_path)
-        if success and os.path.isfile(output_path):
-            _log.info("audio: download ok, size=%d bytes", os.path.getsize(output_path))
-            with open(output_path, "rb") as f:
-                if title:
-                    await update.message.reply_audio(
-                        audio=f,
-                        title=title[:AUDIO_TITLE_MAX],
-                        reply_parameters=reply_params,
-                    )
-                else:
-                    await update.message.reply_audio(
-                        audio=f,
-                        reply_parameters=reply_params,
-                    )
-            _store_download_metadata(context, "audio", output_path)
-        else:
-            _log.warning("audio: download failed for %s", url)
+    async with typing_indicator(update.message.chat.id, context.bot):
+        try:
+            _log.info("audio: downloading %s -> %s", url, output_path)
+            success = download_audio(url, output_path)
+            if success and os.path.isfile(output_path):
+                _log.info("audio: download ok, size=%d bytes", os.path.getsize(output_path))
+                with open(output_path, "rb") as f:
+                    if title:
+                        await update.message.reply_audio(
+                            audio=f,
+                            title=title[:AUDIO_TITLE_MAX],
+                            reply_parameters=reply_params,
+                        )
+                    else:
+                        await update.message.reply_audio(
+                            audio=f,
+                            reply_parameters=reply_params,
+                        )
+                _store_download_metadata(context, "audio", output_path)
+            else:
+                _log.warning("audio: download failed for %s", url)
+                context.user_data["_request_success"] = False
+                await update.message.reply_text(
+                    "Failed to download audio. Check the URL and try again",
+                    reply_parameters=reply_params,
+                )
+        except Exception as e:
+            _log.error("audio: error for %s: %s", url, e, exc_info=True)
             context.user_data["_request_success"] = False
             await update.message.reply_text(
-                "Failed to download audio. Check the URL and try again",
+                f"Error: {e}",
                 reply_parameters=reply_params,
             )
-    except Exception as e:
-        _log.error("audio: error for %s: %s", url, e, exc_info=True)
-        context.user_data["_request_success"] = False
-        await update.message.reply_text(
-            f"Error: {e}",
-            reply_parameters=reply_params,
-        )
-    finally:
-        typing_task.cancel()
-        cleanup_file(output_path)
+        finally:
+            cleanup_file(output_path)
 
 
 async def _download_and_send(
     update: Update, context: ContextTypes.DEFAULT_TYPE, url: str
 ) -> None:
     reply_params = {"message_id": update.message.message_id}
-    base = None
-    platform = None
+    platform = detect_platform(url)
+    context.user_data["_platform"] = platform or ""
 
-    try:
-        platform = detect_platform(url)
-        context.user_data["_platform"] = platform or ""
-        if not platform:
-            context.user_data["_request_success"] = False
-            await update.message.reply_text(
-                "Unsupported platform. I support YouTube, TikTok, and Instagram",
-                reply_parameters=reply_params,
-            )
-            return
+    if not platform:
+        context.user_data["_request_success"] = False
+        await update.message.reply_text(
+            "Unsupported platform. I support YouTube, TikTok, and Instagram",
+            reply_parameters=reply_params,
+        )
+        return
 
-        metadata = get_metadata(url)
-        if not metadata:
-            # Fallback for Instagram: try gallery-dl, then instaloader
-            if platform == "instagram":
-                tmp_id = uuid.uuid4().hex[:8]
-                out_dir = os.path.join(DOWNLOAD_DIR, tmp_id)
-                os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
-                # Try gallery-dl first (with cookies)
-                from config import INSTAGRAM_COOKIES
-                images = download_instagram_gallery_dl(url, out_dir, INSTAGRAM_COOKIES)
-                if images:
-                    try:
-                        total_size = 0
-                        if len(images) == 1:
-                            with open(images[0], "rb") as f:
-                                await update.message.reply_photo(
-                                    photo=f,
-                                    reply_parameters=reply_params,
-                                )
-                            if os.path.isfile(images[0]):
-                                total_size = os.path.getsize(images[0])
-                        else:
-                            for i in range(0, len(images), 10):
-                                batch = images[i:i+10]
-                                media = [InputMediaPhoto(open(img, "rb")) for img in batch]
-                                await update.message.reply_media_group(
-                                    media=media,
-                                    reply_parameters=reply_params,
-                                )
-                            for img in images:
-                                if os.path.isfile(img):
-                                    total_size += os.path.getsize(img)
-                        context.user_data["_content_type"] = "image"
-                        context.user_data["_file_size_mb"] = round(total_size / (1024 * 1024), 2) if total_size > 0 else None
-                        context.user_data["_request_success"] = True
-                        return
-                    finally:
-                        cleanup_dir(out_dir)
-
+    # Instagram and TikTok handle their own metadata and content fetching
+    if platform == "instagram":
+        handled = await handle_instagram(update, context, url)
+        if not handled:
             context.user_data["_request_success"] = False
             await update.message.reply_text(
                 "Could not fetch post. The content may be private or the URL is invalid",
                 reply_parameters=reply_params,
             )
+        return
+
+    if platform == "tiktok":
+        handled = await handle_tiktok(update, context, url)
+        if not handled:
+            context.user_data["_request_success"] = False
+            await update.message.reply_text(
+                "Could not fetch post. The content may be private or the URL is invalid",
+                reply_parameters=reply_params,
+            )
+        return
+
+    # YouTube / YouTube Music: fetch metadata first
+    metadata = get_metadata(url)
+    if not metadata:
+        context.user_data["_request_success"] = False
+        await update.message.reply_text(
+            "Could not fetch post. The content may be private or the URL is invalid",
+            reply_parameters=reply_params,
+        )
+        return
+
+    title = metadata.get("title", "video")
+    tmp_id = uuid.uuid4().hex[:8]
+    output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
+    base = os.path.join(DOWNLOAD_DIR, tmp_id)
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+    try:
+        if "music.youtube.com" in url:
+            await handle_ytmusic(
+                update, context, url, metadata, title,
+                base, output_path, reply_params,
+            )
             return
 
-        title = metadata.get("title", "video")
-
-        tmp_id = uuid.uuid4().hex[:8]
-        output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
-        base = os.path.join(DOWNLOAD_DIR, tmp_id)
-        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
-        if platform == "instagram" and metadata.get("extractor") == "instagram":
-            images = download_images(url, os.path.join(DOWNLOAD_DIR, tmp_id))
-            if images:
-                total_size = 0
-                for i in range(0, len(images), 10):
-                    batch = images[i:i+10]
-                    media = [InputMediaPhoto(open(img, "rb")) for img in batch]
-                    await update.message.reply_media_group(
-                        media=media,
-                        reply_parameters=reply_params,
-                    )
-                    for img in batch:
-                        if os.path.isfile(img):
-                            total_size += os.path.getsize(img)
-                        os.remove(img)
-                context.user_data["_content_type"] = "image"
-                context.user_data["_file_size_mb"] = round(total_size / (1024 * 1024), 2) if total_size > 0 else None
-                return
-
-        # YouTube Music: check if video is available, otherwise send as audio
-        is_ytmusic = "music.youtube.com" in url
-
-        if is_ytmusic:
-            if _has_video_available(metadata):
-                # Show inline keyboard for format selection
-                msg_id = update.message.message_id
-                keyboard = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("Audio", callback_data=f"ytm|{msg_id}|audio"),
-                    InlineKeyboardButton("Video", callback_data=f"ytm|{msg_id}|video"),
-                    InlineKeyboardButton("Audio + Video", callback_data=f"ytm|{msg_id}|both"),
-                ]])
-                # Store pending request for callback handler
-                context.user_data[msg_id] = {"url": url, "title": title, "timestamp": time.time()}
-                await update.message.reply_text(
-                    f"🎵 {title}\n\nChoose format:",
-                    reply_markup=keyboard,
-                    reply_parameters=reply_params,
-                )
-                context.user_data["_request_success"] = True
-                return
-            else:
-                success = download_audio(url, f"{base}.mp3")
-                if success and os.path.isfile(f"{base}.mp3"):
-                    with open(f"{base}.mp3", "rb") as f:
-                        await update.message.reply_audio(
-                            audio=f,
-                            title=title[:AUDIO_TITLE_MAX],
-                            reply_parameters=reply_params,
-                        )
-                    _store_download_metadata(context, "audio", f"{base}.mp3")
-                else:
-                    context.user_data["_request_success"] = False
-                    await update.message.reply_text(
-                        "Download failed",
-                        reply_parameters=reply_params,
-                    )
-                return
-        else:
-            caption = "" if _user_caption_prefs.get(update.message.from_user.id, True) else title[:1024]
-            video_ok = await _download_and_send_video(
-                url, base, output_path, caption, reply_params, update.message, context
+        if platform == "youtube":
+            caption = get_caption_for_user(update.message.from_user.id, title)
+            video_ok = await handle_youtube(
+                update, context, url, base, output_path, caption, reply_params,
             )
             if not video_ok:
                 context.user_data["_request_success"] = False
@@ -453,6 +214,13 @@ async def _download_and_send(
                     "Download failed",
                     reply_parameters=reply_params,
                 )
+            return
+
+        context.user_data["_request_success"] = False
+        await update.message.reply_text(
+            "Download failed",
+            reply_parameters=reply_params,
+        )
     except Exception as e:
         context.user_data["_request_success"] = False
         await update.message.reply_text(
@@ -460,179 +228,15 @@ async def _download_and_send(
             reply_parameters=reply_params,
         )
     finally:
-        if base:
-            for ext in ["mp4", "webm", "mkv", "mp3", "m4a"]:
-                cleanup_file(f"{base}.{ext}")
-
-
-# Pending YouTube Music requests: user_data[msg_id] = {"url": str, "title": str, "timestamp": float}
-YTMUSIC_REQUEST_TTL = 300  # 5 minutes
-
-
-async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    import logging
-    _log = logging.getLogger(__name__)
-    query = update.callback_query
-
-    try:
-        _, msg_id_str, choice = query.data.split("|")
-        msg_id = int(msg_id_str)
-    except (ValueError, IndexError):
-        await query.answer()
-        return
-
-    pending = context.user_data.pop(msg_id, None)
-    if not pending:
-        await query.answer("Request expired. Send the link again")
-        return
-
-    # Check TTL — reject stale requests
-    request_time = pending.get("timestamp")
-    if request_time is not None and time.time() - request_time > YTMUSIC_REQUEST_TTL:
-        await query.answer("Request expired. Send the link again")
-        return
-
-    await query.answer()
-
-    url = pending["url"]
-    title = pending.get("title", "video")
-
-    # Delete the question message with the keyboard
-    try:
-        await query.message.delete()
-    except Exception:
-        pass
-
-    tmp_id = uuid.uuid4().hex[:8]
-    base = os.path.join(DOWNLOAD_DIR, tmp_id)
-    output_path = f"{base}.%(ext)s"
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
-    reply_params = {"message_id": msg_id}
-
-    try:
-        if choice == "audio":
-            _log.info("ytmusic_callback: starting audio download for %s", url)
-            success = download_audio(url, f"{base}.mp3")
-            if success and os.path.isfile(f"{base}.mp3"):
-                with open(f"{base}.mp3", "rb") as f:
-                    await update.effective_message.reply_audio(
-                        audio=f,
-                        title=title[:AUDIO_TITLE_MAX],
-                        reply_parameters=reply_params,
-                    )
-                _store_download_metadata(context, "audio", f"{base}.mp3")
-                _log.info("ytmusic_callback: audio sent for %s", url)
-            else:
-                _log.warning("ytmusic_callback: audio download failed for %s", url)
-                await update.effective_message.reply_text(
-                    "Audio download failed",
-                    reply_parameters=reply_params,
-                )
-
-        elif choice == "video":
-            _log.info("ytmusic_callback: starting video download for %s", url)
-            caption = "" if _user_caption_prefs.get(
-                update.effective_message.from_user.id, True
-            ) else title[:1024]
-            video_ok = await _download_and_send_video(
-                url, base, output_path, caption, reply_params, update.effective_message, context
-            )
-            if video_ok:
-                _log.info("ytmusic_callback: video sent for %s", url)
-            else:
-                _log.warning("ytmusic_callback: video download failed for %s", url)
-                await update.effective_message.reply_text(
-                    "Video download failed",
-                    reply_parameters=reply_params,
-                )
-
-        elif choice == "both":
-            _log.info("ytmusic_callback: starting both download for %s", url)
-
-            # Download video and audio concurrently
-            video_task = asyncio.to_thread(download_video, url, output_path, MAX_FILE_SIZE)
-            audio_task = asyncio.to_thread(download_audio, url, f"{base}.mp3")
-            results = await asyncio.gather(video_task, audio_task, return_exceptions=True)
-            video_ok = results[0] is True
-            audio_ok = results[1] is True
-
-            for i, (label, result) in enumerate([("video", results[0]), ("audio", results[1])]):
-                if isinstance(result, Exception):
-                    _log.warning("ytmusic_callback: %s download raised exception for %s: %s", label, url, result)
-
-            # Send video first
-            if video_ok:
-                downloaded = None
-                for ext in ["mp4", "webm", "mkv"]:
-                    candidate = f"{base}.{ext}"
-                    if os.path.isfile(candidate):
-                        downloaded = candidate
-                        break
-                if downloaded:
-                    caption = "" if _user_caption_prefs.get(
-                        update.effective_message.from_user.id, True
-                    ) else title[:1024]
-                    with open(downloaded, "rb") as f:
-                        await update.effective_message.reply_video(
-                            video=f,
-                            caption=caption,
-                            reply_parameters=reply_params,
-                        )
-                    _store_download_metadata(context, "both", downloaded)
-                    _log.info("ytmusic_callback: video sent for %s", url)
-                else:
-                    await update.effective_message.reply_text(
-                        "Video download failed",
-                        reply_parameters=reply_params,
-                    )
-            else:
-                await update.effective_message.reply_text(
-                    "Video download failed",
-                    reply_parameters=reply_params,
-                )
-
-            # Then send audio
-            if audio_ok and os.path.isfile(f"{base}.mp3"):
-                with open(f"{base}.mp3", "rb") as f:
-                    await update.effective_message.reply_audio(
-                        audio=f,
-                        title=title[:AUDIO_TITLE_MAX],
-                        reply_parameters=reply_params,
-                    )
-                if not video_ok:
-                    _store_download_metadata(context, "both", f"{base}.mp3")
-                _log.info("ytmusic_callback: audio sent for %s", url)
-            else:
-                await update.effective_message.reply_text(
-                    "Audio download failed",
-                    reply_parameters=reply_params,
-                )
-
-            _log.info("ytmusic_callback: both download completed for %s (video=%s, audio=%s)", url, video_ok, audio_ok)
-
-        else:
-            await update.effective_message.reply_text(
-                "Unknown format choice",
-                reply_parameters=reply_params,
-            )
-
-    except Exception as e:
-        await update.effective_message.reply_text(
-            f"Error: {e}",
-            reply_parameters=reply_params,
-        )
-    finally:
         for ext in ["mp4", "webm", "mkv", "mp3", "m4a"]:
             cleanup_file(f"{base}.{ext}")
-
 
 @with_request_logging
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.text:
         return
 
-    if not _is_authorized(update):
+    if not is_authorized(update):
         await update.message.reply_text(
             "You are not authorized to use this bot",
             reply_parameters={"message_id": update.message.message_id},
@@ -642,12 +246,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     text = update.message.text.strip()
 
     if text.startswith("/audio"):
-        # Start typing for audio command
-        typing_task = await _start_typing(update.message.chat.id, context.bot)
-        try:
-            await audio_command(update, context)
-        finally:
-            typing_task.cancel()
+        await audio_command(update, context)
         return
 
     if not is_valid_url(text):
@@ -679,10 +278,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     # Start typing indicator (works in both P2P and groups)
-    typing_task = await _start_typing(update.message.chat.id, context.bot)
-    try:
+    async with typing_indicator(update.message.chat.id, context.bot):
         # Download each supported URL (with normal error handling)
         for url in supported_urls:
             await _download_and_send(update, context, url)
-    finally:
-        typing_task.cancel()
