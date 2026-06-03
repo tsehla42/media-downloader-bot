@@ -144,50 +144,73 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def _download_and_send(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, url: str
-) -> None:
-    reply_params = {"message_id": update.message.message_id}
+    update: Update, context: ContextTypes.DEFAULT_TYPE, url: str,
+    silent: bool = True, reply_to_message_id: int | None = None,
+) -> bool:
+    """Download content from URL and send to chat.
+
+    Args:
+        silent: If True, suppress error messages in group chats (default).
+                If False, always reply with error messages (used by reply-to-retry).
+        reply_to_message_id: If set, reply to this message ID instead of update.message.
+                            Used by reply-to-retry to reply to the original link message.
+
+    Returns:
+        True if content was sent successfully, False otherwise.
+    """
+    from config import MAX_FILE_SIZE
+
+    if reply_to_message_id:
+        reply_params = {"message_id": reply_to_message_id}
+    else:
+        reply_params = {"message_id": update.message.message_id}
+
     platform = detect_platform(url)
     context.user_data["_platform"] = platform or ""
 
     if not platform:
         context.user_data["_request_success"] = False
-        await update.message.reply_text(
-            "Unsupported platform. I support YouTube, TikTok, and Instagram",
-            reply_parameters=reply_params,
-        )
-        return
+        if not (is_group_chat(update) and silent):
+            await update.message.reply_text(
+                "Unsupported platform. I support YouTube, TikTok, and Instagram",
+                reply_parameters=reply_params,
+            )
+        return False
 
     # Instagram and TikTok handle their own metadata and content fetching
     if platform == "instagram":
         handled = await handle_instagram(update, context, url)
         if not handled:
             context.user_data["_request_success"] = False
-            await update.message.reply_text(
-                "Could not fetch post. The content may be private or the URL is invalid",
-                reply_parameters=reply_params,
-            )
-        return
+            if not (is_group_chat(update) and silent):
+                await update.message.reply_text(
+                    "Could not fetch post. The content may be private or the URL is invalid",
+                    reply_parameters=reply_params,
+                )
+        return handled
 
     if platform == "tiktok":
         handled = await handle_tiktok(update, context, url)
         if not handled:
             context.user_data["_request_success"] = False
-            await update.message.reply_text(
-                "Could not fetch post. The content may be private or the URL is invalid",
-                reply_parameters=reply_params,
-            )
-        return
+            if not (is_group_chat(update) and silent):
+                await update.message.reply_text(
+                    "Could not fetch post. The content may be private or the URL is invalid",
+                    reply_parameters=reply_params,
+                )
+        return handled
 
     # YouTube / YouTube Music: fetch metadata first
     metadata = get_metadata(url)
     if not metadata:
         context.user_data["_request_success"] = False
-        await update.message.reply_text(
-            "Could not fetch post. The content may be private or the URL is invalid",
-            reply_parameters=reply_params,
-        )
-        return
+        _log.info("youtube_metadata_failed url=%s", url)
+        if not (is_group_chat(update) and silent):
+            await update.message.reply_text(
+                "Could not fetch post. The content may be private or the URL is invalid",
+                reply_parameters=reply_params,
+            )
+        return False
 
     title = metadata.get("title", "video")
     tmp_id = uuid.uuid4().hex[:8]
@@ -201,35 +224,117 @@ async def _download_and_send(
                 update, context, url, metadata, title,
                 base, output_path, reply_params,
             )
-            return
+            return True
 
         if platform == "youtube":
+            # Check file size before downloading
+            estimated_size = metadata.get("filesize") or metadata.get("filesize_approx")
+            if estimated_size is not None:
+                size_mb = round(estimated_size / (1024 * 1024), 2)
+                if estimated_size > MAX_FILE_SIZE * 1024 * 1024:
+                    _log.info(
+                        "youtube_skipped_large title=%s size_mb=%.2f",
+                        title, size_mb,
+                    )
+                    context.user_data["_request_success"] = False
+                    if not (is_group_chat(update) and silent):
+                        await update.message.reply_text(
+                            "This video is above Telegram's 50MB limit",
+                            reply_parameters=reply_params,
+                        )
+                    return False
+                _log.info(
+                    "youtube_size_check title=%s size_mb=%.2f passed=true",
+                    title, size_mb,
+                )
+            else:
+                _log.info(
+                    "youtube_size_check title=%s size_mb=None passed=true",
+                    title,
+                )
+
             caption = get_caption_for_user(update.message.from_user.id, title)
             video_ok = await handle_youtube(
                 update, context, url, base, output_path, caption, reply_params,
             )
             if not video_ok:
                 context.user_data["_request_success"] = False
-                await update.message.reply_text(
-                    "Download failed",
-                    reply_parameters=reply_params,
-                )
-            return
+                if not (is_group_chat(update) and silent):
+                    await update.message.reply_text(
+                        "Download failed",
+                        reply_parameters=reply_params,
+                    )
+            return video_ok
 
         context.user_data["_request_success"] = False
-        await update.message.reply_text(
-            "Download failed",
-            reply_parameters=reply_params,
-        )
+        if not (is_group_chat(update) and silent):
+            await update.message.reply_text(
+                "Download failed",
+                reply_parameters=reply_params,
+            )
+        return False
     except Exception as e:
         context.user_data["_request_success"] = False
-        await update.message.reply_text(
-            f"Error: {e}",
-            reply_parameters=reply_params,
-        )
+        if not (is_group_chat(update) and silent):
+            await update.message.reply_text(
+                f"Error: {e}",
+                reply_parameters=reply_params,
+            )
+        return False
     finally:
         for ext in ["mp4", "webm", "mkv", "mp3", "m4a"]:
             cleanup_file(f"{base}.{ext}")
+
+
+async def handle_reply_to_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle replies to messages containing URLs when bot is mentioned.
+
+    Allows users to retry a download by replying to an old message with
+    a link and mentioning the bot. All platforms supported.
+    """
+    if not update.message or not update.message.text:
+        return
+
+    # Check if this is a reply
+    if not update.message.reply_to_message:
+        return
+
+    # Check if bot is mentioned in the reply text
+    bot_username = context.bot_data.get("bot_username", "")
+    if not bot_username or f"@{bot_username}" not in update.message.text:
+        return
+
+    # Check authorization
+    if not is_authorized(update):
+        await update.message.reply_text(
+            "You are not authorized to use this bot",
+            reply_parameters={"message_id": update.message.message_id},
+        )
+        return
+
+    # Extract URL from the replied-to message
+    replied_text = update.message.reply_to_message.text or ""
+    urls = extract_urls(replied_text)
+    if not urls:
+        return
+
+    url = urls[0]
+
+    # Log the retry attempt
+    _log.info(
+        "reply_to_retry url=%s user=%s chat=%s",
+        url,
+        getattr(update.message.from_user, "id", None),
+        update.message.chat.id,
+    )
+
+    # Process with silent=False (errors always shown)
+    await _download_and_send(
+        update, context, url,
+        silent=False,
+        reply_to_message_id=update.message.reply_to_message.message_id,
+    )
+
 
 @with_request_logging
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -277,8 +382,16 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    # Start typing indicator (works in both P2P and groups)
-    async with typing_indicator(update.message.chat.id, context.bot):
-        # Download each supported URL (with normal error handling)
-        for url in supported_urls:
-            await _download_and_send(update, context, url)
+    # Split YouTube from non-YouTube for typing indicator handling
+    youtube_urls = [url for url in supported_urls if detect_platform(url) == "youtube"]
+    non_youtube_urls = [url for url in supported_urls if detect_platform(url) != "youtube"]
+
+    # YouTube: no typing during metadata fetch, handled inside _download_and_send
+    for url in youtube_urls:
+        await _download_and_send(update, context, url)
+
+    # Non-YouTube: typing wraps full flow (current behavior)
+    if non_youtube_urls:
+        async with typing_indicator(update.message.chat.id, context.bot):
+            for url in non_youtube_urls:
+                await _download_and_send(update, context, url)

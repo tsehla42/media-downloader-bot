@@ -83,8 +83,9 @@ Wraps yt-dlp and gallery-dl binary calls via subprocess:
 Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloader:
 - `my_chat_member_handler(update, context)` - Handles bot membership changes (added, removed, promoted, demoted)
 - `audio_command(update, context)` - Download as MP3 (registered as CommandHandler)
-- `_download_and_send(update, context, url)` - Orchestrates download: delegates to platform-specific handlers
-- `handle_url(update, context)` - Main handler: detects group/P2P, filters URLs, starts typing, delegates to _download_and_send
+- `_download_and_send(update, context, url, silent, reply_to_message_id)` - Orchestrates download with YouTube size check and error suppression
+- `handle_reply_to_url(update, context)` - Retries download when user replies to message with URL and mentions bot
+- `handle_url(update, context)` - Main handler: detects group/P2P, filters URLs, handles YouTube/other typing separately
 
 ### logging_config.py
 Structured JSON logging with zero external dependencies:
@@ -112,6 +113,9 @@ handlers.handle_url()
     ├─ /audio → audio_command() → download_audio() → reply_audio()
     │   (logged via @with_request_logging)
     │
+    ├─ Reply with bot mention? → handle_reply_to_url()
+    │   └─ Extract URL from replied message → _download_and_send(silent=False)
+    │
     ├─ is_group_chat() → true/false
     │
     ├─ [Group] Filter to supported URLs only
@@ -120,41 +124,43 @@ handlers.handle_url()
     │
     ├─ [P2P] Show error if no valid URLs
     │
-    ├─ Start typing indicator (telegram_utils.typing_indicator)
+    ├─ Split YouTube vs non-YouTube URLs
     │
-    ├─ @with_request_logging (decorator)
+    ├─ YouTube URLs → _download_and_send() (no typing wrapper)
+    │   ├─ Fetch metadata silently (no typing indicator)
+    │   ├─ Check filesize/filesize_approx vs MAX_FILE_SIZE
+    │   ├─ If >50MB → skip silently (log youtube_skipped_large)
+    │   └─ If ≤50MB → download_video() → reply_video()
+    │
+    ├─ Non-YouTube URLs → typing_indicator wraps:
+    │   ├─ @with_request_logging (decorator)
+    │   │   │
+    │   │   ├─ log_request_received() → logs "request_received" event
+    │   │   │
+    │   │   ▼
+    │   │   handlers._download_and_send()
+    │   │       │
+    │   │       ├─ platforms.detect_platform(url) → "tiktok"/"instagram"
+    │   │       │
+    │   │       ├─ [Instagram] → platforms.instagram.handle_instagram()
+    │   │       │   ├─ If metadata fails → gallery-dl with cookies
+    │   │       │   └─ If metadata succeeds → download_images()
+    │   │       │
+    │   │       ├─ [TikTok] → platforms.tiktok.handle_tiktok()
+    │   │       │   ├─ Try video download
+    │   │       │   └─ If fails → gallery-dl for photo posts
+    │   │       │
+    │   │       └─ cleanup temp files
+    │   │       │
+    │   │       ▼
+    │   │   @with_request_logging (decorator)
+    │   │       │
+    │   │       ├─ log_request_completed() → logs "request_completed" event
+    │   │       │
+    │   │       ▼
+    │   │   Done
     │   │
-    │   ├─ log_request_received() → logs "request_received" event
-    │   │
-    │   ▼
-    │   handlers._download_and_send()
-    │       │
-    │       ├─ platforms.detect_platform(url) → "youtube"/"tiktok"/"instagram"
-    │       │
-    │       ├─ [Instagram] → platforms.instagram.handle_instagram()
-    │       │   ├─ If metadata fails → gallery-dl with cookies
-    │       │   └─ If metadata succeeds → download_images()
-    │       │
-    │       ├─ [TikTok] → platforms.tiktok.handle_tiktok()
-    │       │   ├─ Try video download
-    │       │   └─ If fails → gallery-dl for photo posts
-    │       │
-    │       ├─ [YouTube Music] → platforms.youtube.handle_ytmusic()
-    │       │   ├─ If video available → show format picker
-    │       │   └─ If audio-only → download directly
-    │       │
-    │       ├─ [YouTube] → platforms.youtube.handle_youtube()
-    │       │   └─ download_video() → reply_video()
-    │       │
-    │       └─ cleanup temp files
-    │       │
-    │       ▼
-    │   @with_request_logging (decorator)
-    │       │
-    │       ├─ log_request_completed() → logs "request_completed" event
-    │       │
-    │       ▼
-    │   Done
+    │   └─ Cancel typing indicator
     │
     └─ Cancel typing indicator
 ```

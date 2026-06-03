@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from handlers import handle_url, audio_command, my_chat_member_handler, _download_and_send
+from handlers import handle_url, audio_command, my_chat_member_handler, _download_and_send, handle_reply_to_url
 from platforms.youtube import ytmusic_callback, _has_video_available, _ytmusic_pending
 from commands import caption_command
 
@@ -177,7 +177,7 @@ async def test_download_and_send_metadata_failure():
 
 @pytest.mark.asyncio
 async def test_handle_url_starts_typing_immediately():
-    """handle_url starts typing immediately when message received."""
+    """handle_url does NOT wrap YouTube in typing (typing handled inside download)."""
     update = MagicMock()
     update.message.text = "https://youtube.com/watch?v=abc"
     update.message.message_id = 99
@@ -205,10 +205,8 @@ async def test_handle_url_starts_typing_immediately():
          patch("handlers.typing_indicator", mock_typing):
         await handle_url(update, context)
 
-    # Verify typing indicator was used
-    mock_typing.assert_called_once()
-    call_args = mock_typing.call_args
-    assert call_args[0][0] == -100
+    # YouTube: typing_indicator NOT called at handle_url level
+    mock_typing.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -349,7 +347,8 @@ async def test_handle_url_group_processes_supported_urls(update, context):
         await handle_url(update, context)
         update.message.reply_video.assert_called_once()
         update.message.reply_text.assert_not_called()
-        mock_typing.assert_called_once()
+        # YouTube: typing NOT called at handle_url level
+        mock_typing.assert_not_called()
 
 @pytest.mark.asyncio
 async def test_handle_url_group_mixed_urls(update, context):
@@ -376,12 +375,13 @@ async def test_handle_url_group_mixed_urls(update, context):
         # Only YouTube URL should be processed
         update.message.reply_video.assert_called_once()
         update.message.reply_text.assert_not_called()
-        mock_typing.assert_called_once()
+        # YouTube-only: typing NOT called at handle_url level
+        mock_typing.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_handle_url_group_shows_error_for_failed_metadata(update, context):
-    """In groups, error messages are shown when supported URLs fail to download."""
+async def test_handle_url_group_silently_ignores_failed_metadata(update, context):
+    """In groups, metadata failures are silently ignored (no error message)."""
     update.message.text = "https://youtube.com/watch?v=abc"
     update.effective_chat.type = "group"
 
@@ -391,11 +391,10 @@ async def test_handle_url_group_shows_error_for_failed_metadata(update, context)
          patch("handlers.get_metadata", return_value=None), \
          patch("handlers.typing_indicator", mock_typing):
         await handle_url(update, context)
-        # Should show error message for failed metadata
-        update.message.reply_text.assert_called_once()
-        text = update.message.reply_text.call_args[0][0]
-        assert "Could not fetch post" in text
-        mock_typing.assert_called_once()
+        # Should NOT show error message in groups (silent=True by default)
+        update.message.reply_text.assert_not_called()
+        # YouTube: typing NOT called at handle_url level
+        mock_typing.assert_not_called()
 
 @pytest.mark.asyncio
 async def test_handle_url_p2p_still_shows_errors(update, context):
@@ -797,3 +796,389 @@ async def test_download_and_send_instagram_delegates_immediately():
     mock_metadata.assert_not_called()
     update.message.reply_video.assert_called_once()
     assert context.user_data["_request_success"] is True
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_skips_large_youtube_video():
+    """YouTube video >50MB is skipped silently (no error message)."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.effective_chat.type = "group"
+    update.message.reply_video = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={
+             "title": "Big Video",
+             "filesize_approx": 60 * 1024 * 1024,  # 60MB
+         }), \
+         patch("handlers.cleanup_file"):
+        await _download_and_send(update, context, "https://youtube.com/watch?v=big")
+
+    # Should NOT download or send anything
+    update.message.reply_video.assert_not_called()
+    update.message.reply_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_proceeds_with_small_youtube_video():
+    """YouTube video <50MB is downloaded and sent."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.reply_video = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={
+             "title": "Small Video",
+             "filesize_approx": 10 * 1024 * 1024,  # 10MB
+         }), \
+         patch("platforms.youtube.download_video", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=10*1024*1024), \
+         patch("handlers.cleanup_file"), \
+         patch("builtins.open", MagicMock()):
+        await _download_and_send(update, context, "https://youtube.com/watch?v=small")
+
+    update.message.reply_video.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_proceeds_with_unknown_size_youtube():
+    """YouTube video with no size info is downloaded (optimistic)."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.reply_video = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={"title": "Unknown Size Video"}), \
+         patch("platforms.youtube.download_video", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=5*1024*1024), \
+         patch("handlers.cleanup_file"), \
+         patch("builtins.open", MagicMock()):
+        await _download_and_send(update, context, "https://youtube.com/watch?v=unknown")
+
+    update.message.reply_video.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_skips_youtube_metadata_failure_in_group():
+    """YouTube metadata failure in group is skipped silently (no error message)."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.effective_chat.type = "group"
+    update.message.reply_video = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value=None), \
+         patch("handlers.cleanup_file"):
+        await _download_and_send(update, context, "https://youtube.com/watch?v=private")
+
+    update.message.reply_video.assert_not_called()
+    update.message.reply_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_silent_false_shows_error_in_group():
+    """When silent=False, error messages are shown even in group chats."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.chat.type = "group"
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value=None):
+        await _download_and_send(update, context, "https://example.com/video", silent=False)
+
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "Unsupported" in text
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_reply_to_message_id():
+    """When reply_to_message_id is set, reply to that message."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value=None):
+        await _download_and_send(
+            update, context, "https://example.com/video",
+            reply_to_message_id=99,
+        )
+
+    update.message.reply_text.assert_called_once()
+    kwargs = update.message.reply_text.call_args[1]
+    assert kwargs["reply_parameters"] == {"message_id": 99}
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_skips_large_youtube_in_p2p():
+    """YouTube video >50MB is skipped in P2P too (no download attempted)."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.chat.type = "private"
+    update.message.reply_video = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={
+             "title": "Big Video",
+             "filesize_approx": 60 * 1024 * 1024,
+         }), \
+         patch("handlers.cleanup_file"):
+        await _download_and_send(update, context, "https://youtube.com/watch?v=big")
+
+    # Should NOT download, but SHOULD show error in P2P
+    update.message.reply_video.assert_not_called()
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "50MB" in text
+
+
+@pytest.mark.asyncio
+async def test_handle_url_youtube_typing_only_during_download():
+    """For YouTube, typing indicator should only wrap the download phase, not metadata fetch."""
+    update = MagicMock()
+    update.message.text = "https://youtube.com/watch?v=abc"
+    update.message.message_id = 99
+    update.message.from_user.id = 123
+    update.message.chat.id = -100
+    update.message.reply_video = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot.send_chat_action = AsyncMock()
+    context.bot_data = {"bot_username": "testbot"}
+
+    mock_typing = _make_typing_indicator_mock()
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={"title": "Test", "filesize_approx": 5*1024*1024}), \
+         patch("platforms.youtube.download_video", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=5*1024*1024), \
+         patch("handlers.cleanup_file"), \
+         patch("builtins.open", MagicMock()), \
+         patch("handlers.typing_indicator", mock_typing):
+        await handle_url(update, context)
+
+    # typing_indicator should NOT be called at handle_url level for YouTube
+    mock_typing.assert_not_called()
+    update.message.reply_video.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_url_non_youtube_uses_typing_wrapper():
+    """For non-YouTube platforms, typing indicator wraps the full flow."""
+    update = MagicMock()
+    update.message.text = "https://tiktok.com/@user/video/123"
+    update.message.message_id = 99
+    update.message.from_user.id = 123
+    update.message.chat.id = 100
+    update.message.reply_video = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot.send_chat_action = AsyncMock()
+    context.bot_data = {"bot_username": "testbot"}
+
+    mock_typing = _make_typing_indicator_mock()
+
+    with patch("handlers.detect_platform", return_value="tiktok"), \
+         patch("handlers.get_metadata") as mock_metadata, \
+         patch("platforms.tiktok.download_video", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=500000), \
+         patch("handlers.cleanup_file"), \
+         patch("platforms.tiktok.cleanup_file"), \
+         patch("platforms.tiktok.cleanup_dir"), \
+         patch("builtins.open", MagicMock()), \
+         patch("handlers.typing_indicator", mock_typing):
+        update.message.reply_video = AsyncMock()
+        await handle_url(update, context)
+
+    # typing_indicator should be called for non-YouTube
+    mock_typing.assert_called_once()
+
+
+# --- handle_reply_to_url tests ---
+
+
+@pytest.mark.asyncio
+async def test_handle_reply_to_url_downloads_on_bot_mention():
+    """Reply to a message with URL + bot mention triggers download."""
+    update = MagicMock()
+    update.message.text = "@mediabot try this"
+    update.message.message_id = 200
+    update.message.from_user.id = 123
+    update.message.chat.id = 100
+    update.message.chat.type = "private"
+    update.message.reply_video = AsyncMock()
+    update.message.reply_text = AsyncMock()
+    update.message.reply_to_message = MagicMock()
+    update.message.reply_to_message.text = "https://youtube.com/watch?v=abc"
+    update.message.reply_to_message.message_id = 100
+
+    context = MagicMock()
+    context.bot_data = {"bot_username": "mediabot"}
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={"title": "Test", "filesize_approx": 5*1024*1024}), \
+         patch("platforms.youtube.download_video", return_value=True), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=5*1024*1024), \
+         patch("handlers.cleanup_file"), \
+         patch("builtins.open", MagicMock()):
+        await handle_reply_to_url(update, context)
+
+    update.message.reply_video.assert_called_once()
+    # Should reply to original message (100), not the reply (200)
+    kwargs = update.message.reply_video.call_args[1]
+    assert kwargs["reply_parameters"] == {"message_id": 100}
+
+
+@pytest.mark.asyncio
+async def test_handle_reply_to_url_ignores_no_bot_mention():
+    """Reply without bot mention is silently ignored."""
+    update = MagicMock()
+    update.message.text = "nice video"
+    update.message.message_id = 200
+    update.message.from_user.id = 123
+    update.message.reply_to_message = MagicMock()
+    update.message.reply_to_message.text = "https://youtube.com/watch?v=abc"
+
+    context = MagicMock()
+    context.bot_data = {"bot_username": "mediabot"}
+
+    with patch("handlers.detect_platform") as mock_detect:
+        await handle_reply_to_url(update, context)
+        mock_detect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_reply_to_url_ignores_no_url_in_replied_message():
+    """Reply to a message with no URL is silently ignored."""
+    update = MagicMock()
+    update.message.text = "@mediabot what was that"
+    update.message.message_id = 200
+    update.message.from_user.id = 123
+    update.message.reply_to_message = MagicMock()
+    update.message.reply_to_message.text = "just a text message"
+
+    context = MagicMock()
+    context.bot_data = {"bot_username": "mediabot"}
+
+    with patch("handlers.detect_platform") as mock_detect:
+        await handle_reply_to_url(update, context)
+        mock_detect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_reply_to_url_shows_limit_for_large_youtube():
+    """Reply to YouTube >50MB shows 'above limit' message."""
+    update = MagicMock()
+    update.message.text = "@mediabot try this"
+    update.message.message_id = 200
+    update.message.from_user.id = 123
+    update.message.chat.id = 100
+    update.message.chat.type = "group"
+    update.message.reply_text = AsyncMock()
+    update.message.reply_to_message = MagicMock()
+    update.message.reply_to_message.text = "https://youtube.com/watch?v=big"
+    update.message.reply_to_message.message_id = 100
+
+    context = MagicMock()
+    context.bot_data = {"bot_username": "mediabot"}
+    context.user_data = {}
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={
+             "title": "Big Video",
+             "filesize_approx": 60 * 1024 * 1024,
+         }), \
+         patch("handlers.cleanup_file"):
+        await handle_reply_to_url(update, context)
+
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "50MB" in text
+    # Should reply to original message
+    kwargs = update.message.reply_text.call_args[1]
+    assert kwargs["reply_parameters"] == {"message_id": 100}
+
+
+@pytest.mark.asyncio
+async def test_handle_reply_to_url_unsupported_platform():
+    """Reply to unsupported platform URL shows error."""
+    update = MagicMock()
+    update.message.text = "@mediabot try this"
+    update.message.message_id = 200
+    update.message.from_user.id = 123
+    update.message.reply_text = AsyncMock()
+    update.message.reply_to_message = MagicMock()
+    update.message.reply_to_message.text = "https://example.com/video"
+
+    context = MagicMock()
+    context.bot_data = {"bot_username": "mediabot"}
+
+    with patch("handlers.detect_platform", return_value=None):
+        await handle_reply_to_url(update, context)
+
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "Unsupported" in text
+
+
+@pytest.mark.asyncio
+async def test_handle_reply_to_url_rejects_unauthorized():
+    """Unauthorized user gets error message."""
+    update = MagicMock()
+    update.message.text = "@mediabot try this"
+    update.message.message_id = 200
+    update.message.from_user.id = 999
+    update.message.reply_text = AsyncMock()
+    update.message.reply_to_message = MagicMock()
+    update.message.reply_to_message.text = "https://youtube.com/watch?v=abc"
+
+    context = MagicMock()
+    context.bot_data = {"bot_username": "mediabot"}
+
+    with patch("handlers.is_authorized", return_value=False):
+        await handle_reply_to_url(update, context)
+
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "not authorized" in text

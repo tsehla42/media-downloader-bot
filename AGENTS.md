@@ -64,7 +64,7 @@ media-downloader-bot/
 | `src/utils.py` | nothing | URL validation, file cleanup |
 | `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()`, `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()` |
 | `src/logging_config.py` | config | Structured JSON logging: JSONFormatter, setup_logging, with_request_logging decorator |
-| `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader | Thin orchestrator: `handle_url()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` |
+| `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader | Thin orchestrator: `handle_url()`, `handle_reply_to_url()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` |
 | `src/bot.py` | config, handlers, commands, platforms.youtube, logging_config | Entry point, wires everything together, initializes logging, global error handler |
 
 ## Data Flow
@@ -73,13 +73,15 @@ media-downloader-bot/
 2. `/audio` → `audio_command()` → `download_audio()` → `reply_audio()` (logged via `@with_request_logging`)
 3. Regular URL → `handle_url()` detects group or P2P chat via `is_group_chat()`
 4. In groups: silently ignore unsupported URLs, only process supported ones
-5. `handlers.py` detects platform via `platforms.detect_platform()`
-6. Delegates to platform-specific handler:
+5. YouTube URLs: metadata fetched silently (no typing indicator), size checked against 50MB limit
+6. Reply-to-retry: user replies to message with URL and mentions bot → `handle_reply_to_url()` retries download
+7. `handlers.py` detects platform via `platforms.detect_platform()`
+8. Delegates to platform-specific handler:
    - YouTube → `platforms.youtube.handle_youtube()` or `handle_ytmusic()`
    - TikTok → `platforms.tiktok.handle_tiktok()` (with gallery-dl fallback)
    - Instagram → `platforms.instagram.handle_instagram()` (with gallery-dl fallback)
-7. Platform handlers fetch metadata, download, and send to Telegram
-8. `@with_request_logging` decorator logs request lifecycle automatically:
+9. Platform handlers fetch metadata, download, and send to Telegram
+10. `@with_request_logging` decorator logs request lifecycle automatically:
    - `request_received` when handler starts
    - `request_completed` when handler finishes (success or expected failure)
    - `request_failed` when handler throws exception
