@@ -11,7 +11,7 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN
-from handlers import handle_url, audio_command, my_chat_member_handler
+from handlers import handle_url, audio_command, my_chat_member_handler, handle_reply_to_url
 from platforms.youtube import ytmusic_callback
 from commands import start_command, help_command, caption_command
 
@@ -64,6 +64,11 @@ def main() -> None:
     app.add_handler(CommandHandler("caption", caption_command))
     app.add_handler(CommandHandler("audio", audio_command))
     app.add_handler(CallbackQueryHandler(ytmusic_callback, pattern="^ytm\\|"))
+    # Reply-to-retry: must be before handle_url to catch reply messages first
+    app.add_handler(MessageHandler(
+        filters.REPLY & filters.TEXT & ~filters.COMMAND,
+        handle_reply_to_url
+    ))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, my_chat_member_handler))
 
