@@ -1,5 +1,6 @@
 import logging
-from logging_config import setup_logging
+from logging_config import setup_logging, details_logger, service_logger
+
 from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
@@ -11,16 +12,14 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN
-from handlers import handle_url, audio_command, my_chat_member_handler, handle_reply_to_url
+from handlers import handle_url, audio_command, my_chat_member_handler
 from platforms.youtube import ytmusic_callback
 from commands import start_command, help_command, caption_command
-
-logger = logging.getLogger(__name__)
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log the error and send a telegram message to inform the user."""
-    logger.error("Exception while handling an update:", exc_info=context.error)
+    details_logger.error("Exception while handling an update:", exc_info=context.error)
 
     # Send a message to the user if possible
     if isinstance(update, Update) and update.effective_chat:
@@ -30,7 +29,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
                 text="An error occurred while processing your request. Please try again later.",
             )
         except Exception as e:
-            logger.error("Failed to send error message to user: %s", e)
+            details_logger.error("Failed to send error message to user: %s", e)
 
 COMMANDS = [
     BotCommand("start", "Start the bot"),
@@ -45,7 +44,7 @@ async def post_init(application: Application) -> None:
     me = await application.bot.get_me()
     application.bot_data["bot_username"] = me.username
     await application.bot.set_my_commands(COMMANDS)
-    logger.info("Bot username: @%s", me.username)
+    service_logger.info("Bot username: @%s", me.username)
 
 
 def main() -> None:
@@ -64,15 +63,10 @@ def main() -> None:
     app.add_handler(CommandHandler("caption", caption_command))
     app.add_handler(CommandHandler("audio", audio_command))
     app.add_handler(CallbackQueryHandler(ytmusic_callback, pattern="^ytm\\|"))
-    # Reply-to-retry: must be before handle_url to catch reply messages first
-    app.add_handler(MessageHandler(
-        filters.REPLY & filters.TEXT & ~filters.COMMAND,
-        handle_reply_to_url
-    ))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, my_chat_member_handler))
 
-    logger.info("Bot started")
+    service_logger.info("Bot started")
     app.run_polling(allowed_updates=["message", "callback_query", "my_chat_member"])
 
 

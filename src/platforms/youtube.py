@@ -1,7 +1,6 @@
 """YouTube and YouTube Music download logic."""
 
 import asyncio
-import logging
 import os
 import time
 import uuid
@@ -15,7 +14,7 @@ from commands import get_caption_for_user
 from telegram_utils import typing_indicator
 from utils import cleanup_file
 
-_log = logging.getLogger(__name__)
+from logging_config import details_logger as _log
 
 AUDIO_ONLY_EXTS = {"m4a", "mp3", "opus", "wav", "aac"}
 AUDIO_TITLE_MAX = 64  # Telegram Bot API limit for reply_audio title

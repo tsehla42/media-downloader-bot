@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from handlers import handle_url, audio_command, my_chat_member_handler, _download_and_send, handle_reply_to_url
+from handlers import handle_url, audio_command, my_chat_member_handler, _download_and_send
 from platforms.youtube import ytmusic_callback, _has_video_available, _ytmusic_pending
 from commands import caption_command
 
@@ -67,7 +67,8 @@ async def test_handle_url_rejects_invalid(update, context):
 @pytest.mark.asyncio
 async def test_handle_url_rejects_unknown_platform(update, context):
     update.message.text = "https://example.com/video"
-    with patch("handlers.detect_platform", return_value=None):
+    with patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=False):
         await handle_url(update, context)
         update.message.reply_text.assert_called_once()
         text = update.message.reply_text.call_args[0][0]
@@ -323,7 +324,8 @@ async def test_handle_url_group_ignores_unsupported_urls(update, context):
     update.message.text = "https://example.com/video"
     update.effective_chat.type = "group"
 
-    with patch("handlers.detect_platform", return_value=None):
+    with patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=False):
         await handle_url(update, context)
         # Should NOT reply with error in groups
         update.message.reply_text.assert_not_called()
@@ -369,7 +371,8 @@ async def test_handle_url_group_mixed_urls(update, context):
          patch("handlers.cleanup_file"), \
          patch("os.path.isfile", return_value=True), \
          patch("builtins.open", MagicMock()), \
-         patch("handlers.typing_indicator", mock_typing):
+         patch("handlers.typing_indicator", mock_typing), \
+         patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=False):
         update.message.reply_video = AsyncMock()
         await handle_url(update, context)
         # Only YouTube URL should be processed
@@ -402,7 +405,8 @@ async def test_handle_url_p2p_still_shows_errors(update, context):
     update.message.text = "https://example.com/video"
     update.effective_chat.type = "private"
 
-    with patch("handlers.detect_platform", return_value=None):
+    with patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=False):
         await handle_url(update, context)
         update.message.reply_text.assert_called_once()
         text = update.message.reply_text.call_args[0][0]
@@ -1033,11 +1037,11 @@ async def test_handle_url_non_youtube_uses_typing_wrapper():
     mock_typing.assert_called_once()
 
 
-# --- handle_reply_to_url tests ---
+# --- reply-to-retry tests (now handled inside handle_url) ---
 
 
 @pytest.mark.asyncio
-async def test_handle_reply_to_url_downloads_on_bot_mention():
+async def test_handle_url_reply_to_retry_downloads_on_bot_mention():
     """Reply to a message with URL + bot mention triggers download."""
     update = MagicMock()
     update.message.text = "@mediabot try this"
@@ -1055,14 +1059,16 @@ async def test_handle_reply_to_url_downloads_on_bot_mention():
     context.bot_data = {"bot_username": "mediabot"}
     context.user_data = {}
 
+    mock_typing = _make_typing_indicator_mock()
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "Test", "filesize_approx": 5*1024*1024}), \
          patch("platforms.youtube.download_video", return_value=True), \
          patch("os.path.isfile", return_value=True), \
          patch("os.path.getsize", return_value=5*1024*1024), \
          patch("handlers.cleanup_file"), \
-         patch("builtins.open", MagicMock()):
-        await handle_reply_to_url(update, context)
+         patch("builtins.open", MagicMock()), \
+         patch("handlers.typing_indicator", mock_typing):
+        await handle_url(update, context)
 
     update.message.reply_video.assert_called_once()
     # Should reply to original message (100), not the reply (200)
@@ -1071,8 +1077,8 @@ async def test_handle_reply_to_url_downloads_on_bot_mention():
 
 
 @pytest.mark.asyncio
-async def test_handle_reply_to_url_ignores_no_bot_mention():
-    """Reply without bot mention is silently ignored."""
+async def test_handle_url_reply_ignores_no_bot_mention():
+    """Reply without bot mention is silently ignored (no URL in message text)."""
     update = MagicMock()
     update.message.text = "nice video"
     update.message.message_id = 200
@@ -1084,12 +1090,12 @@ async def test_handle_reply_to_url_ignores_no_bot_mention():
     context.bot_data = {"bot_username": "mediabot"}
 
     with patch("handlers.detect_platform") as mock_detect:
-        await handle_reply_to_url(update, context)
+        await handle_url(update, context)
         mock_detect.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_handle_reply_to_url_ignores_no_url_in_replied_message():
+async def test_handle_url_reply_ignores_no_url_in_replied_message():
     """Reply to a message with no URL is silently ignored."""
     update = MagicMock()
     update.message.text = "@mediabot what was that"
@@ -1102,12 +1108,12 @@ async def test_handle_reply_to_url_ignores_no_url_in_replied_message():
     context.bot_data = {"bot_username": "mediabot"}
 
     with patch("handlers.detect_platform") as mock_detect:
-        await handle_reply_to_url(update, context)
+        await handle_url(update, context)
         mock_detect.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_handle_reply_to_url_shows_limit_for_large_youtube():
+async def test_handle_url_reply_shows_limit_for_large_youtube():
     """Reply to YouTube >50MB shows 'above limit' message."""
     update = MagicMock()
     update.message.text = "@mediabot try this"
@@ -1124,13 +1130,15 @@ async def test_handle_reply_to_url_shows_limit_for_large_youtube():
     context.bot_data = {"bot_username": "mediabot"}
     context.user_data = {}
 
+    mock_typing = _make_typing_indicator_mock()
     with patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={
              "title": "Big Video",
              "filesize_approx": 60 * 1024 * 1024,
          }), \
-         patch("handlers.cleanup_file"):
-        await handle_reply_to_url(update, context)
+         patch("handlers.cleanup_file"), \
+         patch("handlers.typing_indicator", mock_typing):
+        await handle_url(update, context)
 
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args[0][0]
@@ -1141,7 +1149,7 @@ async def test_handle_reply_to_url_shows_limit_for_large_youtube():
 
 
 @pytest.mark.asyncio
-async def test_handle_reply_to_url_unsupported_platform():
+async def test_handle_url_reply_unsupported_platform():
     """Reply to unsupported platform URL shows error."""
     update = MagicMock()
     update.message.text = "@mediabot try this"
@@ -1154,8 +1162,10 @@ async def test_handle_reply_to_url_unsupported_platform():
     context = MagicMock()
     context.bot_data = {"bot_username": "mediabot"}
 
-    with patch("handlers.detect_platform", return_value=None):
-        await handle_reply_to_url(update, context)
+    mock_typing = _make_typing_indicator_mock()
+    with patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.typing_indicator", mock_typing):
+        await handle_url(update, context)
 
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args[0][0]
@@ -1163,7 +1173,7 @@ async def test_handle_reply_to_url_unsupported_platform():
 
 
 @pytest.mark.asyncio
-async def test_handle_reply_to_url_rejects_unauthorized():
+async def test_handle_url_reply_rejects_unauthorized():
     """Unauthorized user gets error message."""
     update = MagicMock()
     update.message.text = "@mediabot try this"
@@ -1177,8 +1187,156 @@ async def test_handle_reply_to_url_rejects_unauthorized():
     context.bot_data = {"bot_username": "mediabot"}
 
     with patch("handlers.is_authorized", return_value=False):
-        await handle_reply_to_url(update, context)
+        await handle_url(update, context)
 
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args[0][0]
     assert "not authorized" in text
+
+
+# --- handle_gallery_dl_fallback tests ---
+
+
+@pytest.mark.asyncio
+async def test_gallery_dl_fallback_images_success(update, context):
+    """handle_gallery_dl_fallback sends images when download succeeds."""
+    from handlers import handle_gallery_dl_fallback
+
+    with patch("handlers.download_gallery_dl_images", return_value=["/tmp/img.jpg"]), \
+         patch("handlers.send_images", new_callable=AsyncMock, return_value=1024) as mock_send, \
+         patch("handlers.cleanup_dir"), \
+         patch("handlers.download_gallery_dl_video", return_value=None):
+        result = await handle_gallery_dl_fallback(update, context, "https://pinterest.com/pin/123456/")
+
+    assert result is True
+    mock_send.assert_called_once()
+    assert context.user_data["_request_success"] is True
+
+
+@pytest.mark.asyncio
+async def test_handle_url_routes_pinterest_to_gallery_dl_fallback(update, context):
+    """Pinterest URL triggers gallery-dl fallback instead of 'Unsupported platform'."""
+    update.message.text = "https://pinterest.com/pin/123456/"
+
+    with patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=True) as mock_fallback:
+        await handle_url(update, context)
+
+    mock_fallback.assert_called_once()
+    # Should NOT show "Unsupported platform" since fallback was successful
+    update.message.reply_text.assert_not_called()
+
+
+# --- gallery-dl fallback comprehensive tests ---
+
+
+@pytest.mark.asyncio
+async def test_gallery_dl_fallback_video_success(update, context):
+    """gallery-dl fallback sends video when images fail but video succeeds."""
+    update.message.text = "https://example.com/post"
+    update.message.reply_video = AsyncMock()
+
+    with patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.download_gallery_dl_images", return_value=[]), \
+         patch("handlers.download_gallery_dl_video", return_value="/tmp/video.mp4"), \
+         patch("handlers.cleanup_dir"), \
+         patch("os.path.getsize", return_value=2*1024*1024), \
+         patch("builtins.open", MagicMock()):
+        await handle_url(update, context)
+
+    update.message.reply_video.assert_called_once()
+    assert context.user_data["_request_success"] is True
+    assert context.user_data["_content_type"] == "video"
+
+
+@pytest.mark.asyncio
+async def test_gallery_dl_fallback_failure_silent_group(update, context):
+    """gallery-dl fallback failure in group is silent (no message)."""
+    update.message.text = "https://example.com/post"
+    update.effective_chat.type = "group"
+
+    with patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.download_gallery_dl_images", return_value=[]), \
+         patch("handlers.download_gallery_dl_video", return_value=None), \
+         patch("handlers.cleanup_dir"):
+        await handle_url(update, context)
+
+    update.message.reply_text.assert_not_called()
+    update.message.reply_video.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_gallery_dl_fallback_failure_p2p_shows_error(update, context):
+    """gallery-dl fallback failure in P2P shows 'Unsupported platform'."""
+    update.message.text = "https://example.com/post"
+    update.effective_chat.type = "private"
+
+    with patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.download_gallery_dl_images", return_value=[]), \
+         patch("handlers.download_gallery_dl_video", return_value=None), \
+         patch("handlers.cleanup_dir"):
+        await handle_url(update, context)
+
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "Unsupported" in text
+
+
+@pytest.mark.asyncio
+async def test_gallery_dl_fallback_not_installed(update, context):
+    """gallery-dl fallback gracefully skips when gallery-dl is not installed."""
+    update.message.text = "https://example.com/post"
+    update.effective_chat.type = "group"
+
+    with patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.download_gallery_dl_images", side_effect=FileNotFoundError("gallery-dl not found")), \
+         patch("handlers.download_gallery_dl_video", side_effect=FileNotFoundError("gallery-dl not found")), \
+         patch("handlers.cleanup_dir"):
+        # Should not raise, should not show error
+        await handle_url(update, context)
+
+    update.message.reply_text.assert_not_called()
+    update.message.reply_video.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_gallery_dl_fallback_timeout(update, context):
+    """gallery-dl fallback handles subprocess timeout gracefully."""
+    import subprocess as sp
+    update.message.text = "https://example.com/slow-post"
+
+    with patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.download_gallery_dl_images", side_effect=sp.TimeoutExpired(cmd="gallery-dl", timeout=60)), \
+         patch("handlers.download_gallery_dl_video", return_value=None), \
+         patch("handlers.cleanup_dir"):
+        # Should not raise
+        await handle_url(update, context)
+
+
+@pytest.mark.asyncio
+async def test_handle_url_mixed_supported_and_unsupported(update, context):
+    """Mixed message with YT and Pinterest URLs processes both."""
+    update.message.text = "https://youtube.com/watch?v=abc https://pinterest.com/pin/123/"
+
+    def mock_detect_platform(url):
+        if "youtube" in url:
+            return "youtube"
+        return None
+
+    with patch("handlers.detect_platform", side_effect=mock_detect_platform), \
+         patch("handlers.get_metadata", return_value={"title": "Test"}), \
+         patch("platforms.youtube.download_video", return_value=True), \
+         patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=True) as mock_fallback, \
+         patch("handlers.cleanup_file"), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=1024*1024), \
+         patch("builtins.open", MagicMock()):
+        update.message.reply_video = AsyncMock()
+        await handle_url(update, context)
+
+    # YouTube processed via _download_and_send
+    assert update.message.reply_video.call_count >= 1
+    # Pinterest processed via gallery-dl fallback
+    mock_fallback.assert_called_once()
+    # No error message
+    update.message.reply_text.assert_not_called()

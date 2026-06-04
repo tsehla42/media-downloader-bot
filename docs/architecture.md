@@ -57,7 +57,7 @@ YouTube and YouTube Music download logic, depends on downloader, commands, teleg
 
 ### platforms/tiktok.py
 TikTok download logic with gallery-dl fallback, depends on downloader, telegram_utils:
-- `handle_tiktok(update, context, url)` - Tries video download, falls back to gallery-dl for photo posts
+- `handle_tiktok(update, context, url)` - Checks metadata for photo posts (best-effort), tries video download, falls back to gallery-dl
 
 ### platforms/instagram.py
 Instagram download logic with gallery-dl fallback, depends on downloader, telegram_utils:
@@ -78,22 +78,27 @@ Wraps yt-dlp and gallery-dl binary calls via subprocess:
 - `download_audio(url, path)` - Extracts audio as MP3
 - `download_images(url, dir)` - Downloads carousel/gallery images via gallery-dl
 - `download_gallery_dl_images(url, dir, cookies)` - Downloads images using gallery-dl
+- `download_gallery_dl_video(url, dir)` - Downloads video using gallery-dl (for unsupported platform fallback)
 
 ### handlers.py
 Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloader:
 - `my_chat_member_handler(update, context)` - Handles bot membership changes (added, removed, promoted, demoted)
 - `audio_command(update, context)` - Download as MP3 (registered as CommandHandler)
 - `_download_and_send(update, context, url, silent, reply_to_message_id)` - Orchestrates download with YouTube size check and error suppression
-- `handle_reply_to_url(update, context)` - Retries download when user replies to message with URL and mentions bot
-- `handle_url(update, context)` - Main handler: detects group/P2P, filters URLs, handles YouTube/other typing separately
+- `handle_gallery_dl_fallback(update, context, url)` - Tries gallery-dl for unsupported platforms (images then video), silent on failure
+- `handle_url(update, context)` - Main handler: detects group/P2P, splits supported/unsupported URLs, handles reply-to-retry, routes unsupported URLs to gallery-dl fallback
 
 ### logging_config.py
 Structured JSON logging with zero external dependencies:
 - `JSONFormatter` - Custom `logging.Formatter` that outputs JSON with timestamp (Europe/Kyiv timezone)
-- `_resolve_log_file(mode)` - Maps MODE to log filename
-- `setup_logging()` - Configures logging based on `MODE` and `LOG_OUTPUT` env vars
+- `RequestsFilter` / `DetailsFilter` / `ServiceFilter` - `logging.Filter` subclasses that route by logger name
+- `requests_logger` / `details_logger` / `service_logger` - Module-level logger instances
+- `set_current_request_id()` / `get_current_request_id()` - ContextVar for passing request_id to downloader/platform code
+- `_resolve_log_file(mode)` / `_resolve_detail_log_file(mode)` / `_resolve_service_log_file(mode)` - Maps MODE to log filenames
+- `setup_logging()` - Creates three `RotatingFileHandler` instances with filters + console handler
 - `with_request_logging()` - Decorator that wraps handlers and logs request lifecycle
-- `log_request_received()` / `log_request_completed()` / `log_request_failed()` - Log request events
+- `log_request_received()` / `log_request_completed()` / `log_request_failed()` - Log request events (use `requests_logger`)
+- `log_new_user()` / `log_bot_added_to_chat()` / `log_bot_removed_from_chat()` / `log_bot_status_changed()` - System events (use `service_logger`)
 
 ### bot.py
 Entry point:
@@ -113,18 +118,12 @@ handlers.handle_url()
     ├─ /audio → audio_command() → download_audio() → reply_audio()
     │   (logged via @with_request_logging)
     │
-    ├─ Reply with bot mention? → handle_reply_to_url()
+    ├─ Reply to message + bot mention? → reply-to-retry flow
     │   └─ Extract URL from replied message → _download_and_send(silent=False)
     │
-    ├─ is_group_chat() → true/false
+    ├─ Split URLs into supported (YT/TT/IG) and unsupported
     │
-    ├─ [Group] Filter to supported URLs only
-    │   ├─ No supported URLs → silently ignore (return)
-    │   └─ Has supported URLs → continue
-    │
-    ├─ [P2P] Show error if no valid URLs
-    │
-    ├─ Split YouTube vs non-YouTube URLs
+    ├─ [Group] Ignore if both lists empty (return)
     │
     ├─ YouTube URLs → _download_and_send() (no typing wrapper)
     │   ├─ Fetch metadata silently (no typing indicator)
@@ -132,7 +131,7 @@ handlers.handle_url()
     │   ├─ If >50MB → skip silently (log youtube_skipped_large)
     │   └─ If ≤50MB → download_video() → reply_video()
     │
-    ├─ Non-YouTube URLs → typing_indicator wraps:
+    ├─ Non-YouTube supported URLs → typing_indicator wraps:
     │   ├─ @with_request_logging (decorator)
     │   │   │
     │   │   ├─ log_request_received() → logs "request_received" event
@@ -162,24 +161,43 @@ handlers.handle_url()
     │   │
     │   └─ Cancel typing indicator
     │
+    ├─ Unsupported URLs → handle_gallery_dl_fallback()
+    │   ├─ Set platform from URL domain (for logging)
+    │   ├─ Try download_gallery_dl_images() → send_images()
+    │   ├─ Try download_gallery_dl_video() → reply_video()
+    │   ├─ If nothing works:
+    │   │   ├─ [Group] silently return (no message)
+    │   │   └─ [P2P] show "Unsupported platform" error
+    │   └─ cleanup temp dirs
+    │
     └─ Cancel typing indicator
 ```
 
 ## External Dependencies
 
 - **yt-dlp** - Installed as system binary. Called via subprocess.
-- **gallery-dl** - Installed as system binary. Called via subprocess for Instagram image downloads (with cookies) and TikTok photo posts (no cookies needed).
+- **gallery-dl** - Installed as system binary. Called via subprocess for: Instagram image downloads (with cookies), TikTok photo posts (no cookies), and unsupported platform fallback (best-effort for 100+ services).
 - **ffmpeg** - Required for audio extraction (MP3 conversion). Installed in Docker image.
 - **python-telegram-bot** - Telegram Bot API wrapper. Installed via pip.
 - **python-dotenv** - .env file loading.
 
 ## Structured Logging
 
-Logs are written in JSON format for easy querying with `jq` and log aggregators. The log file name depends on MODE: `requests.dev.jsonl` for development, `requests.jsonl` for production.
+Logs are written in JSON format for easy querying with `jq` and log aggregators. Three separate files route logs by type using `logging.Filter` subclasses.
+
+### Log Files
+
+| File | Logger | Contains |
+|------|--------|----------|
+| `requests.jsonl` | `media_downloader.requests` | Request lifecycle: received, completed, failed |
+| `request-details.jsonl` | `media_downloader.details` | Intermediate steps: yt-dlp calls, retries, gallery-dl |
+| `service.jsonl` | `media_downloader.service` | Bot events: start/stop, chat membership, new users |
+
+Append `.dev.jsonl` for MODE=development (e.g. `requests.dev.jsonl`).
 
 ### Log Schema
 
-Request received:
+Request received (in `requests.jsonl`):
 ```json
 {
   "timestamp": "2026-06-01T16:16:36.527047+03:00",
@@ -188,13 +206,12 @@ Request received:
   "event": "request_received",
   "request_id": "3df4888f",
   "url": "https://youtube.com/watch?v=abc",
-  "platform": "youtube",
   "user": {"id": 123, "name": "John", "username": "john"},
   "chat": {"id": -100, "name": "Group", "type": "group"}
 }
 ```
 
-Request completed:
+Request completed (in `requests.jsonl`):
 ```json
 {
   "timestamp": "2026-06-01T16:16:39.195279+03:00",
@@ -207,22 +224,23 @@ Request completed:
   "duration_ms": 2668,
   "success": true,
   "content_type": "video",
-  "file_size_mb": 45.2
+  "file_size_mb": 45.2,
+  "user": {"id": 123, "name": "John", "username": "john"},
+  "chat": {"id": -100, "name": "Group", "type": "group"}
 }
 ```
 
-Request failed:
+Reply-to-retry uses `"event": "reply_to_retry"` and `"message": "Reply to retry received/completed"`.
+
+Detail log (in `request-details.jsonl`):
 ```json
 {
-  "timestamp": "2026-06-01T16:16:35.123456+03:00",
-  "level": "ERROR",
-  "message": "Request failed: yt-dlp timeout",
-  "event": "request_failed",
-  "request_id": "a1b2c3d4",
+  "timestamp": "2026-06-01T16:16:37.123456+03:00",
+  "level": "INFO",
+  "message": "download_video: running yt-dlp",
   "url": "https://youtube.com/watch?v=abc",
-  "platform": "youtube",
-  "error": "yt-dlp timeout",
-  "error_type": "TimeoutError"
+  "request_id": "3df4888f",
+  "platform": "youtube"
 }
 ```
 
@@ -236,15 +254,15 @@ Request failed:
 
 ### File Rotation
 
-- `logs/requests.dev.jsonl` - Development mode (10MB, 5 backups)
-- `logs/requests.jsonl` - Production mode (10MB, 5 backups)
+- `logs/requests.dev.jsonl` / `logs/requests.jsonl` - Request lifecycle (10MB, 5 backups)
+- `logs/request-details.dev.jsonl` / `logs/request-details.jsonl` - Download steps (10MB, 5 backups)
+- `logs/service.dev.jsonl` / `logs/service.jsonl` - Bot events (10MB, 5 backups)
 
 ### Example Queries
 
 ```bash
-# All YouTube requests (adjust file name based on MODE)
+# All YouTube requests
 cat logs/requests.jsonl | jq 'select(.platform == "youtube")'
-cat logs/requests.dev.jsonl | jq 'select(.platform == "youtube")'
 
 # Failed requests
 cat logs/requests.jsonl | jq 'select(.event == "request_failed")'
@@ -252,8 +270,15 @@ cat logs/requests.jsonl | jq 'select(.event == "request_failed")'
 # Slow downloads (>5 seconds)
 cat logs/requests.jsonl | jq 'select(.event == "request_completed" and .duration_ms > 5000)'
 
-# Request lifecycle for a specific request_id
+# Request lifecycle for a specific request_id (across both files)
 cat logs/requests.jsonl | jq 'select(.request_id == "3df4888f")'
+cat logs/request-details.jsonl | jq 'select(.request_id == "3df4888f")'
+
+# Reply-to-retry requests
+cat logs/requests.jsonl | jq 'select(.event == "reply_to_retry")'
+
+# Bot startup events
+cat logs/service.jsonl | jq 'select(.event == "bot_started" or .message == "Bot started")'
 ```
 
 ## Why Subprocess (not Python import)?
@@ -292,3 +317,22 @@ docker compose exec bot bash     # Shell into running container
 ```
 
 For detailed deployment notes (hostnames, paths, secrets), see `docs/deployment-private.md` (gitignored).
+
+## Development Workflow
+
+Two separate bot instances run in parallel for development and production:
+
+| | Dev Bot | Prod Bot |
+|---|---|---|
+| **Bot** | `@mememediasavertestbot` | `@mememediasaverbot` |
+| **Runs on** | Local machine (Docker) | Orange Pi 3B |
+| **Code** | Latest local `main` | Latest `origin/main` |
+| **Log file** | `requests.dev.jsonl` (MODE=development) | `requests.jsonl` (MODE=production) |
+
+Both bots share the same group chats and test topics. This lets you test changes locally before pushing to production — send the same URL to both bots and compare behavior.
+
+**Typical workflow:**
+1. Make changes locally, run `python -m pytest tests/ -v`
+2. Rebuild dev bot: `docker compose up -d --build`
+3. Test in shared group — both bots receive the same messages
+4. If dev bot works correctly, push and deploy to prod

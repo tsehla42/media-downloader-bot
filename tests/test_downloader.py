@@ -1,7 +1,7 @@
 import json
 import sys
 from unittest.mock import patch, MagicMock
-from downloader import get_metadata, download_video, download_audio, download_gallery_dl_images, _find_gallery_dl
+from downloader import get_metadata, download_video, download_audio, download_gallery_dl_images, download_gallery_dl_video, _find_gallery_dl
 
 SAMPLE_METADATA = {
     "id": "abc123",
@@ -164,3 +164,71 @@ def test_find_gallery_dl_uses_venv_fallback():
          patch("downloader.os.access", return_value=True):
         result = _find_gallery_dl()
         assert result == "/home/user/.venv/bin/gallery-dl"
+
+
+def test_download_gallery_dl_video_calls_gallery_dl():
+    with patch("downloader.subprocess.run") as mock_run, \
+         patch("downloader._find_gallery_dl", return_value="/usr/bin/gallery-dl"), \
+         patch("downloader.glob.glob", side_effect=[
+             [],  # *.mp4
+             ["/tmp/test_output/video.webm"],  # *.webm
+             [],  # *.mkv
+             [],  # *.mov
+         ]), \
+         patch("downloader.os.path.getsize", return_value=1024*1024):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="",
+            stderr=""
+        )
+        with patch("downloader.os.makedirs"):
+            result = download_gallery_dl_video(
+                "https://example.com/post",
+                "/tmp/test_output",
+            )
+            assert result == "/tmp/test_output/video.webm"
+            call_args = mock_run.call_args[0][0]
+            assert "gallery-dl" in call_args[0]
+            assert "-d" in call_args
+
+
+def test_download_gallery_dl_video_returns_none_on_failure():
+    with patch("downloader.subprocess.run") as mock_run, \
+         patch("downloader._find_gallery_dl", return_value="/usr/bin/gallery-dl"):
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="ERROR: Unsupported URL"
+        )
+        with patch("downloader.os.makedirs"):
+            result = download_gallery_dl_video(
+                "https://example.com/unknown",
+                "/tmp/test_output",
+            )
+            assert result is None
+
+
+def test_download_gallery_dl_video_returns_none_when_not_installed():
+    with patch("downloader._find_gallery_dl", return_value=None):
+        result = download_gallery_dl_video(
+            "https://example.com/post",
+            "/tmp/test_output",
+        )
+        assert result is None
+
+
+def test_download_gallery_dl_video_returns_none_when_no_videos_found():
+    with patch("downloader.subprocess.run") as mock_run, \
+         patch("downloader._find_gallery_dl", return_value="/usr/bin/gallery-dl"), \
+         patch("downloader.glob.glob", return_value=[]):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="",
+            stderr=""
+        )
+        with patch("downloader.os.makedirs"):
+            result = download_gallery_dl_video(
+                "https://example.com/image-only",
+                "/tmp/test_output",
+            )
+            assert result is None
