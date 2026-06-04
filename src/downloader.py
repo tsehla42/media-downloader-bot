@@ -1,6 +1,5 @@
 import glob
 import json
-import logging
 import os
 import re
 import subprocess
@@ -8,9 +7,20 @@ import shutil
 import sys
 import tempfile
 
-logger = logging.getLogger(__name__)
+from logging_config import details_logger as logger, get_current_request_id
 
 MAX_FILE_SIZE_MB = 50
+
+
+def _log_extra(url: str, platform: str = "") -> dict:
+    """Build extra fields for structured detail logging."""
+    extra = {"url": url}
+    request_id = get_current_request_id()
+    if request_id:
+        extra["request_id"] = request_id
+    if platform:
+        extra["platform"] = platform
+    return extra
 
 
 def _find_ytdlp() -> str:
@@ -63,12 +73,13 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     """Download video, retrying with lower quality if too large."""
     ytdlp = _find_ytdlp()
     max_bytes = max_size_mb * 1024 * 1024
+    extra = _log_extra(url, platform)
 
     extra_args = []
     if platform == "tiktok":
         extra_args.extend(["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"])
 
-    logger.info("download_video: running yt-dlp for %s", url)
+    logger.info("download_video: running yt-dlp", extra=extra)
     result = subprocess.run(
         [
             ytdlp,
@@ -84,10 +95,10 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     )
 
     if result.returncode == 0:
-        logger.info("download_video: yt-dlp ok for %s", url)
+        logger.info("download_video: yt-dlp ok", extra=extra)
         return True
 
-    logger.info("download_video: retrying with lower quality for %s", url)
+    logger.info("download_video: retrying with lower quality", extra=extra)
 
     result = subprocess.run(
         [
@@ -103,16 +114,17 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     )
 
     if result.returncode != 0:
-        logger.warning("download_video: yt-dlp failed (code %d): %s", result.returncode, result.stderr[:500])
+        logger.warning("download_video: yt-dlp failed (code %d)", result.returncode, extra=extra)
     else:
-        logger.info("download_video: yt-dlp ok (fallback) for %s", url)
+        logger.info("download_video: yt-dlp ok (fallback)", extra=extra)
     return result.returncode == 0
 
 
 def download_audio(url: str, output_path: str) -> bool:
     """Extract audio as MP3."""
     ytdlp = _find_ytdlp()
-    logger.info("download_audio: running yt-dlp for %s", url)
+    extra = _log_extra(url)
+    logger.info("download_audio: running yt-dlp", extra=extra)
     result = subprocess.run(
         [
             ytdlp,
@@ -127,9 +139,9 @@ def download_audio(url: str, output_path: str) -> bool:
         timeout=300,
     )
     if result.returncode != 0:
-        logger.warning("download_audio: yt-dlp failed (code %d): %s", result.returncode, result.stderr[:500])
+        logger.warning("download_audio: yt-dlp failed (code %d)", result.returncode, extra=extra)
     else:
-        logger.info("download_audio: yt-dlp ok for %s", url)
+        logger.info("download_audio: yt-dlp ok", extra=extra)
     return result.returncode == 0
 
 
@@ -187,6 +199,7 @@ def download_gallery_dl_images(url: str, output_dir: str, cookies: str = "") -> 
         cmd.extend(["--cookies", cookies])
     cmd.append(url)
 
+    extra = _log_extra(url)
     result = subprocess.run(
         cmd,
         capture_output=True,
@@ -195,7 +208,7 @@ def download_gallery_dl_images(url: str, output_dir: str, cookies: str = "") -> 
     )
 
     if result.returncode != 0:
-        logger.warning("gallery-dl: failed (code %d): %s", result.returncode, result.stderr[:200])
+        logger.warning("gallery-dl: failed (code %d)", result.returncode, extra=extra)
         return []
 
     images = sorted(
@@ -205,3 +218,52 @@ def download_gallery_dl_images(url: str, output_dir: str, cookies: str = "") -> 
         + glob.glob(f"{output_dir}/**/*.webp", recursive=True)
     )
     return images
+
+
+def download_gallery_dl_video(url: str, output_dir: str) -> str | None:
+    """Download video using gallery-dl.
+
+    Args:
+        url: The URL to download from.
+        output_dir: Directory to download into (gallery-dl creates subdirs).
+
+    Returns:
+        Downloaded video file path, or None on failure.
+    """
+    gd_path = _find_gallery_dl()
+    if not gd_path:
+        return None
+
+    os.makedirs(output_dir, exist_ok=True)
+    output_dir = os.path.abspath(output_dir)
+
+    cmd = [gd_path, "-d", output_dir, url]
+    extra = _log_extra(url)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("gallery-dl video: timed out after 60s", extra=extra)
+        return None
+
+    if result.returncode != 0:
+        logger.warning("gallery-dl video: failed (code %d)", result.returncode, extra=extra)
+        return None
+
+    # Find downloaded video files
+    video_extensions = ["*.mp4", "*.webm", "*.mkv", "*.mov"]
+    videos = []
+    for ext in video_extensions:
+        videos.extend(glob.glob(f"{output_dir}/**/{ext}", recursive=True))
+
+    if not videos:
+        logger.warning("gallery-dl video: no video files found in %s", output_dir, extra=extra)
+        return None
+
+    # Return the largest video found
+    return max(videos, key=os.path.getsize)

@@ -1,19 +1,19 @@
 """TikTok download logic."""
 
-import logging
 import os
 import uuid
 
 from config import DOWNLOAD_DIR, MAX_FILE_SIZE
-from downloader import download_video, download_gallery_dl_images
+from downloader import download_video, download_gallery_dl_images, get_metadata
 from telegram_utils import send_images
 from utils import cleanup_file, cleanup_dir
+from logging_config import details_logger as _log
 
-_log = logging.getLogger(__name__)
+IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 
 
 async def handle_tiktok(update, context, url: str) -> bool:
-    """Handle TikTok URL: try video download first, fallback to gallery-dl for photos.
+    """Handle TikTok URL: check metadata for photo posts, fallback to gallery-dl.
 
     Returns True if content was sent successfully, False otherwise.
     """
@@ -21,7 +21,27 @@ async def handle_tiktok(update, context, url: str) -> bool:
     base = None
 
     try:
-        # Try video download first
+        # Best-effort: check metadata to detect photo posts early
+        metadata = get_metadata(url)
+        if metadata:
+            ext = (metadata.get("ext") or "").lower()
+            if ext in IMAGE_EXTENSIONS:
+                _log.info("tiktok: metadata indicates photo post (ext=%s), trying gallery-dl", ext)
+                tmp_id = uuid.uuid4().hex[:8]
+                out_dir = os.path.join(DOWNLOAD_DIR, tmp_id)
+                os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+                try:
+                    images = download_gallery_dl_images(url, out_dir, "")
+                    if images:
+                        total_size = await send_images(update.message, images, reply_params)
+                        context.user_data["_content_type"] = "image"
+                        context.user_data["_file_size_mb"] = round(total_size / (1024 * 1024), 2) if total_size > 0 else None
+                        context.user_data["_request_success"] = True
+                        return True
+                finally:
+                    cleanup_dir(out_dir)
+
+        # Try video download
         tmp_id = uuid.uuid4().hex[:8]
         output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
         base = os.path.join(DOWNLOAD_DIR, tmp_id)

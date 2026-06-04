@@ -204,3 +204,58 @@ async def test_download_and_send_tiktok_handle_fails_shows_error():
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args[0][0]
     assert "Could not fetch post" in text
+
+
+# --- Metadata check tests ---
+
+
+@pytest.mark.asyncio
+async def test_handle_tiktok_skips_video_for_photo_post(update, context):
+    """handle_tiktok skips video download when metadata indicates photo post."""
+    metadata = {"ext": "jpg", "title": "photo post"}
+
+    with patch("platforms.tiktok.get_metadata", return_value=metadata), \
+         patch("platforms.tiktok.download_video") as mock_video, \
+         patch("platforms.tiktok.download_gallery_dl_images", return_value=["/tmp/tt.jpg"]), \
+         patch("platforms.tiktok.send_images", new_callable=AsyncMock, return_value=500000), \
+         patch("platforms.tiktok.cleanup_dir"), \
+         patch("platforms.tiktok.cleanup_file"):
+        result = await handle_tiktok(update, context, "https://tiktok.com/@user/photo/123")
+
+    assert result is True
+    mock_video.assert_not_called()
+    assert context.user_data["_content_type"] == "image"
+
+
+@pytest.mark.asyncio
+async def test_handle_tiktok_tries_video_when_metadata_fails(update, context):
+    """handle_tiktok falls back to video download when metadata fetch fails."""
+    update.message.reply_video = AsyncMock()
+    with patch("platforms.tiktok.get_metadata", return_value=None), \
+         patch("platforms.tiktok.download_video", return_value=True), \
+         patch("platforms.tiktok.os.path.isfile", return_value=True), \
+         patch("builtins.open", MagicMock()), \
+         patch("platforms.tiktok.cleanup_dir"), \
+         patch("platforms.tiktok.cleanup_file"):
+        result = await handle_tiktok(update, context, "https://tiktok.com/@user/video/123")
+
+    assert result is True
+    assert context.user_data["_content_type"] == "video"
+
+
+@pytest.mark.asyncio
+async def test_handle_tiktok_tries_video_for_unknown_ext(update, context):
+    """handle_tiktok tries video download when metadata ext is not a known image format."""
+    metadata = {"ext": "mp4", "title": "video post"}
+    update.message.reply_video = AsyncMock()
+
+    with patch("platforms.tiktok.get_metadata", return_value=metadata), \
+         patch("platforms.tiktok.download_video", return_value=True), \
+         patch("platforms.tiktok.os.path.isfile", return_value=True), \
+         patch("builtins.open", MagicMock()), \
+         patch("platforms.tiktok.cleanup_dir"), \
+         patch("platforms.tiktok.cleanup_file"):
+        result = await handle_tiktok(update, context, "https://tiktok.com/@user/video/123")
+
+    assert result is True
+    assert context.user_data["_content_type"] == "video"

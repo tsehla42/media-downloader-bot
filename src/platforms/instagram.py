@@ -1,6 +1,5 @@
 """Instagram download logic."""
 
-import logging
 import os
 import uuid
 
@@ -9,7 +8,7 @@ from downloader import download_video, download_gallery_dl_images
 from telegram_utils import send_images
 from utils import cleanup_file, cleanup_dir
 
-_log = logging.getLogger(__name__)
+from logging_config import details_logger as _log
 
 
 async def handle_instagram(update, context, url: str) -> bool:

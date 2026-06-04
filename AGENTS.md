@@ -4,9 +4,9 @@ Entry point for AI agents working on this project. Start here to understand the 
 
 ## What This Project Is
 
-A Telegram bot that downloads videos and images from YouTube, TikTok, and Instagram. Users paste a URL, get the media back.
+A Telegram bot that downloads videos and images from YouTube, TikTok, and Instagram. Users paste a URL, get the media back. Also silently attempts gallery-dl for 100+ other services (Pinterest, Pixiv, X, Reddit, DeviantArt, etc.) — works as a best-effort fallback.
 
-**Tech stack:** Python 3.12+, python-telegram-bot, yt-dlp (subprocess), gallery-dl (Instagram images with cookies), pytest
+**Tech stack:** Python 3.12+, python-telegram-bot, yt-dlp (subprocess), gallery-dl (subprocess), pytest
 
 ## Project Structure
 
@@ -20,7 +20,7 @@ media-downloader-bot/
 │   ├── auth.py         # Authorization checks (is_authorized, is_group_chat, allowlists)
 │   ├── commands.py     # User commands: /start, /help, /caption
 │   ├── telegram_utils.py # Telegram helpers: typing_indicator, send_images
-│   ├── logging_config.py # Structured JSON logging (JSONFormatter, with_request_logging decorator)
+│   ├── logging_config.py # Structured JSON logging with three-file split (requests, details, service)
 │   ├── platforms/       # Platform-specific download logic
 │   │   ├── __init__.py # detect_platform(), SUPPORTED_PLATFORMS dict
 │   │   ├── youtube.py  # YouTube/YT Music download + format picker callback
@@ -62,9 +62,9 @@ media-downloader-bot/
 | `src/platforms/tiktok.py` | downloader, telegram_utils | TikTok: `handle_tiktok()` with gallery-dl fallback for photo posts |
 | `src/platforms/instagram.py` | downloader, telegram_utils | Instagram: `handle_instagram()` with gallery-dl fallback and cookies |
 | `src/utils.py` | nothing | URL validation, file cleanup |
-| `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()`, `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()` |
-| `src/logging_config.py` | config | Structured JSON logging: JSONFormatter, setup_logging, with_request_logging decorator |
-| `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader | Thin orchestrator: `handle_url()`, `handle_reply_to_url()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` |
+| `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()`, `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()` |
+| `src/logging_config.py` | config | Structured JSON logging: three-file split (requests/details/service), JSONFormatter, filter-based routing, with_request_logging decorator, contextvars for request_id |
+| `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader | Thin orchestrator: `handle_url()` (includes reply-to-retry and gallery-dl fallback), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` |
 | `src/bot.py` | config, handlers, commands, platforms.youtube, logging_config | Entry point, wires everything together, initializes logging, global error handler |
 
 ## Data Flow
@@ -72,19 +72,26 @@ media-downloader-bot/
 1. User sends URL or `/audio` command -> `handlers.py` routes to appropriate handler
 2. `/audio` → `audio_command()` → `download_audio()` → `reply_audio()` (logged via `@with_request_logging`)
 3. Regular URL → `handle_url()` detects group or P2P chat via `is_group_chat()`
-4. In groups: silently ignore unsupported URLs, only process supported ones
+4. URLs split into `supported_urls` (YT/TT/IG) and `unsupported_urls` (everything else)
 5. YouTube URLs: metadata fetched silently (no typing indicator), size checked against 50MB limit
-6. Reply-to-retry: user replies to message with URL and mentions bot → `handle_reply_to_url()` retries download
+6. Reply-to-retry: user replies to message with URL and mentions bot → handled inside `handle_url()` (extracts URL from replied message, retries download)
 7. `handlers.py` detects platform via `platforms.detect_platform()`
 8. Delegates to platform-specific handler:
    - YouTube → `platforms.youtube.handle_youtube()` or `handle_ytmusic()`
    - TikTok → `platforms.tiktok.handle_tiktok()` (with gallery-dl fallback)
    - Instagram → `platforms.instagram.handle_instagram()` (with gallery-dl fallback)
-9. Platform handlers fetch metadata, download, and send to Telegram
+9. Unsupported URLs → `handle_gallery_dl_fallback()`:
+   - Tries `download_gallery_dl_images()` first, then `download_gallery_dl_video()`
+   - If content found, sends to Telegram (silent on success)
+   - If nothing works: silent in groups, "Unsupported platform" in P2P
+   - Sets `platform` in logs from URL domain (e.g. "deviantart", "pinterest")
 10. `@with_request_logging` decorator logs request lifecycle automatically:
-   - `request_received` when handler starts
-   - `request_completed` when handler finishes (success or expected failure)
-   - `request_failed` when handler throws exception
+   - `request_received` when handler starts (in `requests.jsonl`)
+   - `request_completed` when handler finishes (success or expected failure) (in `requests.jsonl`)
+   - `request_failed` when handler throws exception (in `requests.jsonl`)
+   - Reply-to-retry uses `"event": "reply_to_retry"` to differentiate from normal requests
+11. Intermediate download steps (yt-dlp calls, retries, gallery-dl attempts) logged to `request-details.jsonl` via `details_logger`
+12. Bot start/stop, chat membership, new user events logged to `service.jsonl` via `service_logger`
 
 ## Key Design Decisions
 
@@ -93,7 +100,7 @@ media-downloader-bot/
 - **Auto best quality** - Downloads best quality under 50MB Telegram limit, retries with worst on failure.
 - **User allowlist** - ALLOWED_USER_IDS from `allowed_contacts.json` (generated by separate get-contact-ids project). Fallback to .env. Empty = allow all.
 - **Group auto-detect** - Bot silently ignores unsupported URLs in groups. Optional ALLOWED_GROUP_IDS restricts which groups.
-- **Structured logging** - JSON logs for easy querying. MODE determines log file (dev/prod), LOG_OUTPUT controls destinations (console/file/both). Zero external dependencies.
+- **Structured logging** - Three JSON log files: `requests.jsonl` (request lifecycle), `request-details.jsonl` (intermediate download steps), `service.jsonl` (bot events). Filter-based routing by logger name. Zero external dependencies.
 - **Docker deployment** - Multi-stage build with yt-dlp, gallery-dl, and ffmpeg. Persistent logs via volume mount to `./logs/`.
 - **Platform separation** - Each platform (YouTube, TikTok, Instagram) has its own module with isolated download logic.
 
@@ -109,7 +116,7 @@ Never commit `allowed_contacts.json` — it contains user IDs and is generated l
 python -m pytest tests/ -v
 ```
 
-All 167 tests use mocked subprocess calls - no real downloads needed.
+All 209 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 
@@ -130,7 +137,7 @@ docker compose up -d --build
 docker logs -f media-downloader-bot  # Watch logs
 ```
 
-**View persistent logs:** Logs are written to `./logs/` on the host (mounted as volume). Files: `requests.jsonl` (MODE=production), `requests.dev.jsonl` (MODE=development).
+**View persistent logs:** Logs are written to `./logs/` on the host (mounted as volume). Files: `requests.jsonl` (request lifecycle), `request-details.jsonl` (download steps), `service.jsonl` (bot events). Append `.dev.jsonl` for MODE=development.
 
 **Deploy to production:** Read `docs/deploy.md` for the full deployment flow.
 When asked to "update bot" or "deploy", always read `docs/deploy.md` first.
