@@ -84,8 +84,10 @@ def _photo_result(file_id: str) -> dict:
 
 
 def _media_group_result(file_ids: list[str]) -> dict:
-    """Fallback for media groups — not supported in guest mode."""
-    return _text_result("Media groups are not supported in guest mode")
+    """Show first image from a media group (inline results don't support groups)."""
+    if file_ids:
+        return _photo_result(file_ids[0])
+    return _text_result("No images found")
 
 
 class GuestModePoller:
@@ -312,7 +314,7 @@ class GuestModePoller:
             if platform == "instagram":
                 return await self._download_media_result(url, "instagram")
 
-            # Everything else: gallery-dl fallback
+            # Future-proofing: gallery-dl fallback for any unrecognized platform
             return await self._gallery_dl_result(url)
 
         except Exception as e:
@@ -360,7 +362,7 @@ class GuestModePoller:
     async def _download_media_result(self, url: str, platform: str) -> dict:
         """Download TikTok/Instagram content and return appropriate result."""
         output_dir = os.path.join(DOWNLOAD_DIR, f"guest_{uuid.uuid4().hex[:8]}")
-        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
 
         try:
             # Try video download first
@@ -408,7 +410,7 @@ class GuestModePoller:
     async def _gallery_dl_result(self, url: str) -> dict:
         """gallery-dl fallback for unsupported platforms."""
         output_dir = os.path.join(DOWNLOAD_DIR, f"guest_{uuid.uuid4().hex[:8]}")
-        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
 
         try:
             # Try images first
