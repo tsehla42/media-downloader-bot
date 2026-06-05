@@ -67,3 +67,8 @@ MODE = os.environ.get("MODE", "development")
 LOG_OUTPUT = os.environ.get("LOG_OUTPUT", "both")
 LOG_DIR = os.environ.get("LOG_DIR", "logs")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+
+GUEST_MODE_ENABLED = os.environ.get("GUEST_MODE_ENABLED", "false").lower() in ("true", "1", "yes")
+
+# Private channel for guest mode file storage (bot must be admin)
+STORAGE_CHANNEL_ID = os.environ.get("STORAGE_CHANNEL_ID", "")
