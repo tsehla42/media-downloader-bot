@@ -47,13 +47,24 @@ async def post_init(application: Application) -> None:
     service_logger.info("Bot username: @%s", me.username)
 
 
+async def post_shutdown(application: Application) -> None:
+    """Log bot shutdown."""
+    service_logger.info("Bot stopped")
+
+
 def main() -> None:
     """Start the bot."""
     setup_logging()
     # Suppress noisy httpx request logs
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
 
     # Add error handler
     app.add_error_handler(error_handler)
@@ -67,7 +78,10 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, my_chat_member_handler))
 
     service_logger.info("Bot started")
-    app.run_polling(allowed_updates=["message", "callback_query", "my_chat_member"])
+    app.run_polling(
+        allowed_updates=["message", "callback_query", "my_chat_member"],
+        drop_pending_updates=True,
+    )
 
 
 if __name__ == "__main__":
