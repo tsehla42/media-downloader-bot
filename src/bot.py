@@ -20,6 +20,7 @@ from config import BOT_TOKEN
 from handlers import handle_url, audio_command, my_chat_member_handler
 from platforms.youtube import ytmusic_callback
 from commands import start_command, help_command, caption_command
+from guest import GuestModePoller
 
 # Track shutdown reason for logging
 _shutdown_signal = None
@@ -73,6 +74,11 @@ async def post_init(application: Application) -> None:
     await application.bot.set_my_commands(COMMANDS)
     service_logger.info("Bot username: @%s", me.username)
 
+    # Start guest mode unified polling
+    guest_poller = GuestModePoller(BOT_TOKEN, application)
+    guest_poller.start()
+    application.bot_data["guest_poller"] = guest_poller
+
 
 async def post_shutdown(application: Application) -> None:
     """Log bot shutdown."""
@@ -122,10 +128,38 @@ def main() -> None:
     app.add_handler(ChatMemberHandler(my_chat_member_handler, ChatMemberHandler.MY_CHAT_MEMBER))
 
     service_logger.info("Bot started")
-    app.run_polling(
-        allowed_updates=["message", "callback_query", "my_chat_member"],
-        drop_pending_updates=True,
-    )
+
+    # Unified polling — handles both regular and guest_message updates.
+    # GuestModePoller takes over getUpdates and routes:
+    #   - Regular updates → Application.process_update()
+    #   - Guest updates → guest handler
+    # When python-telegram-bot adds Bot API 10.0 support, swap back to:
+    #   app.run_polling(allowed_updates=["message", "guest_message", ...])
+    import asyncio
+
+    async def _run():
+        await app.initialize()
+        await app.start()
+        # Start regular polling via ptb's Updater
+        await app.updater.start_polling(
+            allowed_updates=["message", "callback_query", "my_chat_member"],
+            drop_pending_updates=True,
+        )
+        # Keep running until stopped
+        try:
+            while True:
+                await asyncio.sleep(3600)
+        except (KeyboardInterrupt, SystemExit):
+            pass
+        finally:
+            await app.updater.stop()
+            await app.stop()
+            await app.shutdown()
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":
