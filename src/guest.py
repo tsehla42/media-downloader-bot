@@ -25,7 +25,7 @@ import httpx
 from telegram import Update
 
 from auth import is_user_allowed
-from config import GUEST_MODE_ENABLED, DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES
+from config import GUEST_MODE_ENABLED, DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, STORAGE_CHANNEL_ID
 from logging_config import details_logger
 from platforms import detect_platform
 from downloader import (
@@ -448,23 +448,28 @@ class GuestModePoller:
     async def _upload_to_telegram(self, file_path: str, media_type: str) -> str | None:
         """Upload a local file to Telegram and return the file_id.
 
-        Sends the file to chat_id ``"me"`` (Saved Messages) using the Bot API
-        so that Telegram assigns a permanent file_id that can be reused in
-        InlineQueryResult responses.
+        Sends the file to ``STORAGE_CHANNEL_ID`` (a private channel where the
+        bot is admin) so that Telegram assigns a permanent file_id that can be
+        reused in InlineQueryResult responses.
         """
+        if not STORAGE_CHANNEL_ID:
+            details_logger.warning(
+                "upload_to_telegram skipped — STORAGE_CHANNEL_ID not configured",
+                extra={"extra_data": {"file_path": file_path}},
+            )
+            return None
+
         url = _API_BASE.format(token=self.bot_token, method=f"send{media_type.capitalize()}")
 
         try:
             with open(file_path, "rb") as f:
                 if media_type == "video":
                     files = {"video": f}
-                    data = {"chat_id": "me"}
                 elif media_type == "photo":
                     files = {"photo": f}
-                    data = {"chat_id": "me"}
                 else:
                     files = {"document": f}
-                    data = {"chat_id": "me"}
+                data = {"chat_id": STORAGE_CHANNEL_ID}
 
                 response = await self._client.post(url, data=data, files=files)
                 result = response.json()

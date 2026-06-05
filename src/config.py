@@ -71,4 +71,5 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 GUEST_MODE_ENABLED = os.environ.get("GUEST_MODE_ENABLED", "false").lower() in ("true", "1", "yes")
 
 # Private channel for guest mode file storage (bot must be admin)
+# Create via BotFather or @ChannelBot, then set the channel ID (e.g. -1001234567890)
 STORAGE_CHANNEL_ID = os.environ.get("STORAGE_CHANNEL_ID", "")
