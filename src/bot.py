@@ -129,6 +129,13 @@ def main() -> None:
 
     service_logger.info("Bot started")
 
+    # --- ORIGINAL (commented out — uncomment to revert to standard polling) ---
+    # app.run_polling(
+    #     allowed_updates=["message", "callback_query", "my_chat_member"],
+    #     drop_pending_updates=True,
+    # )
+    # --- END ORIGINAL ---
+
     # Unified polling — handles both regular and guest_message updates.
     # GuestModePoller takes over getUpdates and routes:
     #   - Regular updates → Application.process_update()
