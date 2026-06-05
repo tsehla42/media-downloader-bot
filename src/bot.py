@@ -1,3 +1,4 @@
+import asyncio
 import atexit
 import logging
 import os
@@ -16,7 +17,7 @@ from telegram.ext import (
     filters,
 )
 
-from config import BOT_TOKEN
+from config import BOT_TOKEN, GUEST_MODE_ENABLED
 from handlers import handle_url, audio_command, my_chat_member_handler
 from platforms.youtube import ytmusic_callback
 from commands import start_command, help_command, caption_command
@@ -74,11 +75,6 @@ async def post_init(application: Application) -> None:
     await application.bot.set_my_commands(COMMANDS)
     service_logger.info("Bot username: @%s", me.username)
 
-    # Start guest mode unified polling
-    guest_poller = GuestModePoller(BOT_TOKEN, application)
-    guest_poller.start()
-    application.bot_data["guest_poller"] = guest_poller
-
 
 async def post_shutdown(application: Application) -> None:
     """Log bot shutdown."""
@@ -91,6 +87,34 @@ async def post_shutdown(application: Application) -> None:
         service_logger.info("Bot stopped (signal=%s)", sig_name)
     else:
         service_logger.info("Bot stopped")
+
+
+async def _run_with_guest_mode(app: Application) -> None:
+    """Run with unified polling via GuestModePoller.
+
+    GuestModePoller takes over getUpdates and routes:
+      - Regular updates → Application.process_update()
+      - Guest updates → guest handler
+    """
+    await app.initialize()
+    await app.start()
+
+    # Start GuestModePoller after app is fully started
+    guest_poller = GuestModePoller(BOT_TOKEN, app)
+    guest_poller.start()
+    app.bot_data["guest_poller"] = guest_poller
+
+    # Keep running until stopped
+    try:
+        stop_event = asyncio.Event()
+        await stop_event.wait()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        guest_poller.stop()
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
 
 
 def main() -> None:
@@ -127,46 +151,19 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     app.add_handler(ChatMemberHandler(my_chat_member_handler, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    service_logger.info("Bot started")
+    service_logger.info("Bot started (guest_mode=%s)", GUEST_MODE_ENABLED)
 
-    # --- ORIGINAL (commented out — uncomment to revert to standard polling) ---
-    # app.run_polling(
-    #     allowed_updates=["message", "callback_query", "my_chat_member"],
-    #     drop_pending_updates=True,
-    # )
-    # --- END ORIGINAL ---
-
-    # Unified polling — handles both regular and guest_message updates.
-    # GuestModePoller takes over getUpdates and routes:
-    #   - Regular updates → Application.process_update()
-    #   - Guest updates → guest handler
-    # When python-telegram-bot adds Bot API 10.0 support, swap back to:
-    #   app.run_polling(allowed_updates=["message", "guest_message", ...])
-    import asyncio
-
-    async def _run():
-        await app.initialize()
-        await app.start()
-        # Start regular polling via ptb's Updater
-        await app.updater.start_polling(
+    if GUEST_MODE_ENABLED:
+        # GuestModePoller handles all getUpdates polling
+        asyncio.run(_run_with_guest_mode(app))
+    else:
+        # Standard polling — no guest mode
+        # --- ORIGINAL (commented out — uncomment to revert to standard polling) ---
+        app.run_polling(
             allowed_updates=["message", "callback_query", "my_chat_member"],
             drop_pending_updates=True,
         )
-        # Keep running until stopped
-        try:
-            while True:
-                await asyncio.sleep(3600)
-        except (KeyboardInterrupt, SystemExit):
-            pass
-        finally:
-            await app.updater.stop()
-            await app.stop()
-            await app.shutdown()
-
-    try:
-        asyncio.run(_run())
-    except KeyboardInterrupt:
-        pass
+        # --- END ORIGINAL ---
 
 
 if __name__ == "__main__":
