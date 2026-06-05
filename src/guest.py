@@ -23,7 +23,7 @@ import uuid
 import httpx
 from telegram import Update
 
-from auth import _is_allowed
+from auth import is_user_allowed
 from config import GUEST_MODE_ENABLED
 from logging_config import details_logger
 
@@ -50,12 +50,13 @@ class GuestModePoller:
             initialized but not yet running its own polling loop).
     """
 
-    def __init__(self, bot_token: str, application) -> None:
+    def __init__(self, bot_token: str, application: "Application") -> None:
         self.bot_token = bot_token
         self.app = application
         self._offset: int = 0
         self._task: asyncio.Task | None = None
         self._running = False
+        self._client: httpx.AsyncClient | None = None
 
     def start(self) -> None:
         """Launch the polling loop as an asyncio task.
@@ -71,6 +72,7 @@ class GuestModePoller:
             logger.warning("GuestModePoller already running")
             return
 
+        self._client = httpx.AsyncClient(timeout=_LONG_POLL_TIMEOUT + 10)
         self._running = True
         self._task = asyncio.create_task(self._poll_loop())
         logger.info("GuestModePoller started")
@@ -83,7 +85,10 @@ class GuestModePoller:
         self._running = False
         if self._task and not self._task.done():
             self._task.cancel()
-            logger.info("GuestModePoller stopped")
+        if self._client:
+            asyncio.create_task(self._client.aclose())
+            self._client = None
+        logger.info("GuestModePoller stopped")
 
     async def _poll_loop(self) -> None:
         """Long-poll Telegram for updates and route them.
@@ -107,10 +112,9 @@ class GuestModePoller:
                     ),
                 }
 
-                async with httpx.AsyncClient(timeout=_LONG_POLL_TIMEOUT + 10) as client:
-                    response = await client.get(url, params=params)
-                    response.raise_for_status()
-                    data = response.json()
+                response = await self._client.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
 
                 if not data.get("ok"):
                     logger.error("getUpdates returned non-ok: %s", data)
@@ -126,6 +130,7 @@ class GuestModePoller:
                         continue
 
                     # Route all other updates to python-telegram-bot
+                    logger.debug("Forwarding regular update %s", update_raw.get("update_id"))
                     update = Update.de_json(update_raw, self.app.bot)
                     if update:
                         await self.app.process_update(update)
@@ -166,7 +171,7 @@ class GuestModePoller:
             },
         )
 
-        if not _is_allowed(caller_id):
+        if not is_user_allowed(caller_id):
             details_logger.info(
                 "guest_message unauthorized",
                 extra={

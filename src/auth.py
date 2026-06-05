@@ -41,6 +41,11 @@ def _is_allowed(user_id: int) -> bool:
     return user_id in ALLOWED_USER_IDS
 
 
+def is_user_allowed(user_id: int) -> bool:
+    """Public check if a user ID is authorized. Used by guest mode handler."""
+    return _is_allowed(user_id)
+
+
 def _is_allowed_group(chat_id: int) -> bool:
     """Check if group is in the allowlist. Empty allowlist = allow all."""
     if not ALLOWED_GROUP_IDS:
