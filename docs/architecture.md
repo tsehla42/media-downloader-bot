@@ -82,7 +82,7 @@ Wraps yt-dlp and gallery-dl binary calls via subprocess:
 
 ### handlers.py
 Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloader:
-- `my_chat_member_handler(update, context)` - Handles bot membership changes (added, removed, promoted, demoted)
+- `my_chat_member_handler(update, context)` - Handles bot membership changes (added, removed, promoted, demoted, blocked). Registered via `ChatMemberHandler` with `MY_CHAT_MEMBER` filter. Logs admin rights with delta when bot is added/removed as admin or rights change. Detects user-blocks-bot in private chats (status "kicked" + chat type "private").
 - `audio_command(update, context)` - Download as MP3 (registered as CommandHandler)
 - `_download_and_send(update, context, url, silent, reply_to_message_id)` - Orchestrates download with YouTube size check and error suppression
 - `handle_gallery_dl_fallback(update, context, url)` - Tries gallery-dl for unsupported platforms (images then video), silent on failure
@@ -98,7 +98,8 @@ Structured JSON logging with zero external dependencies:
 - `setup_logging()` - Creates three `RotatingFileHandler` instances with filters + console handler
 - `with_request_logging()` - Decorator that wraps handlers and logs request lifecycle
 - `log_request_received()` / `log_request_completed()` / `log_request_failed()` - Log request events (use `requests_logger`)
-- `log_new_user()` / `log_bot_added_to_chat()` / `log_bot_removed_from_chat()` / `log_bot_status_changed()` - System events (use `service_logger`)
+- `log_new_user()` / `log_bot_added_to_chat()` / `log_bot_removed_from_chat()` / `log_admin_rights_changed()` / `log_user_blocked_bot()` - System events (use `service_logger`)
+- `_extract_admin_rights(member)` - Extracts admin rights dict from ChatMemberAdministrator
 
 ### bot.py
 Entry point:
@@ -232,6 +233,20 @@ Request completed (in `requests.jsonl`):
 
 Reply-to-retry uses `"event": "reply_to_retry"` and `"message": "Reply to retry received/completed"`.
 
+Service event (in `service.jsonl`):
+```json
+{
+  "timestamp": "2026-06-01T16:16:36.527047+03:00",
+  "level": "INFO",
+  "message": "Bot added to chat",
+  "event": "bot_added_to_chat",
+  "chat": {"id": -100789, "name": "Test Group", "type": "supergroup"},
+  "added_by": {"id": 123456, "name": "Admin", "username": "admin"}
+}
+```
+
+Service events: `bot_started`, `bot_stopped`, `new_user_started`, `bot_added_to_chat`, `bot_removed_from_chat`, `bot_added_as_admin`, `bot_admin_rights_changed`, `bot_removed_as_admin`, `user_blocked_bot`.
+
 Detail log (in `request-details.jsonl`):
 ```json
 {
@@ -279,6 +294,18 @@ cat logs/requests.jsonl | jq 'select(.event == "reply_to_retry")'
 
 # Bot startup events
 cat logs/service.jsonl | jq 'select(.event == "bot_started" or .message == "Bot started")'
+
+# All chat membership changes
+cat logs/service.jsonl | jq 'select(.event | test("bot_added_to_chat|bot_removed_from_chat|bot_status_changed"))'
+
+# User blocks bot
+cat logs/service.jsonl | jq 'select(.event == "user_blocked_bot")'
+
+# Admin rights changes
+cat logs/service.jsonl | jq 'select(.event | test("bot_added_as_admin|bot_admin_rights_changed|bot_removed_as_admin"))'
+
+# Bot added as admin to channel
+cat logs/service.jsonl | jq 'select(.event == "bot_added_as_admin" and .chat.type == "channel")'
 ```
 
 ## Why Subprocess (not Python import)?

@@ -302,6 +302,139 @@ def log_bot_status_changed(chat, user, old_status, new_status) -> None:
     service_logger.info("bot_status_changed", extra={"extra_data": log_data})
 
 
+def _extract_admin_rights(member) -> dict | None:
+    """Extract admin rights from a ChatMemberAdministrator, or None if not admin.
+
+    Only includes fields with concrete values (bool, str, int, None).
+    Skips auto-created proxy objects (e.g. MagicMock) that have no real value.
+    """
+    if not hasattr(member, "status") or member.status != "administrator":
+        return None
+
+    _FIELDS = (
+        "can_manage_chat", "can_delete_messages", "can_manage_video_chats",
+        "can_restrict_members", "can_promote_members", "can_change_info",
+        "can_invite_users", "can_post_messages", "can_edit_messages",
+        "can_pin_messages", "can_manage_topics", "custom_title",
+    )
+    rights = {}
+    for field in _FIELDS:
+        val = getattr(member, field, None)
+        # Only include concrete values (bool, str, int, None)
+        if val is None or isinstance(val, (bool, str, int)):
+            rights[field] = val
+    return rights
+
+
+def log_admin_rights_changed(chat, user, old_rights, new_rights, event) -> None:
+    """Log admin rights changes (added as admin, rights changed).
+
+    Args:
+        chat: The chat object.
+        user: The user who made the change.
+        old_rights: Previous admin rights dict (None if bot was not admin before).
+        new_rights: New admin rights dict.
+        event: One of "bot_added_as_admin", "bot_admin_rights_changed".
+    """
+    # Compute delta — only include fields that actually changed
+    added = {}
+    removed = {}
+    all_keys = set((old_rights or {}).keys()) | set((new_rights or {}).keys())
+    for key in all_keys:
+        old_val = (old_rights or {}).get(key)
+        new_val = (new_rights or {}).get(key)
+        if old_val != new_val:
+            if new_val and not old_val:
+                added[key] = new_val
+            elif old_val and not new_val:
+                removed[key] = old_val
+            else:
+                added[key] = new_val
+                removed[key] = old_val
+
+    log_data = {
+        "event": event,
+        "message": event.replace("_", " "),
+        "chat": {
+            "id": chat.id,
+            "name": getattr(chat, "title", None),
+            "type": getattr(chat, "type", None),
+        },
+        "user": {
+            "id": user.id,
+            "name": getattr(user, "first_name", None),
+            "username": getattr(user, "username", None),
+        },
+    }
+    if new_rights:
+        log_data["new_admin_rights"] = new_rights
+    if added:
+        log_data["rights_added"] = added
+    if removed:
+        log_data["rights_removed"] = removed
+
+    service_logger.info(event, extra={"extra_data": log_data})
+
+
+def log_custom_title_changed(chat, user, old_title, new_title) -> None:
+    """Log when bot's admin custom title changes."""
+    log_data = {
+        "event": "bot_custom_title_changed",
+        "message": "Bot custom title changed",
+        "chat": {
+            "id": chat.id,
+            "name": getattr(chat, "title", None),
+            "type": getattr(chat, "type", None),
+        },
+        "user": {
+            "id": user.id,
+            "name": getattr(user, "first_name", None),
+            "username": getattr(user, "username", None),
+        },
+        "old_custom_title": old_title,
+        "new_custom_title": new_title,
+    }
+    service_logger.info("bot_custom_title_changed", extra={"extra_data": log_data})
+
+
+def log_user_blocked_bot(chat, user) -> None:
+    """Log when a user blocks the bot in a private chat."""
+    log_data = {
+        "event": "user_blocked_bot",
+        "message": "User blocked bot",
+        "chat": {
+            "id": chat.id,
+            "name": getattr(chat, "title", None),
+            "type": getattr(chat, "type", None),
+        },
+        "user": {
+            "id": user.id,
+            "name": getattr(user, "first_name", None),
+            "username": getattr(user, "username", None),
+        },
+    }
+    service_logger.info("user_blocked_bot", extra={"extra_data": log_data})
+
+
+def log_user_unblocked_bot(chat, user) -> None:
+    """Log when a user unblocks the bot in a private chat."""
+    log_data = {
+        "event": "user_unblocked_bot",
+        "message": "User unblocked bot",
+        "chat": {
+            "id": chat.id,
+            "name": getattr(chat, "title", None),
+            "type": getattr(chat, "type", None),
+        },
+        "user": {
+            "id": user.id,
+            "name": getattr(user, "first_name", None),
+            "username": getattr(user, "username", None),
+        },
+    }
+    service_logger.info("user_unblocked_bot", extra={"extra_data": log_data})
+
+
 def with_request_logging(handler):
     """Decorator that adds request_received/completed/failed logging to handlers."""
     @functools.wraps(handler)

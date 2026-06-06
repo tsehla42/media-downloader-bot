@@ -598,7 +598,7 @@ async def test_my_chat_member_handler_bot_removed():
 
 @pytest.mark.asyncio
 async def test_my_chat_member_handler_bot_promoted():
-    """Handler logs when bot is promoted to admin."""
+    """Handler logs when bot is promoted to admin with initial rights."""
     update = MagicMock()
     update.my_chat_member = MagicMock()
     update.my_chat_member.chat = MagicMock()
@@ -609,6 +609,13 @@ async def test_my_chat_member_handler_bot_promoted():
     update.my_chat_member.old_chat_member.status = "member"
     update.my_chat_member.new_chat_member = MagicMock()
     update.my_chat_member.new_chat_member.status = "administrator"
+    update.my_chat_member.new_chat_member.can_manage_chat = True
+    update.my_chat_member.new_chat_member.can_delete_messages = False
+    update.my_chat_member.new_chat_member.can_manage_video_chats = True
+    update.my_chat_member.new_chat_member.can_restrict_members = True
+    update.my_chat_member.new_chat_member.can_promote_members = False
+    update.my_chat_member.new_chat_member.can_change_info = True
+    update.my_chat_member.new_chat_member.can_invite_users = True
     update.my_chat_member.from_user = MagicMock()
     update.my_chat_member.from_user.id = 123456
     update.my_chat_member.from_user.first_name = "Admin"
@@ -616,12 +623,16 @@ async def test_my_chat_member_handler_bot_promoted():
 
     context = MagicMock()
 
-    with patch("handlers.log_bot_status_changed") as mock_log:
+    with patch("handlers.log_admin_rights_changed") as mock_log:
         await my_chat_member_handler(update, context)
         mock_log.assert_called_once()
         call_args = mock_log.call_args
-        assert call_args[0][2] == "member"
-        assert call_args[0][3] == "administrator"
+        assert call_args[0][2] is None  # old_rights (was not admin)
+        assert call_args[0][4] == "bot_added_as_admin"
+        # Verify new rights were extracted
+        new_rights = call_args[0][3]
+        assert new_rights["can_manage_chat"] is True
+        assert new_rights["can_delete_messages"] is False
 
 
 @pytest.mark.asyncio
@@ -635,6 +646,13 @@ async def test_my_chat_member_handler_bot_demoted():
     update.my_chat_member.chat.type = "supergroup"
     update.my_chat_member.old_chat_member = MagicMock()
     update.my_chat_member.old_chat_member.status = "administrator"
+    update.my_chat_member.old_chat_member.can_manage_chat = True
+    update.my_chat_member.old_chat_member.can_delete_messages = True
+    update.my_chat_member.old_chat_member.can_manage_video_chats = True
+    update.my_chat_member.old_chat_member.can_restrict_members = True
+    update.my_chat_member.old_chat_member.can_promote_members = False
+    update.my_chat_member.old_chat_member.can_change_info = True
+    update.my_chat_member.old_chat_member.can_invite_users = True
     update.my_chat_member.new_chat_member = MagicMock()
     update.my_chat_member.new_chat_member.status = "member"
     update.my_chat_member.from_user = MagicMock()
@@ -1340,3 +1358,339 @@ async def test_handle_url_mixed_supported_and_unsupported(update, context):
     mock_fallback.assert_called_once()
     # No error message
     update.message.reply_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_user_blocked_bot():
+    """Handler logs user_blocked_bot when user blocks bot in private chat."""
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = 123456
+    update.my_chat_member.chat.title = None
+    update.my_chat_member.chat.type = "private"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "left"
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "kicked"
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 99999
+    update.my_chat_member.from_user.first_name = "Angry"
+    update.my_chat_member.from_user.username = "angry_user"
+
+    context = MagicMock()
+
+    with patch("handlers.log_user_blocked_bot") as mock_block_log, \
+         patch("handlers.log_bot_added_to_chat") as mock_add_log, \
+         patch("handlers.log_bot_removed_from_chat") as mock_remove_log:
+        await my_chat_member_handler(update, context)
+        mock_block_log.assert_called_once()
+        mock_add_log.assert_not_called()
+        mock_remove_log.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_admin_rights_changed():
+    """Handler logs when admin rights are changed (same status, different rights)."""
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = -100789
+    update.my_chat_member.chat.title = "Test Channel"
+    update.my_chat_member.chat.type = "channel"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "administrator"
+    update.my_chat_member.old_chat_member.can_manage_chat = True
+    update.my_chat_member.old_chat_member.can_delete_messages = False
+    update.my_chat_member.old_chat_member.can_post_messages = True
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "administrator"
+    update.my_chat_member.new_chat_member.can_manage_chat = True
+    update.my_chat_member.new_chat_member.can_delete_messages = True
+    update.my_chat_member.new_chat_member.can_post_messages = True
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 123456
+    update.my_chat_member.from_user.first_name = "Admin"
+    update.my_chat_member.from_user.username = "admin"
+
+    context = MagicMock()
+
+    with patch("handlers.log_admin_rights_changed") as mock_log:
+        await my_chat_member_handler(update, context)
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        assert call_args[0][4] == "bot_admin_rights_changed"
+        # Verify old and new rights were passed
+        old_rights = call_args[0][2]
+        new_rights = call_args[0][3]
+        assert old_rights["can_delete_messages"] is False
+        assert new_rights["can_delete_messages"] is True
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_bot_added_as_admin_to_channel():
+    """Handler logs when bot is added as admin to a channel."""
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = -100123
+    update.my_chat_member.chat.title = "My Channel"
+    update.my_chat_member.chat.type = "channel"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "left"
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "administrator"
+    update.my_chat_member.new_chat_member.can_manage_chat = True
+    update.my_chat_member.new_chat_member.can_delete_messages = True
+    update.my_chat_member.new_chat_member.can_post_messages = True
+    update.my_chat_member.new_chat_member.can_edit_messages = True
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 123456
+    update.my_chat_member.from_user.first_name = "Admin"
+    update.my_chat_member.from_user.username = "admin"
+
+    context = MagicMock()
+
+    with patch("handlers.log_admin_rights_changed") as mock_log, \
+         patch("handlers.log_bot_added_to_chat") as mock_add_log:
+        await my_chat_member_handler(update, context)
+        mock_log.assert_called_once()
+        mock_add_log.assert_not_called()
+        call_args = mock_log.call_args
+        assert call_args[0][4] == "bot_added_as_admin"
+        assert call_args[0][2] is None  # old_rights (was not admin)
+        new_rights = call_args[0][3]
+        assert new_rights["can_post_messages"] is True
+        assert new_rights["can_edit_messages"] is True
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_bot_removed_as_admin_from_channel():
+    """Handler logs bot_removed_from_chat when bot is removed from channel."""
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = -100123
+    update.my_chat_member.chat.title = "My Channel"
+    update.my_chat_member.chat.type = "channel"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "administrator"
+    update.my_chat_member.old_chat_member.can_manage_chat = True
+    update.my_chat_member.old_chat_member.can_delete_messages = True
+    update.my_chat_member.old_chat_member.can_post_messages = True
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "left"
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 123456
+    update.my_chat_member.from_user.first_name = "Admin"
+    update.my_chat_member.from_user.username = "admin"
+
+    context = MagicMock()
+
+    with patch("handlers.log_bot_removed_from_chat") as mock_remove_log:
+        await my_chat_member_handler(update, context)
+        mock_remove_log.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_bot_added_as_admin_to_group():
+    """Handler logs when bot is added as admin to a group with initial rights."""
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = -100456
+    update.my_chat_member.chat.title = "Test Group"
+    update.my_chat_member.chat.type = "supergroup"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "member"
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "administrator"
+    update.my_chat_member.new_chat_member.can_manage_chat = True
+    update.my_chat_member.new_chat_member.can_delete_messages = False
+    update.my_chat_member.new_chat_member.can_pin_messages = True
+    update.my_chat_member.new_chat_member.can_manage_topics = False
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 789
+    update.my_chat_member.from_user.first_name = "Owner"
+    update.my_chat_member.from_user.username = "owner"
+
+    context = MagicMock()
+
+    with patch("handlers.log_admin_rights_changed") as mock_log:
+        await my_chat_member_handler(update, context)
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        assert call_args[0][4] == "bot_added_as_admin"
+        assert call_args[0][2] is None  # old_rights (was member)
+        new_rights = call_args[0][3]
+        assert new_rights["can_pin_messages"] is True
+        assert new_rights["can_manage_topics"] is False
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_custom_title_only_change():
+    """Custom title only change fires bot_custom_title_changed, not bot_admin_rights_changed."""
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = -100789
+    update.my_chat_member.chat.title = "Test Group"
+    update.my_chat_member.chat.type = "supergroup"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "administrator"
+    update.my_chat_member.old_chat_member.can_manage_chat = True
+    update.my_chat_member.old_chat_member.can_delete_messages = True
+    update.my_chat_member.old_chat_member.can_manage_video_chats = True
+    update.my_chat_member.old_chat_member.can_restrict_members = True
+    update.my_chat_member.old_chat_member.can_promote_members = False
+    update.my_chat_member.old_chat_member.can_change_info = True
+    update.my_chat_member.old_chat_member.can_invite_users = True
+    update.my_chat_member.old_chat_member.custom_title = None
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "administrator"
+    update.my_chat_member.new_chat_member.can_manage_chat = True
+    update.my_chat_member.new_chat_member.can_delete_messages = True
+    update.my_chat_member.new_chat_member.can_manage_video_chats = True
+    update.my_chat_member.new_chat_member.can_restrict_members = True
+    update.my_chat_member.new_chat_member.can_promote_members = False
+    update.my_chat_member.new_chat_member.can_change_info = True
+    update.my_chat_member.new_chat_member.can_invite_users = True
+    update.my_chat_member.new_chat_member.custom_title = "aboba"
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 123456
+    update.my_chat_member.from_user.first_name = "Admin"
+    update.my_chat_member.from_user.username = "admin"
+
+    context = MagicMock()
+
+    with patch("handlers.log_custom_title_changed") as mock_title_log, \
+         patch("handlers.log_admin_rights_changed") as mock_rights_log:
+        await my_chat_member_handler(update, context)
+        mock_title_log.assert_called_once()
+        mock_rights_log.assert_not_called()
+        call_args = mock_title_log.call_args
+        assert call_args[0][2] is None  # old_title
+        assert call_args[0][3] == "aboba"  # new_title
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_mixed_change_uses_rights_event():
+    """Custom title + other rights change fires bot_admin_rights_changed (not custom_title)."""
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = -100789
+    update.my_chat_member.chat.title = "Test Group"
+    update.my_chat_member.chat.type = "supergroup"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "administrator"
+    update.my_chat_member.old_chat_member.can_manage_chat = True
+    update.my_chat_member.old_chat_member.can_delete_messages = True
+    update.my_chat_member.old_chat_member.can_manage_video_chats = True
+    update.my_chat_member.old_chat_member.can_restrict_members = True
+    update.my_chat_member.old_chat_member.can_promote_members = False
+    update.my_chat_member.old_chat_member.can_change_info = True
+    update.my_chat_member.old_chat_member.can_invite_users = True
+    update.my_chat_member.old_chat_member.custom_title = None
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "administrator"
+    update.my_chat_member.new_chat_member.can_manage_chat = True
+    update.my_chat_member.new_chat_member.can_delete_messages = False  # changed!
+    update.my_chat_member.new_chat_member.can_manage_video_chats = True
+    update.my_chat_member.new_chat_member.can_restrict_members = True
+    update.my_chat_member.new_chat_member.can_promote_members = False
+    update.my_chat_member.new_chat_member.can_change_info = True
+    update.my_chat_member.new_chat_member.can_invite_users = True
+    update.my_chat_member.new_chat_member.custom_title = "aboba"  # also changed
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 123456
+    update.my_chat_member.from_user.first_name = "Admin"
+    update.my_chat_member.from_user.username = "admin"
+
+    context = MagicMock()
+
+    with patch("handlers.log_custom_title_changed") as mock_title_log, \
+         patch("handlers.log_admin_rights_changed") as mock_rights_log:
+        await my_chat_member_handler(update, context)
+        mock_title_log.assert_not_called()
+        mock_rights_log.assert_called_once()
+        assert mock_rights_log.call_args[0][4] == "bot_restrictions_changed"
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_user_unblocked_bot():
+    """Handler logs user_unblocked_bot when user unblocks bot in private chat."""
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = 123456
+    update.my_chat_member.chat.title = None
+    update.my_chat_member.chat.type = "private"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "kicked"
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "member"
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 99999
+    update.my_chat_member.from_user.first_name = "User"
+    update.my_chat_member.from_user.username = "user"
+
+    context = MagicMock()
+
+    with patch("handlers.log_user_unblocked_bot") as mock_unblock, \
+         patch("handlers.log_bot_added_to_chat") as mock_add:
+        await my_chat_member_handler(update, context)
+        mock_unblock.assert_called_once()
+        mock_add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_skips_added_for_private_chat():
+    """Handler skips 'Bot added to chat' for private chats (handled by /start)."""
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = 123456
+    update.my_chat_member.chat.title = None
+    update.my_chat_member.chat.type = "private"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "left"
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "member"
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 123456
+    update.my_chat_member.from_user.first_name = "User"
+    update.my_chat_member.from_user.username = "user"
+
+    context = MagicMock()
+
+    with patch("handlers.log_bot_added_to_chat") as mock_add, \
+         patch("handlers.log_user_unblocked_bot") as mock_unblock:
+        await my_chat_member_handler(update, context)
+        mock_add.assert_not_called()
+        mock_unblock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_handler_still_logs_added_for_groups():
+    """Handler still logs 'Bot added to chat' for group chats."""
+    update = MagicMock()
+    update.my_chat_member = MagicMock()
+    update.my_chat_member.chat = MagicMock()
+    update.my_chat_member.chat.id = -100789
+    update.my_chat_member.chat.title = "Test Group"
+    update.my_chat_member.chat.type = "supergroup"
+    update.my_chat_member.old_chat_member = MagicMock()
+    update.my_chat_member.old_chat_member.status = "left"
+    update.my_chat_member.new_chat_member = MagicMock()
+    update.my_chat_member.new_chat_member.status = "member"
+    update.my_chat_member.from_user = MagicMock()
+    update.my_chat_member.from_user.id = 123456
+    update.my_chat_member.from_user.first_name = "Admin"
+    update.my_chat_member.from_user.username = "admin"
+
+    context = MagicMock()
+
+    with patch("handlers.log_bot_added_to_chat") as mock_add:
+        await my_chat_member_handler(update, context)
+        mock_add.assert_called_once()

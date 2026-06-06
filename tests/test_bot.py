@@ -11,7 +11,7 @@ def test_bot_imports_my_chat_member_handler():
 
 
 def test_bot_registers_my_chat_member_handler():
-    """Bot registers my_chat_member handler."""
+    """Bot registers my_chat_member handler with ChatMemberHandler."""
     from bot import main
 
     with patch("bot.Application") as mock_app_builder, \
@@ -23,25 +23,18 @@ def test_bot_registers_my_chat_member_handler():
          patch("bot.caption_command"), \
          patch("bot.audio_command"), \
          patch("bot.ytmusic_callback"), \
+         patch("bot.ChatMemberHandler") as mock_chat_member_handler, \
          patch("bot.my_chat_member_handler") as mock_handler:
 
+        mock_chat_member_handler.return_value = mock_handler
         mock_app = MagicMock()
-        mock_app_builder.return_value.token.return_value.post_init.return_value.build.return_value = mock_app
+        mock_app_builder.builder.return_value.token.return_value.post_init.return_value.post_shutdown.return_value.build.return_value = mock_app
 
-        # Capture the allowed_updates argument
-        def capture_run_polling(**kwargs):
-            allowed = kwargs.get("allowed_updates", [])
-            if "my_chat_member" not in allowed:
-                raise AssertionError(f"my_chat_member not in allowed_updates: {allowed}")
+        main()
 
-        mock_app.run_polling.side_effect = capture_run_polling
-
-        # We need to patch the handler import
-        with patch("bot.my_chat_member_handler", mock_handler):
-            try:
-                main()
-            except AssertionError as e:
-                # Re-raise assertion errors but catch others
-                raise e
-            except Exception:
-                pass  # We just need to check the call was made
+        # Verify ChatMemberHandler was used (not MessageHandler)
+        mock_chat_member_handler.assert_called_once()
+        call_args = mock_chat_member_handler.call_args
+        assert call_args[0][0] is mock_handler
+        # Verify it was registered with add_handler
+        mock_app.add_handler.assert_any_call(mock_handler)

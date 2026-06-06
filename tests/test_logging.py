@@ -967,3 +967,114 @@ def test_reply_to_retry_logs_request_received():
     assert call_args["url"] == "https://tiktok.com/@user/video/123"
     assert call_args["user"].id == 123
     assert call_args["chat"].id == -100
+
+
+def test_log_user_blocked_bot_basic():
+    """log_user_blocked_bot outputs JSON with all required fields."""
+    from logging_config import log_user_blocked_bot
+
+    chat = MagicMock()
+    chat.id = 123456
+    chat.title = None
+    chat.type = "private"
+
+    user = MagicMock()
+    user.id = 99999
+    user.first_name = "Angry"
+    user.username = "angry_user"
+
+    with patch("logging_config.service_logger") as mock_logger:
+        log_user_blocked_bot(chat, user)
+
+        mock_logger.info.assert_called_once()
+        call_args = mock_logger.info.call_args
+        assert call_args[0][0] == "user_blocked_bot"
+        log_data = call_args[1]["extra"]["extra_data"]
+
+        assert log_data["event"] == "user_blocked_bot"
+        assert log_data["message"] == "User blocked bot"
+        assert log_data["chat"]["id"] == 123456
+        assert log_data["chat"]["type"] == "private"
+        assert log_data["user"]["id"] == 99999
+        assert log_data["user"]["name"] == "Angry"
+        assert log_data["user"]["username"] == "angry_user"
+        assert log_data["chat"]["name"] is None
+
+
+def test_log_admin_rights_changed_basic():
+    """log_admin_rights_changed outputs JSON with all required fields."""
+    from logging_config import log_admin_rights_changed
+
+    chat = MagicMock()
+    chat.id = -100123
+    chat.title = "My Channel"
+    chat.type = "channel"
+
+    user = MagicMock()
+    user.id = 123456
+    user.first_name = "Admin"
+    user.username = "admin"
+
+    old_rights = {
+        "can_manage_chat": True,
+        "can_delete_messages": False,
+        "can_post_messages": True,
+    }
+    new_rights = {
+        "can_manage_chat": True,
+        "can_delete_messages": True,
+        "can_post_messages": True,
+    }
+
+    with patch("logging_config.service_logger") as mock_logger:
+        log_admin_rights_changed(chat, user, old_rights, new_rights, "bot_admin_rights_changed")
+
+        mock_logger.info.assert_called_once()
+        call_args = mock_logger.info.call_args
+        assert call_args[0][0] == "bot_admin_rights_changed"
+        log_data = call_args[1]["extra"]["extra_data"]
+
+        assert log_data["event"] == "bot_admin_rights_changed"
+        assert log_data["chat"]["id"] == -100123
+        assert log_data["chat"]["type"] == "channel"
+        assert log_data["user"]["id"] == 123456
+        # Field renamed from admin_rights to new_admin_rights
+        assert "new_admin_rights" in log_data
+        assert "old_admin_rights" not in log_data
+        # Delta: can_delete_messages changed from False to True
+        assert log_data["rights_added"]["can_delete_messages"] is True
+        assert "can_manage_chat" not in log_data.get("rights_added", {})
+        assert "can_manage_chat" not in log_data.get("rights_removed", {})
+
+
+def test_log_custom_title_changed_basic():
+    """log_custom_title_changed outputs JSON with required fields, no admin rights."""
+    from logging_config import log_custom_title_changed
+
+    chat = MagicMock()
+    chat.id = -100789
+    chat.title = "Test Group"
+    chat.type = "supergroup"
+
+    user = MagicMock()
+    user.id = 123456
+    user.first_name = "Admin"
+    user.username = "admin"
+
+    with patch("logging_config.service_logger") as mock_logger:
+        log_custom_title_changed(chat, user, None, "aboba")
+
+        mock_logger.info.assert_called_once()
+        call_args = mock_logger.info.call_args
+        assert call_args[0][0] == "bot_custom_title_changed"
+        log_data = call_args[1]["extra"]["extra_data"]
+
+        assert log_data["event"] == "bot_custom_title_changed"
+        assert log_data["chat"]["id"] == -100789
+        assert log_data["user"]["id"] == 123456
+        assert log_data["old_custom_title"] is None
+        assert log_data["new_custom_title"] == "aboba"
+        # Should NOT contain admin rights
+        assert "admin_rights" not in log_data
+        assert "new_admin_rights" not in log_data
+        assert "rights_added" not in log_data
