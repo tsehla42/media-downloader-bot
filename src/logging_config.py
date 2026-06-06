@@ -57,8 +57,11 @@ def _load_seen_users() -> set:
 
 def _save_seen_users() -> None:
     """Save seen user IDs to file."""
-    with open(_seen_users_file, "w") as f:
-        json.dump({"user_ids": list(_seen_users)}, f)
+    try:
+        with open(_seen_users_file, "w") as f:
+            json.dump({"user_ids": list(_seen_users)}, f)
+    except OSError:
+        pass  # Non-fatal: file may be unwritable (e.g. Docker permission issue)
 
 
 def is_new_user(user_id: int) -> bool:
@@ -88,6 +91,10 @@ class JSONFormatter(logging.Formatter):
             "level": record.levelname,
             "message": record.getMessage(),
         }
+
+        # Include exception traceback if present
+        if record.exc_info and record.exc_info[1]:
+            log_data["exception"] = self.formatException(record.exc_info)
 
         # Include extra_data if present (used by request lifecycle functions)
         extra = getattr(record, "extra_data", {})

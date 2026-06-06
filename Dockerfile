@@ -39,6 +39,10 @@ RUN useradd --create-home appuser
 # Create download and log directories with correct ownership
 RUN mkdir -p /tmp/bot-downloads /usr/src/app/logs \
     && chown -R appuser:appuser /tmp/bot-downloads /usr/src/app/logs
+
+# Ensure appuser can write to working directory
+RUN chown appuser:appuser /usr/src/app
+
 USER appuser
 
 CMD ["python", "src/bot.py"]

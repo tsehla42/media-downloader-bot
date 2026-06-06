@@ -43,8 +43,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     """Log the error and send a telegram message to inform the user."""
     details_logger.error("Exception while handling an update:", exc_info=context.error)
 
-    # Send a message to the user if possible
-    if isinstance(update, Update) and update.effective_chat:
+    # Send error message only for message/callback updates (not my_chat_member, etc.)
+    # User doesn't need an "error occurred" message for block/unblock events.
+    if (
+        isinstance(update, Update)
+        and update.effective_chat
+        and (update.message or update.callback_query)
+    ):
         try:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
