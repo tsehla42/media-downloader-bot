@@ -28,6 +28,11 @@ from logging_config import (
     log_bot_added_to_chat,
     log_bot_removed_from_chat,
     log_bot_status_changed,
+    log_admin_rights_changed,
+    log_custom_title_changed,
+    log_user_blocked_bot,
+    log_user_unblocked_bot,
+    _extract_admin_rights,
     log_request_received,
     log_request_completed,
     set_current_request_id,
@@ -37,7 +42,7 @@ from telegram_utils import typing_indicator, send_images
 
 
 async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle bot membership changes (added, removed, promoted, demoted)."""
+    """Handle bot membership changes (added, removed, promoted, demoted, blocked)."""
     chat_member_update = update.my_chat_member
     if not chat_member_update:
         return
@@ -47,24 +52,67 @@ async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_T
     new_status = chat_member_update.new_chat_member.status
     from_user = chat_member_update.from_user
 
-    # Bot was added to chat
-    if old_status in ("left", "kicked"):
-        log_bot_added_to_chat(chat, from_user)
+    # User blocked bot in private chat (status becomes "kicked")
+    if new_status == "kicked" and getattr(chat, "type", None) == "private":
+        log_user_blocked_bot(chat, from_user)
         return
 
-    # Bot was removed from chat
+    # User unblocked bot in private chat (status was "kicked", now "member")
+    if old_status == "kicked" and new_status == "member" and getattr(chat, "type", None) == "private":
+        log_user_unblocked_bot(chat, from_user)
+        return
+
+    # Bot removed from chat (any status → left/kicked)
     if new_status in ("left", "kicked"):
         log_bot_removed_from_chat(chat, from_user)
         return
 
-    # Bot was promoted to admin
-    if old_status == "member" and new_status == "administrator":
+    old_admin_rights = _extract_admin_rights(chat_member_update.old_chat_member)
+    new_admin_rights = _extract_admin_rights(chat_member_update.new_chat_member)
+
+    # Bot promoted to admin (was non-admin, now administrator with rights)
+    if old_status != "administrator" and new_status == "administrator":
+        log_admin_rights_changed(chat, from_user, None, new_admin_rights, "bot_added_as_admin")
+        return
+
+    # Bot demoted from admin (was administrator, now non-admin)
+    if old_status == "administrator" and new_status != "administrator":
         log_bot_status_changed(chat, from_user, old_status, new_status)
         return
 
-    # Bot was demoted from admin
-    if old_status == "administrator" and new_status == "member":
-        log_bot_status_changed(chat, from_user, old_status, new_status)
+    # Admin rights changed (was admin, still admin, but rights differ)
+    if old_status == "administrator" and new_status == "administrator":
+        if old_admin_rights != new_admin_rights:
+            # Custom title only change → separate lightweight event
+            old_title = (old_admin_rights or {}).get("custom_title")
+            new_title = (new_admin_rights or {}).get("custom_title")
+            # Only compare explicitly set values (skip None/MagicMock which means "not set")
+            other_changes = {}
+            for k, old_val in (old_admin_rights or {}).items():
+                if k == "custom_title":
+                    continue
+                new_val = (new_admin_rights or {}).get(k)
+                if old_val is None and new_val is None:
+                    continue
+                if old_val != new_val:
+                    other_changes[k] = (old_val, new_val)
+            if not other_changes and old_title != new_title:
+                log_custom_title_changed(chat, from_user, old_title, new_title)
+            else:
+                # Check if any rights were removed (restriction)
+                has_removals = any(
+                    old_val is True and ((new_admin_rights or {}).get(k) is not True)
+                    for k, old_val in (old_admin_rights or {}).items()
+                    if k != "custom_title"
+                )
+                event = "bot_restrictions_changed" if has_removals else "bot_admin_rights_changed"
+                log_admin_rights_changed(chat, from_user, old_admin_rights, new_admin_rights, event)
+        return
+
+    # Bot added to chat (non-admin, e.g. added as regular member)
+    # Skip private chats — /start command handles P2P user tracking
+    if old_status in ("left", "kicked") and getattr(chat, "type", None) != "private":
+        log_bot_added_to_chat(chat, from_user)
         return
 
 

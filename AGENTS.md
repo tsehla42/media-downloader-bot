@@ -63,8 +63,8 @@ media-downloader-bot/
 | `src/platforms/instagram.py` | downloader, telegram_utils | Instagram: `handle_instagram()` with gallery-dl fallback and cookies |
 | `src/utils.py` | nothing | URL validation, file cleanup |
 | `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()`, `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()` |
-| `src/logging_config.py` | config | Structured JSON logging: three-file split (requests/details/service), JSONFormatter, filter-based routing, with_request_logging decorator, contextvars for request_id |
-| `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader | Thin orchestrator: `handle_url()` (includes reply-to-retry and gallery-dl fallback), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` |
+| `src/logging_config.py` | config | Structured JSON logging: three-file split (requests/details/service), JSONFormatter, filter-based routing, with_request_logging decorator, contextvars for request_id, service log functions (log_new_user, log_bot_added_to_chat, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot) |
+| `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader | Thin orchestrator: `handle_url()` (includes reply-to-retry and gallery-dl fallback), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` (handles bot added/removed/promoted/demoted/blocked) |
 | `src/bot.py` | config, handlers, commands, platforms.youtube, logging_config | Entry point, wires everything together, initializes logging, global error handler |
 
 ## Data Flow
@@ -92,6 +92,7 @@ media-downloader-bot/
    - Reply-to-retry uses `"event": "reply_to_retry"` to differentiate from normal requests
 11. Intermediate download steps (yt-dlp calls, retries, gallery-dl attempts) logged to `request-details.jsonl` via `details_logger`
 12. Bot start/stop, chat membership, new user events logged to `service.jsonl` via `service_logger`
+13. `my_chat_member_handler` (registered via `ChatMemberHandler`) logs: bot added/removed from chat, admin added/removed with rights, admin rights changed (with delta), user blocks bot (private chat)
 
 ## Key Design Decisions
 
@@ -116,7 +117,7 @@ Never commit `allowed_contacts.json` — it contains user IDs and is generated l
 python -m pytest tests/ -v
 ```
 
-All 209 tests use mocked subprocess calls - no real downloads needed.
+All 216 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 

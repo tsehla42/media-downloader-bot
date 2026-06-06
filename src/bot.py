@@ -1,10 +1,15 @@
+import atexit
 import logging
+import os
+import signal
+import sys
 from logging_config import setup_logging, details_logger, service_logger
 
 from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
+    ChatMemberHandler,
     CommandHandler,
     MessageHandler,
     ContextTypes,
@@ -15,6 +20,23 @@ from config import BOT_TOKEN
 from handlers import handle_url, audio_command, my_chat_member_handler
 from platforms.youtube import ytmusic_callback
 from commands import start_command, help_command, caption_command
+
+# Track shutdown reason for logging
+_shutdown_signal = None
+_exit_logged = False
+
+
+def _log_exit():
+    """Log exit reason on process termination."""
+    global _exit_logged
+    if _exit_logged:
+        return
+    _exit_logged = True
+    if _shutdown_signal is not None:
+        sig_name = signal.Signals(_shutdown_signal).name
+        service_logger.info("Bot stopped (signal=%s)", sig_name)
+    else:
+        service_logger.info("Bot stopped (exit code=%d)", os.environ.get("_", 0))
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -49,7 +71,15 @@ async def post_init(application: Application) -> None:
 
 async def post_shutdown(application: Application) -> None:
     """Log bot shutdown."""
-    service_logger.info("Bot stopped")
+    global _exit_logged
+    if _exit_logged:
+        return
+    _exit_logged = True
+    if _shutdown_signal is not None:
+        sig_name = signal.Signals(_shutdown_signal).name
+        service_logger.info("Bot stopped (signal=%s)", sig_name)
+    else:
+        service_logger.info("Bot stopped")
 
 
 def main() -> None:
@@ -57,6 +87,15 @@ def main() -> None:
     setup_logging()
     # Suppress noisy httpx request logs
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    # Register signal handlers to track shutdown reason
+    def _handle_signal(signum, frame):
+        global _shutdown_signal
+        _shutdown_signal = signum
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+    atexit.register(_log_exit)
 
     app = (
         Application.builder()
@@ -75,7 +114,7 @@ def main() -> None:
     app.add_handler(CommandHandler("audio", audio_command))
     app.add_handler(CallbackQueryHandler(ytmusic_callback, pattern="^ytm\\|"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, my_chat_member_handler))
+    app.add_handler(ChatMemberHandler(my_chat_member_handler, ChatMemberHandler.MY_CHAT_MEMBER))
 
     service_logger.info("Bot started")
     app.run_polling(
