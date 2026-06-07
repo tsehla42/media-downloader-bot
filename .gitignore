@@ -19,6 +19,7 @@ venv/
 !.env.example
 cookies.txt
 allowed-contacts.json
+src/gallery_dl_domains.py
 
 # Test
 .pytest_cache/

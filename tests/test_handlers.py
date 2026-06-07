@@ -1273,6 +1273,8 @@ async def test_gallery_dl_fallback_video_success(update, context):
 
     with patch("handlers.is_authorized", return_value=True), \
          patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.get_gallery_dl_domains", return_value=frozenset(["example.com"])), \
+         patch("handlers.extract_domain", return_value="example.com"), \
          patch("handlers.download_gallery_dl_images", return_value=[]), \
          patch("handlers.download_gallery_dl_video", return_value="/tmp/video.mp4"), \
          patch("handlers.cleanup_dir"), \
@@ -1715,6 +1717,62 @@ async def test_my_chat_member_handler_still_logs_added_for_groups():
          patch("handlers.is_bot_admin", return_value=True):
         await my_chat_member_handler(update, context)
         mock_add.assert_called_once()
+
+
+# --- gallery-dl domain whitelist tests ---
+
+
+@pytest.mark.asyncio
+async def test_handle_url_skips_unsupported_domain_not_in_whitelist(update, context):
+    """URLs with domains not in gallery-dl whitelist are skipped entirely."""
+    update.message.text = "https://github.com/user/repo"
+
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.get_gallery_dl_domains", return_value=frozenset(["pinterest.com", "reddit.com"])), \
+         patch("handlers.extract_domain", return_value="github.com"), \
+         patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock) as mock_fallback:
+        await handle_url(update, context)
+
+    # Should NOT call gallery-dl fallback for github.com
+    mock_fallback.assert_not_called()
+    # Should show error in P2P
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "Unsupported" in text
+
+
+@pytest.mark.asyncio
+async def test_handle_url_passes_whitelisted_domain_to_gallery_dl(update, context):
+    """URLs with domains in gallery-dl whitelist are passed to fallback."""
+    update.message.text = "https://pinterest.com/pin/123/"
+
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.get_gallery_dl_domains", return_value=frozenset(["pinterest.com"])), \
+         patch("handlers.extract_domain", return_value="pinterest.com"), \
+         patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=True) as mock_fallback:
+        await handle_url(update, context)
+
+    mock_fallback.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_url_skips_all_when_domain_list_empty(update, context):
+    """When domain list is empty (generation failed), skip all gallery-dl fallback."""
+    update.message.text = "https://pinterest.com/pin/123/"
+
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.get_gallery_dl_domains", return_value=frozenset()), \
+         patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock) as mock_fallback:
+        await handle_url(update, context)
+
+    mock_fallback.assert_not_called()
+    # Should show error in P2P
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "Unsupported" in text
 
 
 # --- auth notification tracking tests ---

@@ -4,7 +4,7 @@
 import re
 from urllib.parse import urlparse
 
-__all__ = ["SUPPORTED_PLATFORMS", "detect_platform"]
+__all__ = ["SUPPORTED_PLATFORMS", "detect_platform", "extract_domain"]
 
 SUPPORTED_PLATFORMS = {
     "youtube": ["youtube.com", "youtu.be", "music.youtube.com"],
@@ -25,3 +25,9 @@ def detect_platform(url: str) -> str | None:
     except Exception:
         pass
     return None
+
+
+def extract_domain(url: str) -> str:
+    """Extract normalized domain from URL (no www. prefix)."""
+    host = urlparse(url).hostname or ""
+    return re.sub(r"^www\.", "", host.lower())

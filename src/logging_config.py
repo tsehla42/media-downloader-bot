@@ -549,10 +549,10 @@ def setup_logging() -> None:
         return
     _initialized = True
 
-    from config import MODE, LOG_OUTPUT, LOG_DIR
+    from config import MODE, LOG_OUTPUT, LOG_DIR, LOG_LEVEL
 
     root = logging.getLogger()
-    root.setLevel(logging.INFO)
+    root.setLevel(getattr(logging, LOG_LEVEL.upper(), logging.INFO))
 
     formatter = JSONFormatter()
 
