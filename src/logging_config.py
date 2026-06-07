@@ -216,6 +216,45 @@ def log_bot_added_to_chat(chat, added_by) -> None:
     service_logger.info("bot_added_to_chat", extra={"extra_data": log_data})
 
 
+def log_bot_rejected_group_addition(chat, added_by) -> None:
+    """Log when a non-admin tries to add the bot to a group and is rejected."""
+    log_data = {
+        "event": "bot_rejected_group_addition",
+        "message": "Bot rejected group addition (non-admin)",
+        "chat": {
+            "id": chat.id,
+            "name": getattr(chat, "title", None),
+            "type": getattr(chat, "type", None),
+        },
+        "added_by": {
+            "id": added_by.id,
+            "name": getattr(added_by, "first_name", None),
+            "username": getattr(added_by, "username", None),
+        },
+    }
+    service_logger.info("bot_rejected_group_addition", extra={"extra_data": log_data})
+
+
+def log_unauthorized_access(user, chat, command: str = "") -> None:
+    """Log when an unauthorized user tries to access the bot."""
+    log_data = {
+        "event": "unauthorized_access",
+        "message": "Unauthorized user tried to access the bot",
+        "user": {
+            "id": user.id,
+            "name": getattr(user, "first_name", None),
+            "username": getattr(user, "username", None),
+        },
+        "chat": {
+            "id": chat.id,
+            "type": getattr(chat, "type", None),
+        },
+    }
+    if command:
+        log_data["command"] = command
+    service_logger.info("unauthorized_access", extra={"extra_data": log_data})
+
+
 def log_bot_removed_from_chat(chat, removed_by) -> None:
     """Log when the bot is removed from a chat."""
     log_data = {

@@ -9,7 +9,8 @@ services:
       - .env
     volumes:
       - bot-downloads:/tmp/bot-downloads
-      - ./cookies.txt:/app/cookies.txt:ro
+      - ./cookies.txt:/usr/src/app/cookies.txt:ro
+      - ./allowed-contacts.json:/usr/src/app/allowed-contacts.json:ro
       - ./logs:/usr/src/app/logs
 
 volumes:

@@ -22,16 +22,18 @@ from platforms.instagram import handle_instagram
 from platforms.tiktok import handle_tiktok
 from downloader import get_metadata, download_audio, download_gallery_dl_images, download_gallery_dl_video
 from commands import get_caption_for_user
-from auth import is_authorized, is_group_chat
+from auth import is_authorized, is_group_chat, was_notified, mark_notified, is_bot_admin
 from logging_config import (
     with_request_logging,
     log_bot_added_to_chat,
+    log_bot_rejected_group_addition,
     log_bot_removed_from_chat,
     log_bot_status_changed,
     log_admin_rights_changed,
     log_custom_title_changed,
     log_user_blocked_bot,
     log_user_unblocked_bot,
+    log_unauthorized_access,
     _extract_admin_rights,
     log_request_received,
     log_request_completed,
@@ -112,6 +114,15 @@ async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_T
     # Bot added to chat (non-admin, e.g. added as regular member)
     # Skip private chats — /start command handles P2P user tracking
     if old_status in ("left", "kicked") and getattr(chat, "type", None) != "private":
+        # Check if user is admin - if not, reject and leave
+        if not is_bot_admin(from_user.id):
+            log_bot_rejected_group_addition(chat, from_user)
+            await context.bot.send_message(
+                chat.id,
+                "Only bot admins can add me to groups",
+            )
+            await context.bot.leave_chat(chat.id)
+            return
         log_bot_added_to_chat(chat, from_user)
         return
 
@@ -121,11 +132,16 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     reply_params = {"message_id": update.message.message_id}
 
     if not is_authorized(update):
+        if not is_group_chat(update):
+            user_id = update.message.from_user.id
+            if not was_notified(user_id):
+                await update.message.reply_text(
+                    "You are not authorized to use this bot",
+                    reply_parameters=reply_params,
+                )
+                mark_notified(user_id)
+                log_unauthorized_access(update.message.from_user, update.message.chat, "/audio")
         context.user_data["_request_success"] = False
-        await update.message.reply_text(
-            "You are not authorized to use this bot",
-            reply_parameters=reply_params,
-        )
         return
 
     text = update.message.text.replace("/audio", "").strip()
@@ -428,11 +444,16 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     if not is_authorized(update):
-        await update.message.reply_text(
-            "You are not authorized to use this bot",
-            reply_parameters={"message_id": update.message.message_id},
-        )
-        return
+        if not is_group_chat(update):
+            user_id = update.message.from_user.id
+            if not was_notified(user_id):
+                await update.message.reply_text(
+                    "You are not authorized to use this bot",
+                    reply_parameters={"message_id": update.message.message_id},
+                )
+                mark_notified(user_id)
+                log_unauthorized_access(update.message.from_user, update.message.chat, "url")
+        return  # silently ignore in groups or if already told
 
     text = update.message.text.strip()
 

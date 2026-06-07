@@ -15,6 +15,7 @@ logs
 docs
 tests
 cookies.txt
+allowed-contacts.json
 *.md
 compose.sh
 run-local.sh

@@ -18,7 +18,7 @@ venv/
 .env.*
 !.env.example
 cookies.txt
-allowed_contacts.json
+allowed-contacts.json
 
 # Test
 .pytest_cache/
