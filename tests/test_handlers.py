@@ -1,5 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from telegram import Update, ChatMemberUpdated, User, Chat
+from telegram.ext import ContextTypes
 from handlers import handle_url, audio_command, my_chat_member_handler, _download_and_send
 from platforms.youtube import ytmusic_callback, _has_video_available, _ytmusic_pending
 from commands import caption_command
@@ -36,7 +38,8 @@ def context():
 @pytest.mark.asyncio
 async def test_caption_command_toggle(update, context):
     update.message.text = "/caption on"
-    await caption_command(update, context)
+    with patch("commands.is_authorized", return_value=True):
+        await caption_command(update, context)
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args[0][0]
     assert "Captions enabled" in text
@@ -45,7 +48,8 @@ async def test_caption_command_toggle(update, context):
 async def test_handle_url_processes_all_urls(update, context):
     """handle_url processes every URL in the message, not just the first."""
     update.message.text = "https://youtube.com/watch?v=abc https://tiktok.com/@user/video/123"
-    with patch("handlers.detect_platform", return_value="youtube"), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "Test"}), \
          patch("platforms.youtube.download_video", return_value=True), \
          patch("handlers.cleanup_file"), \
@@ -67,7 +71,8 @@ async def test_handle_url_rejects_invalid(update, context):
 @pytest.mark.asyncio
 async def test_handle_url_rejects_unknown_platform(update, context):
     update.message.text = "https://example.com/video"
-    with patch("handlers.detect_platform", return_value=None), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value=None), \
          patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=False):
         await handle_url(update, context)
         update.message.reply_text.assert_called_once()
@@ -225,7 +230,8 @@ async def test_handle_url_starts_typing_for_audio():
 
     mock_typing = _make_typing_indicator_mock()
 
-    with patch("handlers.detect_platform", return_value="youtube"), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.download_audio", return_value=True), \
          patch("os.path.isfile", return_value=True), \
          patch("os.path.getsize", return_value=1024*1024), \
@@ -256,7 +262,8 @@ async def test_audio_command_uses_title_for_filename():
 
     mock_typing = _make_typing_indicator_mock()
 
-    with patch("handlers.detect_platform", return_value="youtube"), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "My Test Song"}), \
          patch("handlers.download_audio", return_value=True), \
          patch("os.path.isfile", return_value=True), \
@@ -288,7 +295,8 @@ async def test_audio_command_no_metadata_omits_title():
 
     mock_typing = _make_typing_indicator_mock()
 
-    with patch("handlers.detect_platform", return_value="youtube"), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value=None), \
          patch("handlers.download_audio", return_value=True), \
          patch("os.path.isfile", return_value=True), \
@@ -308,7 +316,8 @@ async def test_audio_command_no_metadata_omits_title():
 async def test_handle_url_no_urls_found(update, context):
     """handle_url replies when extract_urls returns empty."""
     update.message.text = "https://example.com"
-    with patch("handlers.is_valid_url", return_value=True), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.is_valid_url", return_value=True), \
          patch("handlers.extract_urls", return_value=[]):
         await handle_url(update, context)
         update.message.reply_text.assert_called_once()
@@ -405,7 +414,8 @@ async def test_handle_url_p2p_still_shows_errors(update, context):
     update.message.text = "https://example.com/video"
     update.effective_chat.type = "private"
 
-    with patch("handlers.detect_platform", return_value=None), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value=None), \
          patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=False):
         await handle_url(update, context)
         update.message.reply_text.assert_called_once()
@@ -566,7 +576,8 @@ async def test_my_chat_member_handler_bot_added():
 
     context = MagicMock()
 
-    with patch("handlers.log_bot_added_to_chat") as mock_log:
+    with patch("handlers.log_bot_added_to_chat") as mock_log, \
+         patch("handlers.is_bot_admin", return_value=True):
         await my_chat_member_handler(update, context)
         mock_log.assert_called_once()
 
@@ -1006,7 +1017,8 @@ async def test_handle_url_youtube_typing_only_during_download():
 
     mock_typing = _make_typing_indicator_mock()
 
-    with patch("handlers.detect_platform", return_value="youtube"), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "Test", "filesize_approx": 5*1024*1024}), \
          patch("platforms.youtube.download_video", return_value=True), \
          patch("os.path.isfile", return_value=True), \
@@ -1038,7 +1050,8 @@ async def test_handle_url_non_youtube_uses_typing_wrapper():
 
     mock_typing = _make_typing_indicator_mock()
 
-    with patch("handlers.detect_platform", return_value="tiktok"), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value="tiktok"), \
          patch("handlers.get_metadata") as mock_metadata, \
          patch("platforms.tiktok.download_video", return_value=True), \
          patch("os.path.isfile", return_value=True), \
@@ -1078,7 +1091,8 @@ async def test_handle_url_reply_to_retry_downloads_on_bot_mention():
     context.user_data = {}
 
     mock_typing = _make_typing_indicator_mock()
-    with patch("handlers.detect_platform", return_value="youtube"), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={"title": "Test", "filesize_approx": 5*1024*1024}), \
          patch("platforms.youtube.download_video", return_value=True), \
          patch("os.path.isfile", return_value=True), \
@@ -1149,7 +1163,8 @@ async def test_handle_url_reply_shows_limit_for_large_youtube():
     context.user_data = {}
 
     mock_typing = _make_typing_indicator_mock()
-    with patch("handlers.detect_platform", return_value="youtube"), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value="youtube"), \
          patch("handlers.get_metadata", return_value={
              "title": "Big Video",
              "filesize_approx": 60 * 1024 * 1024,
@@ -1181,7 +1196,8 @@ async def test_handle_url_reply_unsupported_platform():
     context.bot_data = {"bot_username": "mediabot"}
 
     mock_typing = _make_typing_indicator_mock()
-    with patch("handlers.detect_platform", return_value=None), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value=None), \
          patch("handlers.typing_indicator", mock_typing):
         await handle_url(update, context)
 
@@ -1236,7 +1252,8 @@ async def test_handle_url_routes_pinterest_to_gallery_dl_fallback(update, contex
     """Pinterest URL triggers gallery-dl fallback instead of 'Unsupported platform'."""
     update.message.text = "https://pinterest.com/pin/123456/"
 
-    with patch("handlers.detect_platform", return_value=None), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value=None), \
          patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=True) as mock_fallback:
         await handle_url(update, context)
 
@@ -1254,7 +1271,8 @@ async def test_gallery_dl_fallback_video_success(update, context):
     update.message.text = "https://example.com/post"
     update.message.reply_video = AsyncMock()
 
-    with patch("handlers.detect_platform", return_value=None), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value=None), \
          patch("handlers.download_gallery_dl_images", return_value=[]), \
          patch("handlers.download_gallery_dl_video", return_value="/tmp/video.mp4"), \
          patch("handlers.cleanup_dir"), \
@@ -1289,7 +1307,8 @@ async def test_gallery_dl_fallback_failure_p2p_shows_error(update, context):
     update.message.text = "https://example.com/post"
     update.effective_chat.type = "private"
 
-    with patch("handlers.detect_platform", return_value=None), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", return_value=None), \
          patch("handlers.download_gallery_dl_images", return_value=[]), \
          patch("handlers.download_gallery_dl_video", return_value=None), \
          patch("handlers.cleanup_dir"):
@@ -1341,7 +1360,8 @@ async def test_handle_url_mixed_supported_and_unsupported(update, context):
             return "youtube"
         return None
 
-    with patch("handlers.detect_platform", side_effect=mock_detect_platform), \
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.detect_platform", side_effect=mock_detect_platform), \
          patch("handlers.get_metadata", return_value={"title": "Test"}), \
          patch("platforms.youtube.download_video", return_value=True), \
          patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=True) as mock_fallback, \
@@ -1691,6 +1711,324 @@ async def test_my_chat_member_handler_still_logs_added_for_groups():
 
     context = MagicMock()
 
-    with patch("handlers.log_bot_added_to_chat") as mock_add:
+    with patch("handlers.log_bot_added_to_chat") as mock_add, \
+         patch("handlers.is_bot_admin", return_value=True):
         await my_chat_member_handler(update, context)
         mock_add.assert_called_once()
+
+
+# --- auth notification tracking tests ---
+
+
+class TestHandlerAuth:
+    @pytest.mark.asyncio
+    async def test_handle_url_unauthorized_p2p_first_time(self):
+        """Unauthorized user in P2P gets message once."""
+        from auth import _already_told_users
+
+        _already_told_users.clear()
+
+        update = MagicMock()
+        update.message.text = "https://youtube.com/watch?v=123"
+        update.message.message_id = 1
+        update.message.from_user = MagicMock()
+        update.message.from_user.id = 999999
+        update.message.chat = MagicMock()
+        update.message.chat.type = "private"
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock()
+        context.user_data = {}
+
+        with patch("handlers.is_authorized", return_value=False), \
+             patch("handlers.is_group_chat", return_value=False), \
+             patch("handlers.was_notified", return_value=False), \
+             patch("handlers.mark_notified"):
+            await handle_url(update, context)
+
+            update.message.reply_text.assert_called_once()
+            call_args = update.message.reply_text.call_args
+            assert "not authorized" in call_args[0][0].lower()
+
+    @pytest.mark.asyncio
+    async def test_handle_url_unauthorized_p2p_second_time(self):
+        """Unauthorized user in P2P silently ignored after first time."""
+        from auth import _already_told_users
+
+        _already_told_users.clear()
+
+        update = MagicMock()
+        update.message.text = "https://youtube.com/watch?v=123"
+        update.message.message_id = 1
+        update.message.from_user = MagicMock()
+        update.message.from_user.id = 999999
+        update.message.chat = MagicMock()
+        update.message.chat.type = "private"
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock()
+        context.user_data = {}
+
+        with patch("handlers.is_authorized", return_value=False), \
+             patch("handlers.is_group_chat", return_value=False), \
+             patch("handlers.was_notified", return_value=True):
+            await handle_url(update, context)
+
+            update.message.reply_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_audio_command_unauthorized_p2p_first_time(self):
+        """Unauthorized user /audio in P2P gets message once."""
+        from auth import _already_told_users
+
+        _already_told_users.clear()
+
+        update = MagicMock()
+        update.message.text = "/audio https://youtube.com/watch?v=123"
+        update.message.message_id = 1
+        update.message.from_user = MagicMock()
+        update.message.from_user.id = 999999
+        update.message.chat = MagicMock()
+        update.message.chat.type = "private"
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock()
+        context.user_data = {}
+
+        with patch("handlers.is_authorized", return_value=False), \
+             patch("handlers.is_group_chat", return_value=False), \
+             patch("handlers.was_notified", return_value=False), \
+             patch("handlers.mark_notified"):
+            await audio_command(update, context)
+
+            update.message.reply_text.assert_called_once()
+            call_args = update.message.reply_text.call_args
+            assert "not authorized" in call_args[0][0].lower()
+
+    @pytest.mark.asyncio
+    async def test_audio_command_unauthorized_p2p_second_time(self):
+        """Unauthorized user /audio in P2P silently ignored after first time."""
+        from auth import _already_told_users
+
+        _already_told_users.clear()
+
+        update = MagicMock()
+        update.message.text = "/audio https://youtube.com/watch?v=123"
+        update.message.message_id = 1
+        update.message.from_user = MagicMock()
+        update.message.from_user.id = 999999
+        update.message.chat = MagicMock()
+        update.message.chat.type = "private"
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock()
+        context.user_data = {}
+
+        with patch("handlers.is_authorized", return_value=False), \
+             patch("handlers.is_group_chat", return_value=False), \
+             patch("handlers.was_notified", return_value=True):
+            await audio_command(update, context)
+
+            update.message.reply_text.assert_not_called()
+
+    # --- End-to-end notification tracking tests (real was_notified/mark_notified) ---
+
+    @pytest.mark.asyncio
+    async def test_handle_url_unauthorized_p2p_e2e_notifies_and_suppresses(self):
+        """End-to-end: first call notifies, second call suppresses (real _already_told_users)."""
+        from auth import _already_told_users
+
+        _already_told_users.clear()
+
+        def _make_update(user_id, chat_type="private"):
+            u = MagicMock()
+            u.message.text = "https://youtube.com/watch?v=123"
+            u.message.message_id = 1
+            u.message.from_user = MagicMock()
+            u.message.from_user.id = user_id
+            u.message.chat = MagicMock()
+            u.message.chat.type = chat_type
+            u.message.reply_text = AsyncMock()
+            return u
+
+        user_id = 777777
+
+        with patch("auth.ALLOWED_USER_IDS", [111]), \
+             patch("auth.ALLOWED_GROUP_IDS", []):
+            # First request: should reply with "not authorized"
+            u1 = _make_update(user_id)
+            ctx1 = MagicMock()
+            ctx1.user_data = {}
+            await handle_url(u1, ctx1)
+            u1.message.reply_text.assert_called_once()
+            assert "not authorized" in u1.message.reply_text.call_args[0][0].lower()
+            assert user_id in _already_told_users
+
+            # Second request: should be silently suppressed
+            u2 = _make_update(user_id)
+            ctx2 = MagicMock()
+            ctx2.user_data = {}
+            await handle_url(u2, ctx2)
+            u2.message.reply_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_audio_command_unauthorized_p2p_e2e_notifies_and_suppresses(self):
+        """End-to-end: first /audio notifies, second suppresses (real _already_told_users)."""
+        from auth import _already_told_users
+
+        _already_told_users.clear()
+
+        def _make_update(user_id, chat_type="private"):
+            u = MagicMock()
+            u.message.text = "/audio https://youtube.com/watch?v=123"
+            u.message.message_id = 1
+            u.message.from_user = MagicMock()
+            u.message.from_user.id = user_id
+            u.message.chat = MagicMock()
+            u.message.chat.type = chat_type
+            u.message.reply_text = AsyncMock()
+            return u
+
+        user_id = 888888
+
+        with patch("auth.ALLOWED_USER_IDS", [111]), \
+             patch("auth.ALLOWED_GROUP_IDS", []):
+            # First request: should reply with "not authorized"
+            u1 = _make_update(user_id)
+            ctx1 = MagicMock()
+            ctx1.user_data = {}
+            await audio_command(u1, ctx1)
+            u1.message.reply_text.assert_called_once()
+            assert "not authorized" in u1.message.reply_text.call_args[0][0].lower()
+            assert user_id in _already_told_users
+
+            # Second request: should be silently suppressed
+            u2 = _make_update(user_id)
+            ctx2 = MagicMock()
+            ctx2.user_data = {}
+            await audio_command(u2, ctx2)
+            u2.message.reply_text.assert_not_called()
+
+    # --- Unauthorized user in group chat (silently ignored) ---
+
+class TestMyChatMemberHandler:
+    @pytest.mark.asyncio
+    async def test_bot_added_by_admin(self):
+        """Bot added by admin should stay and log."""
+        from handlers import my_chat_member_handler
+
+        update = MagicMock(spec=Update)
+        update.my_chat_member = MagicMock(spec=ChatMemberUpdated)
+        update.my_chat_member.chat = MagicMock(spec=Chat)
+        update.my_chat_member.chat.type = "supergroup"
+        update.my_chat_member.chat.id = 123456
+        update.my_chat_member.old_chat_member = MagicMock()
+        update.my_chat_member.old_chat_member.status = "left"
+        update.my_chat_member.new_chat_member = MagicMock()
+        update.my_chat_member.new_chat_member.status = "member"
+        update.my_chat_member.from_user = MagicMock(spec=User)
+        update.my_chat_member.from_user.id = 999999
+
+        context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+        context.bot.leave_chat = AsyncMock()
+
+        with patch('handlers.is_bot_admin', return_value=True), \
+             patch('handlers.log_bot_added_to_chat'):
+            await my_chat_member_handler(update, context)
+
+            context.bot.leave_chat.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bot_added_by_non_admin(self):
+        """Bot added by non-admin should leave."""
+        from handlers import my_chat_member_handler
+
+        update = MagicMock(spec=Update)
+        update.my_chat_member = MagicMock(spec=ChatMemberUpdated)
+        update.my_chat_member.chat = MagicMock(spec=Chat)
+        update.my_chat_member.chat.type = "supergroup"
+        update.my_chat_member.chat.id = 123456
+        update.my_chat_member.chat.title = "Test Group"
+        update.my_chat_member.old_chat_member = MagicMock()
+        update.my_chat_member.old_chat_member.status = "left"
+        update.my_chat_member.new_chat_member = MagicMock()
+        update.my_chat_member.new_chat_member.status = "member"
+        update.my_chat_member.from_user = MagicMock(spec=User)
+        update.my_chat_member.from_user.id = 123456
+        update.my_chat_member.from_user.first_name = "Test"
+        update.message = MagicMock()
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+        context.bot.leave_chat = AsyncMock()
+        context.bot.send_message = AsyncMock()
+
+        with patch('handlers.is_bot_admin', return_value=False):
+            await my_chat_member_handler(update, context)
+
+            context.bot.leave_chat.assert_called_once_with(123456)
+            context.bot.send_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_url_group_unauthorized_silent(self):
+        """Unauthorized user in group chat is silently ignored (no reply, no notification).
+
+        In groups, is_authorized always returns True (bot only exists if admin added it).
+        But if is_authorized returns False AND is_group_chat returns True, the handler
+        silently returns without replying or tracking notification state.
+        """
+        from auth import _already_told_users
+
+        _already_told_users.clear()
+        user_id = 555555
+
+        update = MagicMock()
+        update.message.text = "https://youtube.com/watch?v=123"
+        update.message.message_id = 1
+        update.message.from_user = MagicMock()
+        update.message.from_user.id = user_id
+        update.message.chat = MagicMock()
+        update.message.chat.type = "group"
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock()
+        context.user_data = {}
+
+        with patch("handlers.is_authorized", return_value=False), \
+             patch("handlers.is_group_chat", return_value=True):
+            await handle_url(update, context)
+
+        # Should NOT reply at all
+        update.message.reply_text.assert_not_called()
+        # was_notified/mark_notified should NOT be called (group path skips notification tracking)
+        # Verify the real _already_told_users was not affected
+        assert user_id not in _already_told_users
+
+    @pytest.mark.asyncio
+    async def test_audio_command_group_unauthorized_silent(self):
+        """Unauthorized user /audio in group chat is silently ignored."""
+        from auth import _already_told_users
+
+        _already_told_users.clear()
+        user_id = 666666
+
+        update = MagicMock()
+        update.message.text = "/audio https://youtube.com/watch?v=123"
+        update.message.message_id = 1
+        update.message.from_user = MagicMock()
+        update.message.from_user.id = user_id
+        update.message.chat = MagicMock()
+        update.message.chat.type = "group"
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock()
+        context.user_data = {}
+
+        with patch("handlers.is_authorized", return_value=False), \
+             patch("handlers.is_group_chat", return_value=True):
+            await audio_command(update, context)
+
+        # Should NOT reply at all
+        update.message.reply_text.assert_not_called()
+        # Verify the real _already_told_users was not affected
+        assert user_id not in _already_told_users

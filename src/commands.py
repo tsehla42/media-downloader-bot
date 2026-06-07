@@ -5,7 +5,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from config import MAX_FILE_SIZE
-from auth import is_authorized
+from auth import is_authorized, was_notified, mark_notified
+from logging_config import log_unauthorized_access
 
 
 # Per-user caption preferences: user_id -> bool (True = remove caption)
@@ -22,7 +23,11 @@ def get_caption_for_user(user_id: int, title: str) -> str:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
     if not is_authorized(update):
-        await update.message.reply_text("You are not authorized to use this bot")
+        user_id = update.message.from_user.id
+        if not was_notified(user_id):
+            await update.message.reply_text("You are not authorized to use this bot")
+            mark_notified(user_id)
+            log_unauthorized_access(update.message.from_user, update.message.chat, "/start")
         return
 
     await update.message.reply_text(
@@ -40,7 +45,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command."""
     if not is_authorized(update):
-        await update.message.reply_text("You are not authorized to use this bot")
+        user_id = update.message.from_user.id
+        if not was_notified(user_id):
+            await update.message.reply_text("You are not authorized to use this bot")
+            mark_notified(user_id)
+            log_unauthorized_access(update.message.from_user, update.message.chat, "/help")
         return
 
     await update.message.reply_text(
@@ -60,10 +69,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /caption command to toggle caption preferences."""
     if not is_authorized(update):
-        await update.message.reply_text(
-            "You are not authorized to use this bot",
-            reply_parameters={"message_id": update.message.message_id},
-        )
+        user_id = update.message.from_user.id
+        if not was_notified(user_id):
+            await update.message.reply_text(
+                "You are not authorized to use this bot",
+                reply_parameters={"message_id": update.message.message_id},
+            )
+            mark_notified(user_id)
+            log_unauthorized_access(update.message.from_user, update.message.chat, "/caption")
         return
 
     text = update.message.text.replace("/caption", "").strip().lower()

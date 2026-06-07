@@ -53,9 +53,9 @@ media-downloader-bot/
 
 | Module | Depends on | What it does |
 |---|---|---|
-| `src/config.py` | .env file | Loads BOT_TOKEN, ALLOWED_USER_IDS, ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, MODE, LOG_OUTPUT, LOG_DIR |
-| `src/auth.py` | config | Authorization: `is_authorized()`, `is_group_chat()`, `_is_allowed()`, `_is_allowed_group()` |
-| `src/commands.py` | auth, config, logging_config | User commands: `start_command()`, `help_command()`, `caption_command()`, `get_caption_for_user()` |
+| `src/config.py` | .env file, allowed-contacts.json | Loads BOT_TOKEN, BOT_ADMIN_IDS, ALLOWED_USER_IDS (merged from JSON + env), ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, MODE, LOG_OUTPUT, LOG_DIR |
+| `src/auth.py` | config | Authorization: `is_authorized()`, `is_bot_admin()`, `was_notified()`, `mark_notified()`, `is_group_chat()`, `_is_allowed()`, `_is_allowed_group()` |
+| `src/commands.py` | auth, config, logging_config | User commands: `start_command()`, `help_command()`, `caption_command()`, `get_caption_for_user()` — all use notification tracking for unauthorized users |
 | `src/telegram_utils.py` | nothing | Telegram helpers: `typing_indicator()` context manager, `send_images()` for single/batched photo replies |
 | `src/platforms/__init__.py` | nothing | Platform detection: `detect_platform()`, `SUPPORTED_PLATFORMS` dict |
 | `src/platforms/youtube.py` | downloader, commands, telegram_utils | YouTube/YT Music: `handle_youtube()`, `handle_ytmusic()`, `ytmusic_callback()`, format picker |
@@ -63,14 +63,18 @@ media-downloader-bot/
 | `src/platforms/instagram.py` | downloader, telegram_utils | Instagram: `handle_instagram()` with gallery-dl fallback and cookies |
 | `src/utils.py` | nothing | URL validation, file cleanup |
 | `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()`, `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()` |
-| `src/logging_config.py` | config | Structured JSON logging: three-file split (requests/details/service), JSONFormatter, filter-based routing, with_request_logging decorator, contextvars for request_id, service log functions (log_new_user, log_bot_added_to_chat, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot) |
-| `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader | Thin orchestrator: `handle_url()` (includes reply-to-retry and gallery-dl fallback), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` (handles bot added/removed/promoted/demoted/blocked) |
+| `src/logging_config.py` | config | Structured JSON logging: three-file split (requests/details/service), JSONFormatter, filter-based routing, with_request_logging decorator, contextvars for request_id, service log functions (log_new_user, log_bot_added_to_chat, log_bot_rejected_group_addition, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot, log_unauthorized_access) |
+| `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader, logging_config | Thin orchestrator: `handle_url()` (includes reply-to-retry and gallery-dl fallback), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` (handles bot added/removed/promoted/demoted/blocked, admin check for group additions) |
 | `src/bot.py` | config, handlers, commands, platforms.youtube, logging_config | Entry point, wires everything together, initializes logging, global error handler |
 
 ## Data Flow
 
 1. User sends URL or `/audio` command -> `handlers.py` routes to appropriate handler
-2. `/audio` → `audio_command()` → `download_audio()` → `reply_audio()` (logged via `@with_request_logging`)
+2. **Authorization check**: `is_authorized(update)` called at start of every handler:
+   - **Groups**: always allowed (bot only exists if admin added it)
+   - **P2P**: checks `ALLOWED_USER_IDS` (empty sources = allow all; configured sources = user must be in list)
+   - **Unauthorized P2P**: first attempt → "You are not authorized" + `log_unauthorized_access` event; subsequent → silently ignored
+3. `/audio` → `audio_command()` → `download_audio()` → `reply_audio()` (logged via `@with_request_logging`)
 3. Regular URL → `handle_url()` detects group or P2P chat via `is_group_chat()`
 4. URLs split into `supported_urls` (YT/TT/IG) and `unsupported_urls` (everything else)
 5. YouTube URLs: metadata fetched silently (no typing indicator), size checked against 50MB limit
@@ -92,24 +96,29 @@ media-downloader-bot/
    - Reply-to-retry uses `"event": "reply_to_retry"` to differentiate from normal requests
 11. Intermediate download steps (yt-dlp calls, retries, gallery-dl attempts) logged to `request-details.jsonl` via `details_logger`
 12. Bot start/stop, chat membership, new user events logged to `service.jsonl` via `service_logger`
-13. `my_chat_member_handler` (registered via `ChatMemberHandler`) logs: bot added/removed from chat, admin added/removed with rights, admin rights changed (with delta), user blocks bot (private chat)
+14. `my_chat_member_handler` (registered via `ChatMemberHandler`):
+    - Bot added to group: checks `is_bot_admin(from_user.id)` → admin: log + allow; non-admin: `log_bot_rejected_group_addition` + reject + leave
+    - Bot removed/promoted/demoted: logged to service.jsonl
+    - User blocks bot (private chat): logged as `user_blocked_bot`
 
 ## Key Design Decisions
 
 - **yt-dlp as subprocess** - Not imported as Python library. Keeps yt-dlp independently upgradable.
-- **Stateless bot** - No database. Temp files cleaned after upload.
+- **Stateless bot** - No database. Temp files cleaned after upload. Notification tracking (`_already_told_users`) resets on restart.
 - **Auto best quality** - Downloads best quality under 50MB Telegram limit, retries with worst on failure.
-- **User allowlist** - ALLOWED_USER_IDS from `allowed_contacts.json` (generated by separate get-contact-ids project). Fallback to .env. Empty = allow all.
-- **Group auto-detect** - Bot silently ignores unsupported URLs in groups. Optional ALLOWED_GROUP_IDS restricts which groups.
+- **User allowlist** - IDs merged from `allowed-contacts.json` (array of objects with `id` field) + `ALLOWED_USER_IDS` env var. If no sources configured = allow all. If sources configured but user not in list = deny.
+- **Bot admins** - `BOT_ADMIN_IDS` env var (comma-separated). Admins can add bot to groups. Empty = anyone can add.
+- **Unauthorized user handling** - First attempt: "You are not authorized" + log `unauthorized_access` event. Subsequent attempts: silently ignored (in-memory set, resets on restart).
+- **Group security** - Only bot admins can add bot to groups (checked in `my_chat_member_handler`). Non-admin additions rejected with message + bot leaves.
 - **Structured logging** - Three JSON log files: `requests.jsonl` (request lifecycle), `request-details.jsonl` (intermediate download steps), `service.jsonl` (bot events). Filter-based routing by logger name. Zero external dependencies.
-- **Docker deployment** - Multi-stage build with yt-dlp, gallery-dl, and ffmpeg. Persistent logs via volume mount to `./logs/`.
+- **Docker deployment** - Multi-stage build with yt-dlp, gallery-dl, and ffmpeg. Persistent logs via volume mount to `./logs/`. `allowed-contacts.json` mounted read-only.
 - **Platform separation** - Each platform (YouTube, TikTok, Instagram) has its own module with isolated download logic.
 
 ## Security Rules
 
 **NEVER** `git add`, `git commit`, or `git push` files under `docs/superpowers/` (specs, plans, design docs). These are internal AI working documents and must NEVER enter git history.
 
-Never commit `allowed_contacts.json` — it contains user IDs and is generated locally by the get-contact-ids script.
+Never commit `allowed-contacts.json` — it contains user IDs and is generated locally by the get-contact-ids script.
 
 ## Running Tests
 
@@ -117,7 +126,7 @@ Never commit `allowed_contacts.json` — it contains user IDs and is generated l
 python -m pytest tests/ -v
 ```
 
-All 216 tests use mocked subprocess calls - no real downloads needed.
+All 243 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 

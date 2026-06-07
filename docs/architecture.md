@@ -9,7 +9,9 @@ Modular design. Each module has one clear responsibility. yt-dlp is called as a 
 ### config.py
 Loads settings from `.env` via python-dotenv. Exports constants:
 - `BOT_TOKEN` - Telegram bot token
-- `ALLOWED_USER_IDS` - Comma-separated user IDs (empty = allow all)
+- `BOT_ADMIN_IDS` - Comma-separated admin user IDs (empty = anyone can add bot to groups)
+- `ALLOWED_USER_IDS` - Merged from `allowed-contacts.json` (array of objects with `id` field) + env var. Empty sources = allow all; configured sources = user must be in list.
+- `ALLOWED_IDS_CONFIGURED` - Boolean: True if any ID source (JSON file or env var) exists
 - `ALLOWED_GROUP_IDS` - Comma-separated group chat IDs (empty = allow all groups)
 - `DOWNLOAD_DIR` - Temp directory for downloads (default: /tmp/bot-downloads)
 - `MAX_FILE_SIZE` - Max download size in MB (default: 50)
@@ -21,18 +23,21 @@ Loads settings from `.env` via python-dotenv. Exports constants:
 
 ### auth.py
 Authorization checks, depends on config:
-- `is_authorized(update)` - Checks if request is authorized (groups checked against ALLOWED_GROUP_IDS, DMs against ALLOWED_USER_IDS)
+- `is_authorized(update)` - Groups: always allowed (bot only exists if admin added it). P2P: checks ALLOWED_USER_IDS (empty sources = allow all; configured sources = user must be in list).
+- `is_bot_admin(user_id)` - Checks if user is in BOT_ADMIN_IDS (empty = allow all)
+- `was_notified(user_id)` - Checks if user has been told they're not authorized (in-memory set)
+- `mark_notified(user_id)` - Marks user as notified (resets on restart)
 - `is_group_chat(update)` - Checks if message is from group/supergroup
-- `_is_allowed(user_id)` - Checks if user is in allowlist (empty = allow all)
+- `_is_allowed(user_id)` - Checks if user is in allowlist (no sources = allow all; sources configured but empty = deny all)
 - `_is_allowed_group(chat_id)` - Checks if group is in allowlist (empty = allow all)
 
 ### commands.py
 User-facing commands, depends on auth, config, logging_config:
 - `_user_caption_prefs` - Per-user caption preferences dict (user_id -> bool)
 - `get_caption_for_user(user_id, title)` - Returns caption string based on preference (empty if disabled)
-- `start_command(update, context)` - Welcome message, logs new users
-- `help_command(update, context)` - Supported platforms and commands list
-- `caption_command(update, context)` - Toggle video captions on/off
+- `start_command(update, context)` - Welcome message (uses notification tracking for unauthorized users)
+- `help_command(update, context)` - Supported platforms and commands list (uses notification tracking)
+- `caption_command(update, context)` - Toggle video captions on/off (uses notification tracking)
 
 ### telegram_utils.py
 Telegram helper utilities, no dependencies:
@@ -81,12 +86,12 @@ Wraps yt-dlp and gallery-dl binary calls via subprocess:
 - `download_gallery_dl_video(url, dir)` - Downloads video using gallery-dl (for unsupported platform fallback)
 
 ### handlers.py
-Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloader:
-- `my_chat_member_handler(update, context)` - Handles bot membership changes (added, removed, promoted, demoted, blocked). Registered via `ChatMemberHandler` with `MY_CHAT_MEMBER` filter. Logs admin rights with delta when bot is added/removed as admin or rights change. Detects user-blocks-bot in private chats (status "kicked" + chat type "private").
-- `audio_command(update, context)` - Download as MP3 (registered as CommandHandler)
+Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloader, logging_config:
+- `my_chat_member_handler(update, context)` - Handles bot membership changes. When bot added to group: checks `is_bot_admin(from_user.id)` → admin: log + allow; non-admin: `log_bot_rejected_group_addition` + reject message + leave. Also handles removed/promoted/demoted/blocked events.
+- `audio_command(update, context)` - Download as MP3 (uses notification tracking for unauthorized users)
 - `_download_and_send(update, context, url, silent, reply_to_message_id)` - Orchestrates download with YouTube size check and error suppression
 - `handle_gallery_dl_fallback(update, context, url)` - Tries gallery-dl for unsupported platforms (images then video), silent on failure
-- `handle_url(update, context)` - Main handler: detects group/P2P, splits supported/unsupported URLs, handles reply-to-retry, routes unsupported URLs to gallery-dl fallback
+- `handle_url(update, context)` - Main handler: authorization check, detects group/P2P, splits supported/unsupported URLs, handles reply-to-retry, routes unsupported URLs to gallery-dl fallback
 
 ### logging_config.py
 Structured JSON logging with zero external dependencies:
@@ -98,7 +103,7 @@ Structured JSON logging with zero external dependencies:
 - `setup_logging()` - Creates three `RotatingFileHandler` instances with filters + console handler
 - `with_request_logging()` - Decorator that wraps handlers and logs request lifecycle
 - `log_request_received()` / `log_request_completed()` / `log_request_failed()` - Log request events (use `requests_logger`)
-- `log_new_user()` / `log_bot_added_to_chat()` / `log_bot_removed_from_chat()` / `log_admin_rights_changed()` / `log_user_blocked_bot()` - System events (use `service_logger`)
+- `log_new_user()` / `log_bot_added_to_chat()` / `log_bot_rejected_group_addition()` / `log_bot_removed_from_chat()` / `log_admin_rights_changed()` / `log_user_blocked_bot()` / `log_unauthorized_access()` - System events (use `service_logger`)
 - `_extract_admin_rights(member)` - Extracts admin rights dict from ChatMemberAdministrator
 
 ### bot.py
@@ -245,7 +250,7 @@ Service event (in `service.jsonl`):
 }
 ```
 
-Service events: `bot_started`, `bot_stopped`, `new_user_started`, `bot_added_to_chat`, `bot_removed_from_chat`, `bot_added_as_admin`, `bot_admin_rights_changed`, `bot_removed_as_admin`, `user_blocked_bot`.
+Service events: `bot_started`, `bot_stopped`, `new_user_started`, `bot_added_to_chat`, `bot_rejected_group_addition`, `bot_removed_from_chat`, `bot_added_as_admin`, `bot_admin_rights_changed`, `bot_removed_as_admin`, `user_blocked_bot`, `unauthorized_access`.
 
 Detail log (in `request-details.jsonl`):
 ```json
@@ -306,6 +311,12 @@ cat logs/service.jsonl | jq 'select(.event | test("bot_added_as_admin|bot_admin_
 
 # Bot added as admin to channel
 cat logs/service.jsonl | jq 'select(.event == "bot_added_as_admin" and .chat.type == "channel")'
+
+# Unauthorized access attempts
+cat logs/service.jsonl | jq 'select(.event == "unauthorized_access")'
+
+# Non-admin group additions rejected
+cat logs/service.jsonl | jq 'select(.event == "bot_rejected_group_addition")'
 ```
 
 ## Why Subprocess (not Python import)?
@@ -327,7 +338,8 @@ cat logs/service.jsonl | jq 'select(.event == "bot_added_as_admin" and .chat.typ
 
 **Volumes:**
 - `./logs:/usr/src/app/logs` — persistent structured JSON logs
-- `./cookies.txt:/app/cookies.txt:ro` — Instagram browser cookies (read-only)
+- `./cookies.txt:/usr/src/app/cookies.txt:ro` — Instagram browser cookies (read-only)
+- `./allowed-contacts.json:/usr/src/app/allowed-contacts.json:ro` — user allowlist (read-only)
 - `bot-downloads:/tmp/bot-downloads` — temp download directory (named volume)
 
 **Deploying updates:**
