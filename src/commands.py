@@ -6,7 +6,6 @@ from telegram.ext import ContextTypes
 
 from config import MAX_FILE_SIZE
 from auth import is_authorized
-from logging_config import log_new_user, is_new_user
 
 
 # Per-user caption preferences: user_id -> bool (True = remove caption)
@@ -25,10 +24,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not is_authorized(update):
         await update.message.reply_text("You are not authorized to use this bot")
         return
-
-    user = update.message.from_user
-    if is_new_user(user.id):
-        log_new_user(user)
 
     await update.message.reply_text(
         "Media Downloader Bot\n\n"
