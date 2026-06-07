@@ -35,45 +35,6 @@ except ImportError:
     # Fallback: fixed UTC+2 (winter time — safe default for most of the year)
     _KYIV_TZ = timezone(timedelta(hours=2))
 
-# Seen users tracker for first-time user detection
-_seen_users_file = "seen_users.json"
-_seen_users: set = set()
-
-
-def _load_seen_users() -> set:
-    """Load seen user IDs from file."""
-    global _seen_users
-    if _seen_users:
-        return _seen_users
-    try:
-        if os.path.exists(_seen_users_file):
-            with open(_seen_users_file, "r") as f:
-                data = json.load(f)
-                _seen_users = set(data.get("user_ids", []))
-    except (json.JSONDecodeError, OSError):
-        _seen_users = set()
-    return _seen_users
-
-
-def _save_seen_users() -> None:
-    """Save seen user IDs to file."""
-    try:
-        with open(_seen_users_file, "w") as f:
-            json.dump({"user_ids": list(_seen_users)}, f)
-    except OSError:
-        pass  # Non-fatal: file may be unwritable (e.g. Docker permission issue)
-
-
-def is_new_user(user_id: int) -> bool:
-    """Check if user is new, and mark as seen."""
-    seen = _load_seen_users()
-    if user_id in seen:
-        return False
-    seen.add(user_id)
-    _save_seen_users()
-    return True
-
-
 class JSONFormatter(logging.Formatter):
     """Custom formatter that outputs JSON with Kyiv timezone."""
 
@@ -234,20 +195,6 @@ def log_request_failed(
             "type": getattr(chat, "type", None),
         }
     requests_logger.error("request_failed", extra={"extra_data": log_data})
-
-
-def log_new_user(user) -> None:
-    """Log when a first-time user starts the bot."""
-    log_data = {
-        "event": "new_user_started",
-        "message": "New user started bot",
-        "user": {
-            "id": user.id,
-            "name": getattr(user, "first_name", None),
-            "username": getattr(user, "username", None),
-        },
-    }
-    service_logger.info("new_user_started", extra={"extra_data": log_data})
 
 
 def log_bot_added_to_chat(chat, added_by) -> None:
@@ -558,13 +505,12 @@ def setup_logging() -> None:
     LOG_OUTPUT=file           → file only
     LOG_OUTPUT=both           → console + file (default)
     """
-    global _initialized, _seen_users_file
+    global _initialized
     if _initialized:
         return
     _initialized = True
 
-    from config import MODE, LOG_OUTPUT, LOG_DIR, SEEN_USERS_FILE
-    _seen_users_file = SEEN_USERS_FILE
+    from config import MODE, LOG_OUTPUT, LOG_DIR
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)

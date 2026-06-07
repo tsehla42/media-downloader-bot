@@ -189,28 +189,6 @@ async def test_start_command(update, context):
 
 
 @pytest.mark.asyncio
-async def test_start_command_logs_new_user(update, context):
-    """start_command logs when a new user starts the bot."""
-    context.bot_data = {"bot_username": "testbot"}
-    with patch("commands.is_new_user", return_value=True) as mock_is_new, \
-         patch("commands.log_new_user") as mock_log:
-        await start_command(update, context)
-        mock_is_new.assert_called_once_with(123456)
-        mock_log.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_start_command_does_not_log_returning_user(update, context):
-    """start_command does not log when a returning user starts the bot."""
-    context.bot_data = {"bot_username": "testbot"}
-    with patch("commands.is_new_user", return_value=False) as mock_is_new, \
-         patch("commands.log_new_user") as mock_log:
-        await start_command(update, context)
-        mock_is_new.assert_called_once_with(123456)
-        mock_log.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_start_command_rejects_unauthorized_user(update, context):
     """Unauthorized user gets rejected by start_command."""
     with patch("commands.is_authorized", return_value=False):
