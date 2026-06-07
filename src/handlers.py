@@ -16,7 +16,8 @@ def _log_extra(context, url: str) -> dict:
         "request_id": context.user_data.get("request_id", ""),
         "platform": context.user_data.get("_platform", ""),
     }
-from platforms import detect_platform
+from platforms import detect_platform, extract_domain
+from utils import get_gallery_dl_domains
 from platforms.youtube import handle_youtube, handle_ytmusic, AUDIO_TITLE_MAX, _store_download_metadata
 from platforms.instagram import handle_instagram
 from platforms.tiktok import handle_tiktok
@@ -547,7 +548,24 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             for url in non_youtube_urls:
                 await _download_and_send(update, context, url)
 
-    # Process unsupported URLs via gallery-dl fallback
+    # Filter unsupported URLs against gallery-dl domain whitelist
+    gallery_dl_domains = get_gallery_dl_domains()
+    if gallery_dl_domains:
+        skipped = [url for url in unsupported_urls if extract_domain(url) not in gallery_dl_domains]
+        for url in skipped:
+            details_logger.debug("gallery-dl: skipping unsupported domain %s", extract_domain(url))
+        unsupported_urls = [url for url in unsupported_urls if extract_domain(url) in gallery_dl_domains]
+        if skipped and not supported_urls:
+            context.user_data["_platform"] = extract_domain(skipped[0])
+            context.user_data["_request_success"] = False
+    else:
+        if unsupported_urls:
+            details_logger.warning("gallery-dl: domain list unavailable, skipping fallback")
+            context.user_data["_platform"] = extract_domain(unsupported_urls[0])
+            context.user_data["_request_success"] = False
+        unsupported_urls = []
+
+    # Process remaining unsupported URLs via gallery-dl fallback
     if unsupported_urls:
         any_handled = False
         for url in unsupported_urls:
@@ -559,3 +577,9 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 "Unsupported platform. I support YouTube, TikTok, and Instagram",
                 reply_parameters={"message_id": update.message.message_id},
             )
+    elif not is_group_chat(update) and not supported_urls:
+        # All unsupported URLs were filtered out (not in gallery-dl whitelist)
+        await update.message.reply_text(
+            "Unsupported platform. I support YouTube, TikTok, and Instagram",
+            reply_parameters={"message_id": update.message.message_id},
+        )

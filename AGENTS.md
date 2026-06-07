@@ -22,11 +22,13 @@ media-downloader-bot/
 │   ├── telegram_utils.py # Telegram helpers: typing_indicator, send_images
 │   ├── logging_config.py # Structured JSON logging with three-file split (requests, details, service)
 │   ├── platforms/       # Platform-specific download logic
-│   │   ├── __init__.py # detect_platform(), SUPPORTED_PLATFORMS dict
+│   │   ├── __init__.py # detect_platform(), extract_domain(), SUPPORTED_PLATFORMS dict
 │   │   ├── youtube.py  # YouTube/YT Music download + format picker callback
 │   │   ├── tiktok.py   # TikTok download with gallery-dl fallback
 │   │   └── instagram.py # Instagram images with gallery-dl fallback
-│   └── utils.py        # URL validation, file cleanup
+│   └── utils.py        # URL validation, file cleanup, get_gallery_dl_domains()
+├── scripts/            # Utility scripts
+│   └── generate_gallery_dl_domains.py # Fetches gallery-dl supported sites, writes domain whitelist
 ├── tests/              # Test suite (imports from src/ via conftest.py)
 │   ├── test_handlers.py
 │   ├── test_commands.py
@@ -53,15 +55,15 @@ media-downloader-bot/
 
 | Module | Depends on | What it does |
 |---|---|---|
-| `src/config.py` | .env file, allowed-contacts.json | Loads BOT_TOKEN, BOT_ADMIN_IDS, ALLOWED_USER_IDS (merged from JSON + env), ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, MODE, LOG_OUTPUT, LOG_DIR |
+| `src/config.py` | .env file, allowed-contacts.json | Loads BOT_TOKEN, BOT_ADMIN_IDS, ALLOWED_USER_IDS (merged from JSON + env), ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, MODE, LOG_OUTPUT, LOG_DIR, LOG_LEVEL |
 | `src/auth.py` | config | Authorization: `is_authorized()`, `is_bot_admin()`, `was_notified()`, `mark_notified()`, `is_group_chat()`, `_is_allowed()`, `_is_allowed_group()` |
 | `src/commands.py` | auth, config, logging_config | User commands: `start_command()`, `help_command()`, `caption_command()`, `get_caption_for_user()` — all use notification tracking for unauthorized users |
 | `src/telegram_utils.py` | nothing | Telegram helpers: `typing_indicator()` context manager, `send_images()` for single/batched photo replies |
-| `src/platforms/__init__.py` | nothing | Platform detection: `detect_platform()`, `SUPPORTED_PLATFORMS` dict |
+| `src/platforms/__init__.py` | nothing | Platform detection: `detect_platform()`, `extract_domain()`, `SUPPORTED_PLATFORMS` dict |
 | `src/platforms/youtube.py` | downloader, commands, telegram_utils | YouTube/YT Music: `handle_youtube()`, `handle_ytmusic()`, `ytmusic_callback()`, format picker |
 | `src/platforms/tiktok.py` | downloader, telegram_utils | TikTok: `handle_tiktok()` with gallery-dl fallback for photo posts |
 | `src/platforms/instagram.py` | downloader, telegram_utils | Instagram: `handle_instagram()` with gallery-dl fallback and cookies |
-| `src/utils.py` | nothing | URL validation, file cleanup |
+| `src/utils.py` | nothing | URL validation, file cleanup, `get_gallery_dl_domains()` (imports/auto-generates gallery-dl domain whitelist) |
 | `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()`, `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()` |
 | `src/logging_config.py` | config | Structured JSON logging: three-file split (requests/details/service), JSONFormatter, filter-based routing, with_request_logging decorator, contextvars for request_id, service log functions (log_new_user, log_bot_added_to_chat, log_bot_rejected_group_addition, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot, log_unauthorized_access) |
 | `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader, logging_config | Thin orchestrator: `handle_url()` (includes reply-to-retry and gallery-dl fallback), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` (handles bot added/removed/promoted/demoted/blocked, admin check for group additions) |
@@ -77,7 +79,8 @@ media-downloader-bot/
 3. `/audio` → `audio_command()` → `download_audio()` → `reply_audio()` (logged via `@with_request_logging`)
 3. Regular URL → `handle_url()` detects group or P2P chat via `is_group_chat()`
 4. URLs split into `supported_urls` (YT/TT/IG) and `unsupported_urls` (everything else)
-5. YouTube URLs: metadata fetched silently (no typing indicator), size checked against 50MB limit
+5. Unsupported URLs filtered against gallery-dl domain whitelist (`get_gallery_dl_domains()`). Domains not in the list are skipped instantly (logged as `success: false` with platform set to domain)
+6. YouTube URLs: metadata fetched silently (no typing indicator), size checked against 50MB limit
 6. Reply-to-retry: user replies to message with URL and mentions bot → handled inside `handle_url()` (extracts URL from replied message, retries download)
 7. `handlers.py` detects platform via `platforms.detect_platform()`
 8. Delegates to platform-specific handler:
@@ -126,7 +129,7 @@ Never commit `allowed-contacts.json` — it contains user IDs and is generated l
 python -m pytest tests/ -v
 ```
 
-All 243 tests use mocked subprocess calls - no real downloads needed.
+All 254 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 

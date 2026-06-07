@@ -20,6 +20,7 @@ Loads settings from `.env` via python-dotenv. Exports constants:
 - `MODE` - Environment mode: "development" (default) or "production". Determines log file name.
 - `LOG_OUTPUT` - Logging destination: "console", "file", or "both" (default). "stdout" is an alias for "console".
 - `LOG_DIR` - Log file directory (default: logs)
+- `LOG_LEVEL` - Logging level: "DEBUG", "INFO" (default), "WARNING", "ERROR", "CRITICAL"
 
 ### auth.py
 Authorization checks, depends on config:
@@ -48,6 +49,7 @@ Telegram helper utilities, no dependencies:
 Platform detection and registry, no dependencies:
 - `SUPPORTED_PLATFORMS` - Dict mapping platform names to their domains
 - `detect_platform(url)` - Returns "youtube", "tiktok", "instagram", or None
+- `extract_domain(url)` - Extracts normalized domain from URL (no www., lowercase)
 
 ### platforms/youtube.py
 YouTube and YouTube Music download logic, depends on downloader, commands, telegram_utils:
@@ -74,6 +76,7 @@ Pure utility functions, no dependencies:
 - `extract_urls(text)` - Finds all URLs in text
 - `ensure_download_dir(path)` - Creates download directory if needed
 - `cleanup_file(path)` / `cleanup_dir(path)` - Safe file removal
+- `get_gallery_dl_domains()` - Returns frozenset of gallery-dl supported domains. Auto-generates `src/gallery_dl_domains.py` from Codeberg if missing.
 
 ### downloader.py
 Wraps yt-dlp and gallery-dl binary calls via subprocess:
@@ -91,7 +94,7 @@ Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloa
 - `audio_command(update, context)` - Download as MP3 (uses notification tracking for unauthorized users)
 - `_download_and_send(update, context, url, silent, reply_to_message_id)` - Orchestrates download with YouTube size check and error suppression
 - `handle_gallery_dl_fallback(update, context, url)` - Tries gallery-dl for unsupported platforms (images then video), silent on failure
-- `handle_url(update, context)` - Main handler: authorization check, detects group/P2P, splits supported/unsupported URLs, handles reply-to-retry, routes unsupported URLs to gallery-dl fallback
+- `handle_url(update, context)` - Main handler: authorization check, detects group/P2P, splits supported/unsupported URLs, filters unsupported against gallery-dl domain whitelist, handles reply-to-retry, routes remaining unsupported URLs to gallery-dl fallback
 
 ### logging_config.py
 Structured JSON logging with zero external dependencies:
@@ -128,6 +131,10 @@ handlers.handle_url()
     │   └─ Extract URL from replied message → _download_and_send(silent=False)
     │
     ├─ Split URLs into supported (YT/TT/IG) and unsupported
+    │
+    ├─ Filter unsupported URLs against gallery-dl domain whitelist
+    │   ├─ Domains not in list → skip (log as success=false, platform=domain)
+    │   └─ Domains in list → keep for gallery-dl fallback
     │
     ├─ [Group] Ignore if both lists empty (return)
     │
@@ -271,6 +278,7 @@ Detail log (in `request-details.jsonl`):
 | `MODE` | `development` | `development`/`dev` or `production`/`prod`. Determines log file name. |
 | `LOG_OUTPUT` | `both` | `console` (or `stdout`), `file`, or `both`. Controls output destinations. |
 | `LOG_DIR` | `logs` | Directory for log files |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. Set to `DEBUG` in dev to see detail logs. |
 
 ### File Rotation
 

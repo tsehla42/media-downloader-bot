@@ -33,3 +33,27 @@ def cleanup_dir(path: str) -> None:
     """Remove a directory and its contents if it exists."""
     if path and os.path.isdir(path):
         shutil.rmtree(path, ignore_errors=True)
+
+
+def get_gallery_dl_domains() -> frozenset[str]:
+    """Get gallery-dl supported domains. Auto-generates if missing."""
+    try:
+        from gallery_dl_domains import GALLERY_DL_DOMAINS
+        return GALLERY_DL_DOMAINS
+    except ImportError:
+        # Try to generate the file
+        try:
+            import subprocess
+            import sys
+            from pathlib import Path
+            script = str(Path(__file__).resolve().parent.parent / "scripts" / "generate_gallery_dl_domains.py")
+            subprocess.run(
+                [sys.executable, script],
+                timeout=30,
+                check=True,
+                capture_output=True,
+            )
+            from gallery_dl_domains import GALLERY_DL_DOMAINS
+            return GALLERY_DL_DOMAINS
+        except Exception:
+            return frozenset()
