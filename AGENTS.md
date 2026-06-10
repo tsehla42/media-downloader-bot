@@ -17,6 +17,7 @@ media-downloader-bot/
 │   ├── config.py       # Loads .env, exports settings as constants
 │   ├── downloader.py   # yt-dlp subprocess wrapper (metadata, download, audio, images)
 │   ├── handlers.py     # Telegram handlers: /audio, URL message handling (thin orchestrator)
+│   ├── guest.py        # Bot API 10.0 guest mode: handle_guest(), download pipeline, InlineQueryResult builders
 │   ├── auth.py         # Authorization checks (is_authorized, is_group_chat, allowlists)
 │   ├── commands.py     # User commands: /start, /help, /caption
 │   ├── telegram_utils.py # Telegram helpers: typing_indicator, send_images
@@ -55,7 +56,7 @@ media-downloader-bot/
 
 | Module | Depends on | What it does |
 |---|---|---|
-| `src/config.py` | .env file, allowed-contacts.json | Loads BOT_TOKEN, BOT_ADMIN_IDS, ALLOWED_USER_IDS (merged from JSON + env), ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, MODE, LOG_OUTPUT, LOG_DIR, LOG_LEVEL |
+| `src/config.py` | .env file, allowed-contacts.json | Loads BOT_TOKEN, BOT_ADMIN_IDS, ALLOWED_USER_IDS (merged from JSON + env), ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, GUEST_MODE_ENABLED, STORAGE_CHANNEL_ID, MODE, LOG_OUTPUT, LOG_DIR, LOG_LEVEL |
 | `src/auth.py` | config | Authorization: `is_authorized()`, `is_bot_admin()`, `was_notified()`, `mark_notified()`, `is_group_chat()`, `_is_allowed()`, `_is_allowed_group()` |
 | `src/commands.py` | auth, config, logging_config | User commands: `start_command()`, `help_command()`, `caption_command()`, `get_caption_for_user()` — all use notification tracking for unauthorized users |
 | `src/telegram_utils.py` | nothing | Telegram helpers: `typing_indicator()` context manager, `send_images()` for single/batched photo replies |
@@ -67,7 +68,8 @@ media-downloader-bot/
 | `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()`, `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()` |
 | `src/logging_config.py` | config | Structured JSON logging: three-file split (requests/details/service), JSONFormatter, filter-based routing, with_request_logging decorator, contextvars for request_id, service log functions (log_new_user, log_bot_added_to_chat, log_bot_rejected_group_addition, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot, log_unauthorized_access) |
 | `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader, logging_config | Thin orchestrator: `handle_url()` (includes reply-to-retry and gallery-dl fallback), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` (handles bot added/removed/promoted/demoted/blocked, admin check for group additions) |
-| `src/bot.py` | config, handlers, commands, platforms.youtube, logging_config | Entry point, wires everything together, initializes logging, global error handler |
+| `src/guest.py` | auth, config, downloader, platforms, utils, logging_config, httpx | Bot API 10.0 guest mode: `handle_guest()` receives guest_message updates, extracts URLs (from tag text or replied-to message), downloads via platform handlers, uploads to storage channel for file_id, replies via `answer_guest_query()`. Uses raw dicts for InlineQueryResult to avoid ptb placeholder URL issues. |
+| `src/bot.py` | config, handlers, commands, platforms.youtube, logging_config, guest | Entry point, wires everything together, initializes logging, global error handler. Guest handler registered BEFORE text handler (filters.TEXT matches guest messages via effective_message). |
 
 ## Data Flow
 
@@ -93,16 +95,24 @@ media-downloader-bot/
    - If nothing works: silent in groups, "Unsupported platform" in P2P
    - Sets `platform` in logs from URL domain (e.g. "deviantart", "pinterest")
 10. `@with_request_logging` decorator logs request lifecycle automatically:
-   - `request_received` when handler starts (in `requests.jsonl`)
-   - `request_completed` when handler finishes (success or expected failure) (in `requests.jsonl`)
-   - `request_failed` when handler throws exception (in `requests.jsonl`)
-   - Reply-to-retry uses `"event": "reply_to_retry"` to differentiate from normal requests
+    - `request_received` when handler starts (in `requests.jsonl`)
+    - `request_completed` when handler finishes (success or expected failure) (in `requests.jsonl`)
+    - `request_failed` when handler throws exception (in `requests.jsonl`)
+    - Reply-to-retry uses `"event": "reply_to_retry"` to differentiate from normal requests
 11. Intermediate download steps (yt-dlp calls, retries, gallery-dl attempts) logged to `request-details.jsonl` via `details_logger`
 12. Bot start/stop, chat membership, new user events logged to `service.jsonl` via `service_logger`
-14. `my_chat_member_handler` (registered via `ChatMemberHandler`):
+13. `my_chat_member_handler` (registered via `ChatMemberHandler`):
     - Bot added to group: checks `is_bot_admin(from_user.id)` → admin: log + allow; non-admin: `log_bot_rejected_group_addition` + reject + leave
     - Bot removed/promoted/demoted: logged to service.jsonl
     - User blocks bot (private chat): logged as `user_blocked_bot`
+14. **Guest mode** (`GUEST_MODE_ENABLED=true`): User mentions `@botname` in any chat → Telegram sends `guest_message` update → `guest.handle_guest()`:
+    - Caller identified via `guest_msg.from_user` (Telegram sends `from`, ptb maps to `from_user`)
+    - Auth check via `is_user_allowed(caller_id)` (same allowlist as regular messages)
+    - URL extracted from tag text OR replied-to message
+    - Platform detected, media downloaded via platform handlers
+    - File uploaded to storage channel (`STORAGE_CHANNEL_ID`) to get `file_id`
+    - Reply via `answer_guest_query()` with InlineQueryResult (raw dict with `video_file_id`/`photo_file_id`)
+    - **Handler order**: guest handler registered BEFORE text handler because `filters.TEXT` matches guest messages via `effective_message`
 
 ## Key Design Decisions
 
@@ -116,6 +126,8 @@ media-downloader-bot/
 - **Structured logging** - Three JSON log files: `requests.jsonl` (request lifecycle), `request-details.jsonl` (intermediate download steps), `service.jsonl` (bot events). Filter-based routing by logger name. Zero external dependencies.
 - **Docker deployment** - Multi-stage build with yt-dlp, gallery-dl, and ffmpeg. Persistent logs via volume mount to `./logs/`. `allowed-contacts.json` mounted read-only.
 - **Platform separation** - Each platform (YouTube, TikTok, Instagram) has its own module with isolated download logic.
+- **Guest mode (Bot API 10.0)** - Users mention `@botname` in any chat to download media. Uses `guest_message` updates + `answerGuestQuery()`. Files uploaded to a private storage channel to get `file_id`s for InlineQueryResult. Guest handler registered before text handler to prevent `filters.TEXT` from consuming guest updates.
+- **InlineQueryResult as raw dicts** - ptb's `InlineQueryResultVideo`/`Photo` constructors require placeholder URLs that Telegram tries to fetch. Using raw dicts with `video_file_id`/`photo_file_id` avoids this.
 
 ## Security Rules
 
@@ -129,7 +141,7 @@ Never commit `allowed-contacts.json` — it contains user IDs and is generated l
 python -m pytest tests/ -v
 ```
 
-All 254 tests use mocked subprocess calls - no real downloads needed.
+All 282 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 
@@ -159,4 +171,5 @@ When asked to "update bot" or "deploy", always read `docs/deploy.md` first.
 
 - [Project Overview](docs/README.md) - Quick summary of what/why
 - [Architecture](docs/architecture.md) - Detailed module responsibilities and data flow
+- [Guest Mode Session](docs/2026-06-05-guest-mode-session.md) - Bot API 10.0 implementation notes and debugging log
 - [Deployment](docs/deploy.md) - Production server deployment flow

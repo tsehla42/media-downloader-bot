@@ -17,6 +17,8 @@ Loads settings from `.env` via python-dotenv. Exports constants:
 - `MAX_FILE_SIZE` - Max download size in MB (default: 50)
 - `MAX_CONCURRENT_DOWNLOADS` - Concurrency limit (default: 3)
 - `INSTAGRAM_COOKIES` - Path to cookies.txt for gallery-dl Instagram auth (empty = no auth)
+- `GUEST_MODE_ENABLED` - Enable Bot API 10.0 guest mode (default: false)
+- `STORAGE_CHANNEL_ID` - Private channel ID for guest mode file storage (bot must be admin). Files uploaded here to get `file_id`s for InlineQueryResult.
 - `MODE` - Environment mode: "development" (default) or "production". Determines log file name.
 - `LOG_OUTPUT` - Logging destination: "console", "file", or "both" (default). "stdout" is an alias for "console".
 - `LOG_DIR` - Log file directory (default: logs)
@@ -96,6 +98,18 @@ Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloa
 - `handle_gallery_dl_fallback(update, context, url)` - Tries gallery-dl for unsupported platforms (images then video), silent on failure
 - `handle_url(update, context)` - Main handler: authorization check, detects group/P2P, splits supported/unsupported URLs, filters unsupported against gallery-dl domain whitelist, handles reply-to-retry, routes remaining unsupported URLs to gallery-dl fallback
 
+### guest.py
+Bot API 10.0 guest mode handler, depends on auth, config, downloader, platforms, utils, logging_config, httpx:
+- `handle_guest(update, context)` - Main handler for `guest_message` updates. Identifies caller via `guest_msg.from_user` (Telegram sends `from`, ptb maps to `from_user`). Auth check via `is_user_allowed()`. Extracts URLs from tag text OR replied-to message. Routes to download pipeline.
+- `_download_and_build_result(url, platform)` - Routes to platform-specific download: YouTube, TikTok, Instagram, or gallery-dl fallback
+- `_download_youtube(url)` - Downloads YouTube video, uploads to storage channel, returns `_video_result()`
+- `_download_media_result(url, platform)` - Downloads TikTok/Instagram content (video → gallery-dl images → gallery-dl video)
+- `_gallery_dl_result(url)` - gallery-dl fallback for unsupported platforms
+- `_upload_to_telegram(file_path, media_type)` - Uploads local file to storage channel via httpx, returns `file_id`
+- `_text_result(text)` / `_video_result(file_id)` / `_photo_result(file_id)` / `_media_group_result(file_ids)` - Build InlineQueryResult as raw dicts. Uses `video_file_id`/`photo_file_id` directly (not ptb classes) to avoid placeholder URL issues.
+
+**Critical**: Guest handler must be registered BEFORE `handle_url` text handler in `bot.py`. `filters.TEXT` matches guest messages because `Update.effective_message` now includes `guest_message`.
+
 ### logging_config.py
 Structured JSON logging with zero external dependencies:
 - `JSONFormatter` - Custom `logging.Formatter` that outputs JSON with timestamp (Europe/Kyiv timezone)
@@ -112,8 +126,9 @@ Structured JSON logging with zero external dependencies:
 ### bot.py
 Entry point:
 - Creates `Application` with bot token
-- Registers all handlers
-- Starts polling
+- Registers all handlers (guest handler BEFORE text handler — see guest.py note)
+- Adds `"guest_message"` to `allowed_updates` when `GUEST_MODE_ENABLED=true`
+- Starts polling via `app.run_polling()`
 - Global `error_handler` for unhandled exceptions
 
 ## Data Flow
@@ -184,6 +199,31 @@ handlers.handle_url()
     │   └─ cleanup temp dirs
     │
     └─ Cancel typing indicator
+
+Guest mode (GUEST_MODE_ENABLED=true):
+    User mentions @botname in any chat
+        │
+        ▼
+    Telegram sends guest_message update
+        │
+        ▼
+    guest.handle_guest()
+        │
+        ├─ Caller: guest_msg.from_user (Telegram 'from' → ptb from_user)
+        ├─ Auth: is_user_allowed(caller_id)
+        ├─ URL: extract from tag text OR replied-to message
+        │
+        ├─ No URL → answer_guest_query("Please include a URL")
+        │
+        ├─ Platform detected → _download_and_build_result(url, platform)
+        │   ├─ YouTube → _download_youtube()
+        │   ├─ TikTok/Instagram → _download_media_result()
+        │   └─ Other → _gallery_dl_result()
+        │
+        ├─ Download OK → _upload_to_telegram() → get file_id
+        │   └─ answer_guest_query(InlineQueryResult with file_id)
+        │
+        └─ Download failed → answer_guest_query("Download failed: {error}")
 ```
 
 ## External Dependencies

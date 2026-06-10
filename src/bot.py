@@ -73,6 +73,12 @@ def main() -> None:
     # Add error handler
     app.add_error_handler(error_handler)
 
+    # Guest mode handler (Bot API 10.0) — must be BEFORE text handler
+    # because filters.TEXT now matches guest_message via effective_message
+    if GUEST_MODE_ENABLED:
+        from guest import handle_guest
+        app.add_handler(MessageHandler(filters.UpdateType.GUEST_MESSAGE, handle_guest))
+
     # Commands and message handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
@@ -81,11 +87,6 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(ytmusic_callback, pattern="^ytm\\|"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     app.add_handler(ChatMemberHandler(my_chat_member_handler, ChatMemberHandler.MY_CHAT_MEMBER))
-
-    # Guest mode handler (Bot API 10.0)
-    if GUEST_MODE_ENABLED:
-        from guest import handle_guest
-        app.add_handler(MessageHandler(filters.UpdateType.GUEST_MESSAGE, handle_guest))
 
     service_logger.info("Bot started (guest_mode=%s)", GUEST_MODE_ENABLED)
 

@@ -49,29 +49,28 @@ def _text_result(text: str) -> dict:
 def _video_result(file_id: str, title: str = "Video", thumbnail_url: str = "") -> dict:
     """Build InlineQueryResultVideo for video response.
 
-    Uses api_kwargs to pass video_file_id since ptb's InlineQueryResultVideo
-    only exposes video_url in its constructor.
+    Uses raw dict to pass video_file_id directly — ptb's InlineQueryResultVideo
+    requires video_url in its constructor but Telegram ignores it when
+    video_file_id is present.
     """
-    from telegram import InlineQueryResultVideo
-    return InlineQueryResultVideo(
-        id=uuid.uuid4().hex[:8],
-        video_url="https://placeholder.example.com",
-        mime_type="video/mp4",
-        thumbnail_url=thumbnail_url or "https://placeholder.example.com/thumb.jpg",
-        title=title[:100],
-        api_kwargs={"video_file_id": file_id},
-    )
+    return {
+        "type": "video",
+        "id": uuid.uuid4().hex[:8],
+        "video_file_id": file_id,
+        "title": title[:100],
+        "mime_type": "video/mp4",
+        "thumbnail_url": thumbnail_url or "",
+    }
 
 
 def _photo_result(file_id: str) -> dict:
     """Build InlineQueryResultPhoto for single photo response."""
-    from telegram import InlineQueryResultPhoto
-    return InlineQueryResultPhoto(
-        id=uuid.uuid4().hex[:8],
-        photo_url="https://placeholder.example.com",
-        thumbnail_url="https://placeholder.example.com/thumb.jpg",
-        api_kwargs={"photo_file_id": file_id},
-    )
+    return {
+        "type": "photo",
+        "id": uuid.uuid4().hex[:8],
+        "photo_file_id": file_id,
+        "thumbnail_url": "",
+    }
 
 
 def _media_group_result(file_ids: list[str]) -> dict:
@@ -95,7 +94,8 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not guest_msg:
         return
 
-    caller = guest_msg.guest_bot_caller_user
+    # Caller info is in the standard 'from' field (mapped to from_user by ptb)
+    caller = guest_msg.from_user
     caller_id = caller.id if caller else 0
     guest_query_id = guest_msg.guest_query_id
     text = guest_msg.text or ""

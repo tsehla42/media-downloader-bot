@@ -51,89 +51,78 @@ class TestTextResult:
 
 
 class TestVideoResult:
-    """Tests for _video_result() — now returns ptb InlineQueryResultVideo."""
+    """Tests for _video_result() — returns raw dict with video_file_id."""
 
-    def test_returns_ptb_video_object(self):
+    def test_returns_dict(self):
         from guest import _video_result
-        from telegram import InlineQueryResultVideo
         result = _video_result("abc123")
-        assert isinstance(result, InlineQueryResultVideo)
+        assert isinstance(result, dict)
 
     def test_type_is_video(self):
         from guest import _video_result
         result = _video_result("abc123")
-        d = result.to_dict()
-        assert d["type"] == "video"
+        assert result["type"] == "video"
 
     def test_has_string_id(self):
         from guest import _video_result
         result = _video_result("abc123")
-        assert isinstance(result.id, str)
-        assert len(result.id) == 8
+        assert isinstance(result["id"], str)
+        assert len(result["id"]) == 8
 
-    def test_video_file_id_via_api_kwargs(self):
+    def test_video_file_id(self):
         from guest import _video_result
         result = _video_result("my_file_id")
-        d = result.to_dict()
-        assert d["video_file_id"] == "my_file_id"
+        assert result["video_file_id"] == "my_file_id"
 
     def test_default_title(self):
         from guest import _video_result
         result = _video_result("abc")
-        d = result.to_dict()
-        assert d["title"] == "Video"
+        assert result["title"] == "Video"
 
     def test_custom_title(self):
         from guest import _video_result
         result = _video_result("abc", title="My Video")
-        d = result.to_dict()
-        assert d["title"] == "My Video"
+        assert result["title"] == "My Video"
 
     def test_title_truncated_to_100(self):
         from guest import _video_result
         result = _video_result("abc", title="x" * 200)
-        d = result.to_dict()
-        assert len(d["title"]) == 100
+        assert len(result["title"]) == 100
 
     def test_thumbnail_included_when_provided(self):
         from guest import _video_result
         result = _video_result("abc", thumbnail_url="https://example.com/thumb.jpg")
-        d = result.to_dict()
-        assert d["thumbnail_url"] == "https://example.com/thumb.jpg"
+        assert result["thumbnail_url"] == "https://example.com/thumb.jpg"
 
     def test_default_thumbnail_when_empty(self):
         from guest import _video_result
         result = _video_result("abc", thumbnail_url="")
-        d = result.to_dict()
-        assert d["thumbnail_url"] == "https://placeholder.example.com/thumb.jpg"
+        assert result["thumbnail_url"] == ""
 
 
 class TestPhotoResult:
-    """Tests for _photo_result() — now returns ptb InlineQueryResultPhoto."""
+    """Tests for _photo_result() — returns raw dict with photo_file_id."""
 
-    def test_returns_ptb_photo_object(self):
+    def test_returns_dict(self):
         from guest import _photo_result
-        from telegram import InlineQueryResultPhoto
         result = _photo_result("file123")
-        assert isinstance(result, InlineQueryResultPhoto)
+        assert isinstance(result, dict)
 
     def test_type_is_photo(self):
         from guest import _photo_result
         result = _photo_result("file123")
-        d = result.to_dict()
-        assert d["type"] == "photo"
+        assert result["type"] == "photo"
 
     def test_has_string_id(self):
         from guest import _photo_result
         result = _photo_result("file123")
-        assert isinstance(result.id, str)
-        assert len(result.id) == 8
+        assert isinstance(result["id"], str)
+        assert len(result["id"]) == 8
 
-    def test_photo_file_id_via_api_kwargs(self):
+    def test_photo_file_id(self):
         from guest import _photo_result
         result = _photo_result("photo_id")
-        d = result.to_dict()
-        assert d["photo_file_id"] == "photo_id"
+        assert result["photo_file_id"] == "photo_id"
 
 
 class TestMediaGroupResult:
@@ -142,16 +131,14 @@ class TestMediaGroupResult:
     def test_single_file_returns_photo_result(self):
         from guest import _media_group_result
         result = _media_group_result(["file_1"])
-        d = result.to_dict()
-        assert d["type"] == "photo"
-        assert d["photo_file_id"] == "file_1"
+        assert result["type"] == "photo"
+        assert result["photo_file_id"] == "file_1"
 
     def test_multiple_files_returns_first_photo(self):
         from guest import _media_group_result
         result = _media_group_result(["first", "second", "third"])
-        d = result.to_dict()
-        assert d["type"] == "photo"
-        assert d["photo_file_id"] == "first"
+        assert result["type"] == "photo"
+        assert result["photo_file_id"] == "first"
 
     def test_empty_list_returns_text_result(self):
         from guest import _media_group_result
@@ -171,10 +158,10 @@ def _make_guest_message(text="https://youtube.com/watch?v=123",
     msg = MagicMock()
     msg.text = text
     msg.guest_query_id = guest_query_id
-    msg.guest_bot_caller_user = MagicMock()
-    msg.guest_bot_caller_user.id = caller_id
-    msg.guest_bot_caller_user.first_name = "Test"
-    msg.guest_bot_caller_user.username = "testuser"
+    msg.from_user = MagicMock()
+    msg.from_user.id = caller_id
+    msg.from_user.first_name = "Test"
+    msg.from_user.username = "testuser"
     msg.reply_to_message = reply_to
     return msg
 
