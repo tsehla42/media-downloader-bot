@@ -1,48 +1,53 @@
-# Media Downloader Bot - Documentation
+# Media Downloader Bot
 
-## What Is This
+A Telegram bot that downloads videos and images from YouTube, TikTok, and Instagram.
 
-A Telegram bot that downloads videos and images from YouTube, TikTok, and Instagram. Users send a URL, get the media back.
+## Overview
 
-## Why It Exists
+Users paste a URL, get the media back. Also silently attempts gallery-dl for 100+ other services.
 
-Sharing media from these platforms in Telegram is annoying - links don't always preview well, and there's no built-in download. This bot makes it instant: paste URL, get video/image.
+## Documentation
 
-## How It Works
-
-1. User sends a URL to the bot (P2P or group chat)
-2. Bot detects if group or P2P, filters URLs accordingly
-3. In groups: silently ignores unsupported URLs
-4. Bot detects the platform (YouTube, YouTube Music, TikTok, Instagram)
-5. yt-dlp downloads the media via subprocess (gallery-dl with cookies for Instagram images)
-6. YouTube Music URLs automatically sent as audio (MP3)
-7. Bot uploads the file to Telegram
-8. Request is logged as structured JSON
-9. Temp files are cleaned up
-
-## Docs
-
-| Document | What it covers |
-|---|---|
-| [Architecture](architecture.md) | Module responsibilities, data flow, design decisions |
+- [Group Chats](group-chats/) - How bot works in groups
+- [Guest Mode](guest-mode/) - Bot API 10.0 guest mode
+- [P2P Chats](p2p-chats/) - Private chat behavior
+- [Logging](logs/) - Logging system
+- [Content Delivery](content-delivery/) - Media downloading
 
 ## Quick Start
 
-```bash
-cp .env.example .env
-# Edit .env with your BOT_TOKEN from @BotFather
-pip install -r requirements.txt
-python bot.py
-```
+1. Clone repo
+2. Copy `.env.example` to `.env`
+3. Add `BOT_TOKEN` to `.env`
+4. Run `docker compose up -d --build`
 
-Or with Docker:
+## Architecture
+
+Modular design. Each module has one clear responsibility.
+
+### Modules
+- `config.py` - Settings from .env
+- `auth.py` - Authorization checks
+- `commands.py` - User commands
+- `handlers.py` - Telegram handlers
+- `guest.py` - Guest mode
+- `downloader.py` - yt-dlp/gallery-dl subprocess
+- `platforms/` - Platform-specific logic
+
+### Data Flow
+1. User sends URL
+2. Bot detects platform
+3. Bot downloads media
+4. Bot sends to user
+5. Bot cleans up
+
+## Development
+
 ```bash
-cp .env.example .env
-# Edit .env with your BOT_TOKEN
 docker compose up -d --build
 docker logs -f media-downloader-bot
 ```
 
-**Persistent logs** are written to `./logs/` on the host (survives container restarts).
+## Deployment
 
-**Instagram cookies** are mounted read-only from `./cookies.txt` into the container.
+See [Deploy Guide](deploy.md) (gitignored)
