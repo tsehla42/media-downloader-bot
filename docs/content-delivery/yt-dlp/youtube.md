@@ -21,24 +21,22 @@ YouTube and YouTube Music download handling.
 ## Metadata Fetching
 
 ```python
-# src/platforms/youtube.py
-async def get_metadata(url: str) -> dict:
-    """Fetch video metadata without downloading."""
-    cmd = [
-        "yt-dlp",
-        "--no-download",
-        "--print-json",
-        url
-    ]
-    
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
-    stdout, await proc.communicate()
-    
-    return json.loads(stdout.decode())
+# src/downloader.py
+def get_metadata(url: str) -> dict | None:
+    """Get video metadata via yt-dlp --dump-json."""
+    try:
+        ytdlp = _find_ytdlp()
+        result = subprocess.run(
+            [ytdlp, "--dump-json", "--no-download", url],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return None
+        return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        return None
 ```
 
 ## Format Picker
@@ -59,37 +57,55 @@ Choose format:
 async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle format picker callback."""
     query = update.callback_query
+
+    # Parse pipe-separated callback data: "ytm|{msg_id}|{choice}"
+    _, msg_id_str, choice = query.data.split("|")
+    msg_id = int(msg_id_str)
+
+    pending = _ytmusic_pending.pop(msg_id, None)
+    if not pending:
+        await query.answer("Request expired. Send the link again")
+        return
+
     await query.answer()
-    
-    if query.data == "video":
-        # Download video only
-        await download_video(url, context)
-    elif query.data == "audio":
-        # Download audio only
-        await download_audio(url, context)
-    elif query.data == "both":
-        # Download both
-        await download_video(url, context)
-        await download_audio(url, context)
+    url = pending["url"]
+
+    async with typing_indicator(query.message.chat.id, context.bot):
+        if choice == "audio":
+            success = download_audio(url, f"{base}.mp3")
+            # ... send audio
+        elif choice == "video":
+            video_ok = await _download_and_send_video(url, base, output_path, caption, reply_params, update.effective_message, context)
+            # ... send video
+        elif choice == "both":
+            # Download video and audio concurrently via asyncio.to_thread
+            video_task = asyncio.to_thread(download_video, url, output_path, MAX_FILE_SIZE)
+            audio_task = asyncio.to_thread(download_audio, url, f"{base}.mp3")
+            results = await asyncio.gather(video_task, audio_task, return_exceptions=True)
+            # ... send both
 ```
 
 ## Audio Downloads
 
 ```python
 # src/downloader.py
-async def download_audio(url: str, request_id: str) -> str:
-    """Download audio using yt-dlp."""
-    cmd = [
-        "yt-dlp",
-        "--no-warnings",
-        "--no-check-certificates",
-        "-f", "bestaudio/best",
-        "--extract-audio",
-        "--audio-format", "mp3",
-        "-o", f"{DOWNLOAD_DIR}/%(id)s.%(ext)s",
-        url
-    ]
-    # ...
+def download_audio(url: str, output_path: str) -> bool:
+    """Extract audio as MP3."""
+    ytdlp = _find_ytdlp()
+    result = subprocess.run(
+        [
+            ytdlp,
+            "--extract-audio",
+            "--audio-format", "mp3",
+            "-o", output_path,
+            "--no-playlist",
+            url,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    return result.returncode == 0
 ```
 
 ## Error Handling

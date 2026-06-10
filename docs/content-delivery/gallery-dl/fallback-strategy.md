@@ -24,24 +24,31 @@ The bot uses a fallback strategy:
 
 ```python
 # src/handlers.py
-async def handle_url(update: Update, url: str, context: ContextTypes.DEFAULT_TYPE):
+@with_request_logging
+async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle URL message."""
-    platform = detect_platform(url)
-    
-    # Try platform-specific handler
-    if platform in ["youtube", "ytmusic"]:
-        await handle_youtube(update, url, context)
-    elif platform == "tiktok":
-        await handle_tiktok(update, url, context)
-    elif platform == "instagram":
-        await handle_instagram(update, url, context)
-    else:
-        # Unknown platform - try gallery-dl fallback
-        result = await handle_gallery_dl_fallback(url, request_id)
-        if result:
-            await send_media(update, result, context)
-        else:
-            await update.message.reply_text("Unsupported platform")
+    # Authorization check
+    if not is_authorized(update):
+        return
+
+    text = update.message.text.strip()
+    urls = extract_urls(text)
+
+    # Split into supported (YT/TT/IG) and unsupported URLs
+    supported_urls = [url for url in urls if detect_platform(url)]
+    unsupported_urls = [url for url in urls if not detect_platform(url)]
+
+    # Platform-specific handlers
+    for url in supported_urls:
+        await _download_and_send(update, context, url)
+
+    # Filter unsupported URLs against gallery-dl domain whitelist
+    gallery_dl_domains = get_gallery_dl_domains()
+    unsupported_urls = [url for url in unsupported_urls if extract_domain(url) in gallery_dl_domains]
+
+    # Process remaining unsupported URLs via gallery-dl fallback
+    for url in unsupported_urls:
+        await handle_gallery_dl_fallback(update, context, url)
 ```
 
 ## Domain Whitelist Check
@@ -69,19 +76,24 @@ async def handle_gallery_dl_fallback(url: str, request_id: str) -> str:
 
 ## Image vs Video Detection
 
-gallery-dl downloads files. Bot detects type by extension:
+gallery-dl downloads files. Bot detects type by extension using `glob.glob()`:
 
 ```python
-# src/utils.py
-def find_downloaded_files(url: str) -> list:
-    """Find files downloaded by gallery-dl."""
-    files = []
-    for file in os.listdir(DOWNLOAD_DIR):
-        if file.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
-            files.append(os.path.join(DOWNLOAD_DIR, file))
-        elif file.endswith(('.mp4', '.webm', '.mkv')):
-            files.append(os.path.join(DOWNLOAD_DIR, file))
-    return files
+# src/downloader.py (inside download_gallery_dl_images)
+images = sorted(
+    glob.glob(f"{output_dir}/**/*.jpg", recursive=True)
+    + glob.glob(f"{output_dir}/**/*.jpeg", recursive=True)
+    + glob.glob(f"{output_dir}/**/*.png", recursive=True)
+    + glob.glob(f"{output_dir}/**/*.webp", recursive=True)
+)
+
+# src/downloader.py (inside download_gallery_dl_video)
+video_extensions = ["*.mp4", "*.webm", "*.mkv", "*.mov"]
+videos = []
+for ext in video_extensions:
+    videos.extend(glob.glob(f"{output_dir}/**/{ext}", recursive=True))
+# Returns the largest video found
+return max(videos, key=os.path.getsize) if videos else None
 ```
 
 ## Error Handling

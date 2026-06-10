@@ -10,44 +10,51 @@ yt-dlp is called as a subprocess (not imported as a Python library). This keeps 
 
 ```python
 # src/downloader.py
-async def download_video(url: str, request_id: str) -> str:
+def download_video(url: str, output_path: str, max_size_mb: int = 50, platform: str = "") -> bool:
     """Download video using yt-dlp."""
-    cmd = [
-        "yt-dlp",
-        "--no-warnings",
-        "--no-check-certificates",
-        "-f", "best[ext=mp4]/best",
-        "--max-filesize", "50M",
-        "-o", f"{DOWNLOAD_DIR}/%(id)s.%(ext)s",
-        url
-    ]
-    
-    details_logger.info("download_video: running yt-dlp", extra={"url": url, "request_id": request_id})
-    
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
+    ytdlp = _find_ytdlp()
+    max_bytes = max_size_mb * 1024 * 1024
+
+    result = subprocess.run(
+        [
+            ytdlp,
+            "-f", f"best[filesize<{max_bytes}]/best",
+            "-o", output_path,
+            "--no-playlist",
+            url,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
     )
-    stdout, stderr = await proc.communicate()
-    
-    if proc.returncode != 0:
-        details_logger.info("download_video: retrying with lower quality", extra={"url": url, "request_id": request_id})
-        # Retry with worst quality
-        # ...
-    
-    details_logger.info("download_video: yt-dlp ok", extra={"url": url, "request_id": request_id})
-    return output_path
+
+    if result.returncode == 0:
+        return True
+
+    # Retry with worst quality
+    result = subprocess.run(
+        [
+            ytdlp,
+            "-f", "worst",
+            "-o", output_path,
+            "--no-playlist",
+            url,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    return result.returncode == 0
 ```
 
 ## Format Selection
 
 ### Default Format
 ```
--f "best[ext=mp4]/best"
+-f "best[filesize<{max_bytes}]/best"
 ```
-- Prefers MP4 format
-- Falls back to best available
+- Prefers best quality under the Telegram file size limit (50MB = 52428800 bytes)
+- Falls back to best available if no format matches the size constraint
 
 ### Retry Format
 ```
@@ -59,47 +66,28 @@ async def download_video(url: str, request_id: str) -> str:
 ## Platform-Specific Args
 
 ### YouTube
-```python
-# src/platforms/youtube.py
-cmd = [
-    "yt-dlp",
-    "--no-warnings",
-    "--no-check-certificates",
-    "-f", "best[ext=mp4]/best",
-    "--max-filesize", "50M",
-    "-o", f"{DOWNLOAD_DIR}/%(id)s.%(ext)s",
-    url
-]
-```
+
+YouTube uses `download_video()` from `src/downloader.py` directly. No platform-specific yt-dlp args needed.
 
 ### TikTok
+
+TikTok uses `download_video()` with a platform flag that adds an extractor arg:
+
 ```python
-# src/platforms/tiktok.py
-cmd = [
-    "yt-dlp",
-    "--no-warnings",
-    "--no-check-certificates",
-    "-f", "best",
-    "--max-filesize", "50M",
-    "-o", f"{DOWNLOAD_DIR}/%(id)s.%(ext)s",
-    url
-]
+# src/downloader.py (inside download_video)
+extra_args = []
+if platform == "tiktok":
+    extra_args.extend(["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"])
+
+result = subprocess.run(
+    [ytdlp, "-f", f"best[filesize<{max_bytes}]/best", "-o", output_path, "--no-playlist", *extra_args, url],
+    capture_output=True, text=True, timeout=300,
+)
 ```
 
 ### Instagram
-```python
-# src/platforms/instagram.py
-cmd = [
-    "yt-dlp",
-    "--no-warnings",
-    "--no-check-certificates",
-    "-f", "best",
-    "--max-filesize", "50M",
-    "--cookies", INSTAGRAM_COOKIES,  # If configured
-    "-o", f"{DOWNLOAD_DIR}/%(id)s.%(ext)s",
-    url
-]
-```
+
+Instagram uses `download_video()` from `src/downloader.py` directly. Cookies for gallery-dl fallback are handled separately in `src/platforms/instagram.py`.
 
 ## Error Handling
 

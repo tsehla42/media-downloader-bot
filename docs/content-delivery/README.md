@@ -27,19 +27,23 @@ The bot uses two main tools for downloading media:
 ```python
 # src/platforms/__init__.py
 SUPPORTED_PLATFORMS = {
-    "youtube": ["youtube.com", "youtu.be", "m.youtube.com"],
-    "ytmusic": ["music.youtube.com"],
-    "tiktok": ["tiktok.com", "vm.tiktok.com"],
-    "instagram": ["instagram.com", "instagr.am"],
+    "youtube": ["youtube.com", "youtu.be", "music.youtube.com"],
+    "tiktok": ["tiktok.com", "vm.tiktok.com", "vt.tiktok.com", "m.tiktok.com", "douyin.com"],
+    "instagram": ["instagram.com"],
 }
 
-def detect_platform(url: str) -> str:
-    """Detect platform from URL."""
-    domain = extract_domain(url)
-    for platform, domains in SUPPORTED_PLATFORMS.items():
-        if domain in domains:
-            return platform
-    return "unknown"
+def detect_platform(url: str) -> str | None:
+    """Detect which platform a URL belongs to."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        host = re.sub(r"^www\.", "", host)
+        for platform, domains in SUPPORTED_PLATFORMS.items():
+            if host in domains:
+                return platform
+    except Exception:
+        pass
+    return None
 ```
 
 ## File Size Limits

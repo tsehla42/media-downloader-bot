@@ -13,29 +13,35 @@ gallery-dl is used for:
 
 ```python
 # src/downloader.py
-async def download_gallery_dl_images(url: str, request_id: str) -> list:
+def download_gallery_dl_images(url: str, output_dir: str, cookies: str = "") -> list[str]:
     """Download images using gallery-dl."""
-    cmd = [
-        "gallery-dl",
-        "-d", DOWNLOAD_DIR,
-        url
-    ]
-    
-    details_logger.info("gallery-dl: running", extra={"url": url, "request_id": request_id})
-    
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
+    gd_path = _find_gallery_dl()
+    if not gd_path:
+        return []
+
+    os.makedirs(output_dir, exist_ok=True)
+    output_dir = os.path.abspath(output_dir)
+
+    cmd = [gd_path, "-d", output_dir]
+    if cookies:
+        cookies = os.path.abspath(cookies)
+        if not os.path.isfile(cookies):
+            return []
+        cmd.extend(["--cookies", cookies])
+    cmd.append(url)
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+    if result.returncode != 0:
+        return []
+
+    images = sorted(
+        glob.glob(f"{output_dir}/**/*.jpg", recursive=True)
+        + glob.glob(f"{output_dir}/**/*.jpeg", recursive=True)
+        + glob.glob(f"{output_dir}/**/*.png", recursive=True)
+        + glob.glob(f"{output_dir}/**/*.webp", recursive=True)
     )
-    await proc.communicate()
-    
-    if proc.returncode == 0:
-        details_logger.info("gallery-dl: ok", extra={"url": url, "request_id": request_id})
-        return find_downloaded_files(url)
-    
-    details_logger.info("gallery-dl: failed", extra={"url": url, "request_id": request_id})
-    return []
+    return images
 ```
 
 ## Domain Whitelist
@@ -44,11 +50,15 @@ gallery-dl supports 100+ platforms. The bot maintains a whitelist of known-worki
 
 ```python
 # src/utils.py
-def get_gallery_dl_domains() -> set:
-    """Get set of gallery-dl supported domains."""
-    # Auto-generated from gallery-dl --version
-    # See scripts/generate_gallery_dl_domains.py
-    return GALLERY_DL_DOMAINS
+def get_gallery_dl_domains() -> frozenset[str]:
+    """Get gallery-dl supported domains. Auto-generates if missing."""
+    try:
+        from gallery_dl_domains import GALLERY_DL_DOMAINS
+        return GALLERY_DL_DOMAINS
+    except ImportError:
+        # Try to generate the file via scripts/generate_gallery_dl_domains.py
+        # Falls back to empty frozenset on failure
+        ...
 ```
 
 ### Generating Domain List
@@ -65,25 +75,24 @@ When yt-dlp fails, bot tries gallery-dl:
 
 ```python
 # src/handlers.py
-async def handle_gallery_dl_fallback(url: str, request_id: str) -> str:
-    """Try gallery-dl as fallback."""
-    # Check if domain is in whitelist
-    domain = extract_domain(url)
-    if domain not in get_gallery_dl_domains():
-        details_logger.info("gallery-dl: domain not in whitelist", extra={"url": url, "domain": domain})
-        return None
-    
+async def handle_gallery_dl_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str) -> bool:
+    """Try gallery-dl for unsupported platforms. Silent on failure."""
+    reply_params = {"message_id": update.message.message_id}
+
     # Try images first
-    images = await download_gallery_dl_images(url, request_id)
+    images = download_gallery_dl_images(url, out_dir, "")
     if images:
-        return images
-    
+        total_size = await send_images(update.message, images, reply_params)
+        return True
+
     # Try video
-    video = await download_gallery_dl_video(url, request_id)
+    video = download_gallery_dl_video(url, out_dir)
     if video:
-        return video
-    
-    return None
+        with open(video, "rb") as f:
+            await update.message.reply_video(video=f, reply_parameters=reply_params)
+        return True
+
+    return False
 ```
 
 ## Documentation

@@ -21,11 +21,16 @@ This script:
 
 ```python
 # src/utils.py
-from src.gallery_dl_domains import GALLERY_DL_DOMAINS
+from gallery_dl_domains import GALLERY_DL_DOMAINS
 
-def get_gallery_dl_domains() -> set:
-    """Get set of gallery-dl supported domains."""
-    return GALLERY_DL_DOMAINS
+def get_gallery_dl_domains() -> frozenset[str]:
+    """Get gallery-dl supported domains. Auto-generates if missing."""
+    try:
+        from gallery_dl_domains import GALLERY_DL_DOMAINS
+        return GALLERY_DL_DOMAINS
+    except ImportError:
+        # Falls back to empty frozenset on failure
+        ...
 ```
 
 ## Checking if a Domain is Supported

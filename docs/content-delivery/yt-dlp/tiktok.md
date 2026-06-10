@@ -11,54 +11,81 @@ TikTok video download handling.
 ## Download Flow
 
 1. Detect platform as `tiktok`
-2. Download video using yt-dlp
-3. If download fails, try gallery-dl fallback
-4. If fallback succeeds, check for watermark
-5. Send to user
+2. Fetch metadata via `get_metadata()` to check file extension
+3. If metadata indicates photo post (ext in jpg/jpeg/png/webp): try gallery-dl images first
+4. If not a photo post (or gallery-dl fails): try yt-dlp video download
+5. If video download fails: fallback to gallery-dl images
+6. Send to user
 
-## Primary Download
+## Three-Stage Process
 
 ```python
 # src/platforms/tiktok.py
-async def handle_tiktok(update: Update, url: str, context: ContextTypes.DEFAULT_TYPE):
-    """Handle TikTok downloads."""
-    try:
-        file_path = await download_video(url, request_id)
-        await context.bot.send_video(chat_id=update.effective_chat.id, video=open(file_path, 'rb'))
-    except Exception as e:
-        # Try gallery-dl fallback
-        file_path = await handle_gallery_dl_fallback(url, request_id)
-        if file_path:
-            await context.bot.send_video(chat_id=update.effective_chat.id, video=open(file_path, 'rb'))
-        else:
-            await update.message.reply_text("Failed to download TikTok video")
+async def handle_tiktok(update, context, url: str) -> bool:
+    """Handle TikTok URL: check metadata for photo posts, fallback to gallery-dl."""
+    reply_params = {"message_id": update.message.message_id}
+
+    # Stage 1: Check metadata for photo posts
+    metadata = get_metadata(url)
+    if metadata:
+        ext = (metadata.get("ext") or "").lower()
+        if ext in IMAGE_EXTENSIONS:  # {"jpg", "jpeg", "png", "webp"}
+            images = download_gallery_dl_images(url, out_dir, "")
+            if images:
+                await send_images(update.message, images, reply_params)
+                return True
+
+    # Stage 2: Try video download via yt-dlp
+    success = download_video(url, output_path, MAX_FILE_SIZE, platform="tiktok")
+    if success:
+        # Find downloaded file and send as video
+        # ...
+        return True
+
+    # Stage 3: Fallback to gallery-dl for images
+    images = download_gallery_dl_images(url, out_dir, "")
+    if images:
+        await send_images(update.message, images, reply_params)
+        return True
+
+    return False
 ```
 
 ## gallery-dl Fallback
 
-TikTok videos often have watermarks when downloaded via yt-dlp. gallery-dl can sometimes get cleaner versions.
+TikTok videos often have watermarks when downloaded via yt-dlp. gallery-dl can sometimes get cleaner versions. For photo posts, gallery-dl is the primary tool.
 
 ```python
-# src/platforms/tiktok.py
-async def handle_gallery_dl_fallback(url: str, request_id: str) -> str:
-    """Try gallery-dl as fallback."""
-    cmd = [
-        "gallery-dl",
-        "-d", DOWNLOAD_DIR,
-        url
-    ]
-    
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
+# src/downloader.py
+def download_gallery_dl_images(url: str, output_dir: str, cookies: str = "") -> list[str]:
+    """Download images using gallery-dl."""
+    gd_path = _find_gallery_dl()
+    if not gd_path:
+        return []
+
+    os.makedirs(output_dir, exist_ok=True)
+    output_dir = os.path.abspath(output_dir)
+
+    cmd = [gd_path, "-d", output_dir]
+    if cookies:
+        cookies = os.path.abspath(cookies)
+        if not os.path.isfile(cookies):
+            return []
+        cmd.extend(["--cookies", cookies])
+    cmd.append(url)
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+    if result.returncode != 0:
+        return []
+
+    images = sorted(
+        glob.glob(f"{output_dir}/**/*.jpg", recursive=True)
+        + glob.glob(f"{output_dir}/**/*.jpeg", recursive=True)
+        + glob.glob(f"{output_dir}/**/*.png", recursive=True)
+        + glob.glob(f"{output_dir}/**/*.webp", recursive=True)
     )
-    await proc.communicate()
-    
-    if proc.returncode == 0:
-        # Find downloaded file
-        return find_downloaded_file(url)
-    return None
+    return images
 ```
 
 ## Watermark Issue
