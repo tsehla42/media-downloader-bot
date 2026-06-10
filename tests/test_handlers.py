@@ -343,6 +343,7 @@ async def test_handle_url_group_ignores_unsupported_urls(update, context):
 async def test_handle_url_group_processes_supported_urls(update, context):
     """In groups, supported URLs are processed normally."""
     update.message.text = "https://youtube.com/watch?v=abc"
+    update.message.reply_to_message = None
     update.effective_chat.type = "group"
 
     mock_typing = _make_typing_indicator_mock()
@@ -365,6 +366,7 @@ async def test_handle_url_group_processes_supported_urls(update, context):
 async def test_handle_url_group_mixed_urls(update, context):
     """In groups, only supported URLs are downloaded, unsupported are ignored."""
     update.message.text = "https://example.com/video https://youtube.com/watch?v=abc"
+    update.message.reply_to_message = None
     update.effective_chat.type = "group"
 
     def mock_detect_platform(url):
@@ -2090,3 +2092,28 @@ class TestMyChatMemberHandler:
         update.message.reply_text.assert_not_called()
         # Verify the real _already_told_users was not affected
         assert user_id not in _already_told_users
+
+
+@pytest.mark.asyncio
+async def test_handle_url_ignores_unauthorized_reply_to_bot_in_group():
+    """Unauthorized user replying to bot message in a group is silently ignored."""
+    update = MagicMock()
+    update.message.text = "https://youtube.com/watch?v=abc"
+    update.message.message_id = 42
+    update.message.from_user.id = 99999
+    update.message.chat.type = "group"
+    update.message.chat.id = 100
+    update.effective_chat = update.message.chat
+    update.message.reply_to_message = MagicMock()
+    update.message.reply_to_message.from_user = MagicMock()
+    update.message.reply_to_message.from_user.is_bot = True
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {"bot_username": "testbot"}
+    context.user_data = {}
+
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers._is_allowed", return_value=False):
+        await handle_url(update, context)
+        update.message.reply_text.assert_not_called()

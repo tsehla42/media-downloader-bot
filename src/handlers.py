@@ -23,7 +23,7 @@ from platforms.instagram import handle_instagram
 from platforms.tiktok import handle_tiktok
 from downloader import get_metadata, download_audio, download_gallery_dl_images, download_gallery_dl_video
 from commands import get_caption_for_user
-from auth import is_authorized, is_group_chat, was_notified, mark_notified, is_bot_admin
+from auth import is_authorized, is_group_chat, was_notified, mark_notified, is_bot_admin, _is_allowed
 from logging_config import (
     with_request_logging,
     log_bot_added_to_chat,
@@ -455,6 +455,14 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 mark_notified(user_id)
                 log_unauthorized_access(update.message.from_user, update.message.chat, "url")
         return  # silently ignore in groups or if already told
+
+    # Unauthorized user replying to bot message in a group — silently ignore
+    if (is_group_chat(update)
+        and update.message.reply_to_message
+        and update.message.reply_to_message.from_user
+        and update.message.reply_to_message.from_user.is_bot
+        and not _is_allowed(update.message.from_user.id)):
+        return
 
     text = update.message.text.strip()
 
