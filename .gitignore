@@ -40,9 +40,12 @@ docs/*
 !docs/architecture.md
 !docs/guest-mode/
 !docs/guest-mode/**
+!docs/logs/
+!docs/logs/**
 
 CLAUDE.md
 
 # Logs
-logs/
+/logs/
 *.jsonl
+!docs/logs/**/*.jsonl
