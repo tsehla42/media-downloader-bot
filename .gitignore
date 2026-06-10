@@ -38,6 +38,7 @@ bot-downloads/
 
 docs/*
 !docs/architecture.md
+!docs/2026-06-05-guest-mode-session.md
 
 CLAUDE.md
 

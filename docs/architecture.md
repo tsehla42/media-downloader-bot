@@ -17,6 +17,8 @@ Loads settings from `.env` via python-dotenv. Exports constants:
 - `MAX_FILE_SIZE` - Max download size in MB (default: 50)
 - `MAX_CONCURRENT_DOWNLOADS` - Concurrency limit (default: 3)
 - `INSTAGRAM_COOKIES` - Path to cookies.txt for gallery-dl Instagram auth (empty = no auth)
+- `GUEST_MODE_ENABLED` - Enable Bot API 10.0 guest mode (default: false)
+- `STORAGE_CHANNEL_ID` - Private channel ID for guest mode file storage (bot must be admin). Files uploaded here to get `file_id`s for InlineQueryResult.
 - `MODE` - Environment mode: "development" (default) or "production". Determines log file name.
 - `LOG_OUTPUT` - Logging destination: "console", "file", or "both" (default). "stdout" is an alias for "console".
 - `LOG_DIR` - Log file directory (default: logs)
@@ -26,8 +28,10 @@ Loads settings from `.env` via python-dotenv. Exports constants:
 Authorization checks, depends on config:
 - `is_authorized(update)` - Groups: always allowed (bot only exists if admin added it). P2P: checks ALLOWED_USER_IDS (empty sources = allow all; configured sources = user must be in list).
 - `is_bot_admin(user_id)` - Checks if user is in BOT_ADMIN_IDS (empty = allow all)
-- `was_notified(user_id)` - Checks if user has been told they're not authorized (in-memory set)
+- `was_notified(user_id)` - Checks if user has been told they're not authorized (P2P, in-memory set)
 - `mark_notified(user_id)` - Marks user as notified (resets on restart)
+- `was_notified_guest(user_id)` - Checks if user has been told they're not authorized (guest mode, separate set)
+- `mark_notified_guest(user_id)` - Marks guest user as notified (resets on restart)
 - `is_group_chat(update)` - Checks if message is from group/supergroup
 - `_is_allowed(user_id)` - Checks if user is in allowlist (no sources = allow all; sources configured but empty = deny all)
 - `_is_allowed_group(chat_id)` - Checks if group is in allowlist (empty = allow all)
@@ -94,7 +98,19 @@ Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloa
 - `audio_command(update, context)` - Download as MP3 (uses notification tracking for unauthorized users)
 - `_download_and_send(update, context, url, silent, reply_to_message_id)` - Orchestrates download with YouTube size check and error suppression
 - `handle_gallery_dl_fallback(update, context, url)` - Tries gallery-dl for unsupported platforms (images then video), silent on failure
-- `handle_url(update, context)` - Main handler: authorization check, detects group/P2P, splits supported/unsupported URLs, filters unsupported against gallery-dl domain whitelist, handles reply-to-retry, routes remaining unsupported URLs to gallery-dl fallback
+- `handle_url(update, context)` - Main handler: authorization check, detects group/P2P, unauthorized reply-to-bot check in groups (silently ignores), splits supported/unsupported URLs, filters unsupported against gallery-dl domain whitelist, handles reply-to-retry, routes remaining unsupported URLs to gallery-dl fallback
+
+### guest.py
+Bot API 10.0 guest mode handler, depends on auth, config, downloader, platforms, utils, logging_config, httpx:
+- `handle_guest(update, context)` - Main handler for `guest_message` updates. Identifies caller via `guest_msg.from_user` (Telegram sends `from`, ptb maps to `from_user`). Auth check via `is_user_allowed()`. Unauthorized users get "You are not authorized" once via `answer_guest_query`, then silently ignored (uses `was_notified_guest()`/`mark_notified_guest()`). Logs unauthorized access to service.jsonl. Reply to bot message without URL is silently ignored. Reply to bot message with no text shows media type (e.g. `[photo]`) in logs. Extracts URLs from tag text OR replied-to message. Platform set from `extract_domain(url)` when `detect_platform()` returns None (for gallery-dl supported sites). Routes to download pipeline.
+- `_download_and_build_result(url, platform)` - Routes to platform-specific download: YouTube, TikTok, Instagram, or gallery-dl fallback. For unknown platforms, checks `get_gallery_dl_domains()` whitelist before attempting gallery-dl.
+- `_download_youtube(url)` - Downloads YouTube video, uploads to storage channel, returns `_video_result()`
+- `_download_media_result(url, platform)` - Downloads TikTok/Instagram content (video → gallery-dl images → gallery-dl video)
+- `_gallery_dl_result(url)` - gallery-dl fallback for unsupported platforms (tries images, then video)
+- `_upload_to_telegram(file_path, media_type)` - Uploads local file to storage channel via httpx, returns `file_id`. Handles Telegram's photo response as list of PhotoSize objects (returns file_id from largest size).
+- `_text_result(text)` / `_video_result(file_id)` / `_photo_result(file_id)` / `_media_group_result(file_ids)` - Build InlineQueryResult as raw dicts. Uses `video_file_id`/`photo_file_id` directly (not ptb classes) to avoid placeholder URL issues. Media group returns first photo only (inline results don't support groups).
+
+**Critical**: Guest handler must be registered BEFORE `handle_url` text handler in `bot.py`. `filters.TEXT` matches guest messages because `Update.effective_message` now includes `guest_message`.
 
 ### logging_config.py
 Structured JSON logging with zero external dependencies:
@@ -106,14 +122,16 @@ Structured JSON logging with zero external dependencies:
 - `setup_logging()` - Creates three `RotatingFileHandler` instances with filters + console handler
 - `with_request_logging()` - Decorator that wraps handlers and logs request lifecycle
 - `log_request_received()` / `log_request_completed()` / `log_request_failed()` - Log request events (use `requests_logger`)
+- `log_guest_request_received()` / `log_guest_request_completed()` - Log guest mode request lifecycle (use `requests_logger`). Only logs when URL is present.
 - `log_new_user()` / `log_bot_added_to_chat()` / `log_bot_rejected_group_addition()` / `log_bot_removed_from_chat()` / `log_admin_rights_changed()` / `log_user_blocked_bot()` / `log_unauthorized_access()` - System events (use `service_logger`)
 - `_extract_admin_rights(member)` - Extracts admin rights dict from ChatMemberAdministrator
 
 ### bot.py
 Entry point:
 - Creates `Application` with bot token
-- Registers all handlers
-- Starts polling
+- Registers all handlers (guest handler BEFORE text handler — see guest.py note)
+- Adds `"guest_message"` to `allowed_updates` when `GUEST_MODE_ENABLED=true`
+- Starts polling via `app.run_polling()`
 - Global `error_handler` for unhandled exceptions
 
 ## Data Flow
@@ -184,6 +202,44 @@ handlers.handle_url()
     │   └─ cleanup temp dirs
     │
     └─ Cancel typing indicator
+
+Guest mode (GUEST_MODE_ENABLED=true):
+    User mentions @botname in any chat
+        │
+        ▼
+    Telegram sends guest_message update
+        │
+        ▼
+    guest.handle_guest()
+        │
+        ├─ Caller: guest_msg.from_user (Telegram 'from' → ptb from_user)
+        ├─ Auth: is_user_allowed(caller_id)
+        │   ├─ Unauthorized → first call: answer_guest_query("You are not authorized")
+        │   │   + log_unauthorized_access() → service.jsonl
+        │   │   Subsequent calls: silently ignored (via was_notified_guest())
+        │   └─ Authorized → continue
+        ├─ URL: extract from tag text OR replied-to message
+        │
+        ├─ No URL → reply to bot? → silently ignore
+        │          → tag only? → answer_guest_query("Please include a URL")
+        │
+        ├─ URL found → log_guest_request_received() → requests.jsonl
+        │   (includes user, chat, reply context)
+        │
+        ├─ Platform detected → _download_and_build_result(url, platform)
+        │   ├─ YouTube → _download_youtube()
+        │   ├─ TikTok/Instagram → _download_media_result()
+        │   ├─ Unknown platform, domain in gallery-dl list → _gallery_dl_result()
+        │   └─ Unknown platform, domain NOT in list → "Unsupported platform"
+        │
+        ├─ Download OK → _upload_to_telegram() → get file_id
+        │   (handles Telegram photo list response)
+        │   ├─ answer_guest_query(InlineQueryResult with file_id)
+        │   │   └─ Single photo only (inline results don't support media groups)
+        │   └─ log_guest_request_completed(success=true, platform=domain) → requests.jsonl
+        │
+        └─ Download failed → answer_guest_query("Download failed: {error}")
+            └─ log_guest_request_completed(success=false, error=...) → requests.jsonl
 ```
 
 ## External Dependencies
@@ -243,7 +299,57 @@ Request completed (in `requests.jsonl`):
 }
 ```
 
-Reply-to-retry uses `"event": "reply_to_retry"` and `"message": "Reply to retry received/completed"`.
+Reply-to-retry uses `"event": "reply_to_retry_received"` / `"reply_to_retry_completed"` and `"message": "Reply to retry received/completed"`.
+
+Guest request received (in `requests.jsonl`):
+```json
+{
+  "timestamp": "2026-06-10T20:41:50.042963+03:00",
+  "level": "INFO",
+  "message": "Guest request received",
+  "event": "guest_request_received",
+  "request_id": "8e314411",
+  "guest_query_id": "2697475888970155636",
+  "url": "@mmebodevbot https://vt.tiktok.com/ZS9Gg6dGp/",
+  "user": {"id": 628055047, "name": "Меменасе", "username": "memenac"},
+  "chat": {"id": -1003804964305, "name": "mememedia test", "type": "supergroup"},
+  "reply": null
+}
+```
+
+Guest request with reply:
+```json
+{
+  "timestamp": "2026-06-10T20:41:50.042963+03:00",
+  "level": "INFO",
+  "message": "Guest request received",
+  "event": "guest_request_received",
+  "request_id": "8e314411",
+  "guest_query_id": "2697475888970155636",
+  "url": "@mmebodevbot https://vt.tiktok.com/ZS9Gg6dGp/",
+  "user": {"id": 628055047, "name": "Меменасе", "username": "memenac"},
+  "chat": {"id": -1003804964305, "name": "mememedia test", "type": "supergroup"},
+  "reply": {"user_id": 390026995, "name": "tsehla", "username": "tsehla42", "message": "check this"}
+}
+```
+
+Guest request completed (in `requests.jsonl`):
+```json
+{
+  "timestamp": "2026-06-10T20:42:04.768463+03:00",
+  "level": "INFO",
+  "message": "Guest request completed",
+  "event": "guest_request_completed",
+  "request_id": "8e314411",
+  "guest_query_id": "2697475888970155636",
+  "url": "https://vt.tiktok.com/ZS9Gg6dGp/",
+  "platform": "tiktok",
+  "duration_ms": 4725,
+  "success": true,
+  "user": {"id": 628055047, "name": "Меменасе", "username": "memenac"},
+  "chat": {"id": -1003804964305, "name": "mememedia test", "type": "supergroup"}
+}
+```
 
 Service event (in `service.jsonl`):
 ```json
@@ -257,7 +363,7 @@ Service event (in `service.jsonl`):
 }
 ```
 
-Service events: `bot_started`, `bot_stopped`, `new_user_started`, `bot_added_to_chat`, `bot_rejected_group_addition`, `bot_removed_from_chat`, `bot_added_as_admin`, `bot_admin_rights_changed`, `bot_removed_as_admin`, `user_blocked_bot`, `unauthorized_access`.
+Service events: `bot_started`, `bot_stopped`, `new_user_started`, `bot_added_to_chat`, `bot_rejected_group_addition`, `bot_removed_from_chat`, `bot_added_as_admin`, `bot_admin_rights_changed`, `bot_removed_as_admin`, `user_blocked_bot`, `unauthorized_access` (includes guest mode unauthorized with `"command": "guest"`).
 
 Detail log (in `request-details.jsonl`):
 ```json
@@ -303,7 +409,13 @@ cat logs/requests.jsonl | jq 'select(.request_id == "3df4888f")'
 cat logs/request-details.jsonl | jq 'select(.request_id == "3df4888f")'
 
 # Reply-to-retry requests
-cat logs/requests.jsonl | jq 'select(.event == "reply_to_retry")'
+cat logs/requests.jsonl | jq 'select(.event | test("reply_to_retry"))'
+
+# Guest mode requests
+cat logs/requests.jsonl | jq 'select(.event | test("guest_request"))'
+
+# Guest requests with reply context
+cat logs/requests.jsonl | jq 'select(.event == "guest_request_received" and .reply != null)'
 
 # Bot startup events
 cat logs/service.jsonl | jq 'select(.event == "bot_started" or .message == "Bot started")'
