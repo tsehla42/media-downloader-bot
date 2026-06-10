@@ -1,4 +1,6 @@
-# Guest Mode Implementation Session — 2026-06-05
+# Guest Mode Technical Reference
+
+> **Session date:** 2026-06-05
 
 ## Summary
 

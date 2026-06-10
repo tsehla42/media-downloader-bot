@@ -39,6 +39,7 @@ bot-downloads/
 docs/*
 !docs/architecture.md
 !docs/guest-mode/
+!docs/guest-mode/**
 
 CLAUDE.md
 

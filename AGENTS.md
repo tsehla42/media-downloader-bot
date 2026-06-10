@@ -183,5 +183,5 @@ When asked to "update bot" or "deploy", always read `docs/deploy.md` first.
 
 - [Project Overview](docs/README.md) - Quick summary of what/why
 - [Architecture](docs/architecture.md) - Detailed module responsibilities and data flow
-- [Guest Mode Session](docs/2026-06-05-guest-mode-session.md) - Bot API 10.0 implementation notes and debugging log
+- [Guest Mode](docs/guest-mode/README.md) - Bot API 10.0 guest mode overview and technical reference
 - [Deployment](docs/deploy.md) - Production server deployment flow

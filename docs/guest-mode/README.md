@@ -28,5 +28,7 @@ When a user mentions the bot with `@username` in any chat (groups, P2P, or chats
 
 ## Related
 
-- [Guest API in Group Chats](../group-chats/guest-api.md)
-- [Logging Guest Requests](../logs/requests.md)
+<!-- TODO: Add links when docs are created (Task 2: logging, Task 4: group chats)
+- Guest API in Group Chats (docs/group-chats/guest-api.md)
+- Logging Guest Requests (docs/logs/requests.md)
+-->
