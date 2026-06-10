@@ -184,20 +184,68 @@ class TestHandleGuestAuth:
     """Tests for auth checks in handle_guest."""
 
     @pytest.mark.asyncio
-    async def test_unauthorized_user_ignored(self):
+    async def test_unauthorized_first_call_sends_message(self):
+        """First unauthorized guest call sends unauth message."""
+        from guest import handle_guest
+        from auth import _already_told_users
+        _already_told_users.clear()
+
+        msg = _make_guest_message(caller_id=99999)
+        update = _make_update(msg)
+        context = _make_context()
+
+        with patch("guest.is_user_allowed", return_value=False), \
+             patch("guest.was_notified", return_value=False), \
+             patch("guest.mark_notified"), \
+             patch("guest.log_unauthorized_access"):
+            await handle_guest(update, context)
+            context.bot.answer_guest_query.assert_called_once()
+            call_args = context.bot.answer_guest_query.call_args
+            result = call_args[1]["result"]
+            assert "not authorized" in result["input_message_content"]["message_text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_second_call_silent(self):
+        """Second unauthorized guest call is silently ignored."""
         from guest import handle_guest
         msg = _make_guest_message(caller_id=99999)
         update = _make_update(msg)
         context = _make_context()
 
-        with patch("guest.is_user_allowed", return_value=False):
+        with patch("guest.is_user_allowed", return_value=False), \
+             patch("guest.was_notified", return_value=True), \
+             patch("guest.log_unauthorized_access"):
             await handle_guest(update, context)
             context.bot.answer_guest_query.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_unauthorized_calls_log_unauthorized_access(self):
+        """Unauthorized guest calls log to service.jsonl via log_unauthorized_access."""
+        from guest import handle_guest
+        mock_log = MagicMock()
+
+        msg = _make_guest_message(caller_id=99999)
+        msg.chat = MagicMock()
+        msg.chat.id = 99999
+        msg.chat.type = "private"
+        update = _make_update(msg)
+        context = _make_context()
+
+        with patch("guest.is_user_allowed", return_value=False), \
+             patch("guest.was_notified", return_value=True), \
+             patch("guest.log_unauthorized_access", mock_log):
+            await handle_guest(update, context)
+            mock_log.assert_called_once()
+            args = mock_log.call_args[0]
+            assert args[0].id == 99999  # caller
+            assert args[2] == "guest"   # command
+
+    @pytest.mark.asyncio
     async def test_no_urls_replies_with_hint(self):
+        """Tag without URL and without reply shows hint."""
         from guest import handle_guest
         msg = _make_guest_message(text="hello bot")
+        msg.reply_to_message = None
         update = _make_update(msg)
         context = _make_context()
 
@@ -207,8 +255,25 @@ class TestHandleGuestAuth:
             context.bot.answer_guest_query.assert_called_once()
             call_args = context.bot.answer_guest_query.call_args
             result = call_args[1]["result"]
-            # Result is an InlineQueryResultArticle dict
             assert "URL" in result["input_message_content"]["message_text"]
+
+    @pytest.mark.asyncio
+    async def test_reply_to_bot_without_url_silent(self):
+        """Reply to bot guest message without URL is silently ignored."""
+        from guest import handle_guest
+        reply_msg = MagicMock()
+        reply_msg.text = "nice video"
+        reply_msg.from_user = MagicMock()
+        reply_msg.from_user.id = 111
+        reply_msg.from_user.is_bot = True
+        msg = _make_guest_message(text="@botname", reply_to=reply_msg)
+        update = _make_update(msg)
+        context = _make_context()
+
+        with patch("guest.is_user_allowed", return_value=True), \
+             patch("guest.extract_urls", return_value=[]):
+            await handle_guest(update, context)
+            context.bot.answer_guest_query.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_url_from_replied_message(self):
@@ -223,7 +288,6 @@ class TestHandleGuestAuth:
              patch("guest.extract_urls") as mock_extract, \
              patch("guest.detect_platform", return_value="tiktok"), \
              patch("guest._download_and_build_result", new_callable=AsyncMock) as mock_dl:
-            # First call (tag text) returns empty; second call (replied-to) returns URL
             mock_extract.side_effect = [[], ["https://tiktok.com/@user/video/123"]]
             mock_dl.return_value = {"type": "article", "id": "1", "title": "ok",
                                      "input_message_content": {"message_text": "ok"}}

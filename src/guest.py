@@ -15,12 +15,13 @@ import httpx
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from auth import is_user_allowed
+from auth import is_user_allowed, was_notified, mark_notified
 from config import DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, STORAGE_CHANNEL_ID
 from logging_config import (
     details_logger,
     log_guest_request_received,
     log_guest_request_completed,
+    log_unauthorized_access,
     set_current_request_id,
 )
 from platforms import detect_platform
@@ -112,10 +113,13 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     # Auth check
     if not is_user_allowed(caller_id):
-        details_logger.info(
-            "guest_message unauthorized",
-            extra={"extra_data": {"event": "guest_request_unauthorized", "request_id": request_id, "caller_id": caller_id}},
-        )
+        if not was_notified(caller_id):
+            await context.bot.answer_guest_query(
+                guest_query_id,
+                result=_text_result("You are not authorized to use this bot"),
+            )
+            mark_notified(caller_id)
+        log_unauthorized_access(caller, chat, "guest")
         return
 
     # Extract URLs from tag message text
@@ -136,10 +140,12 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         }
 
     if not urls:
-        await context.bot.answer_guest_query(
-            guest_query_id,
-            result=_text_result("Please include a URL to download"),
-        )
+        # Silent ignore when replying to bot message without URL
+        if not guest_msg.reply_to_message:
+            await context.bot.answer_guest_query(
+                guest_query_id,
+                result=_text_result("Please include a URL to download"),
+            )
         return
 
     # Log Guest request received (only when URL is present)
