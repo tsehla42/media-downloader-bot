@@ -303,11 +303,30 @@ class TestHandleGuestAuth:
         context = _make_context()
 
         with patch("guest.is_user_allowed", return_value=True), \
-             patch("guest.detect_platform", return_value=None):
+             patch("guest.detect_platform", return_value=None), \
+             patch("guest.get_gallery_dl_domains", return_value=frozenset({"deviantart.com"})):
             await handle_guest(update, context)
             context.bot.answer_guest_query.assert_called_once()
             result = context.bot.answer_guest_query.call_args[1]["result"]
             assert "Unsupported" in result["input_message_content"]["message_text"]
+
+    @pytest.mark.asyncio
+    async def test_gallery_dl_domain_tries_fallback(self):
+        """Gallery-dl supported domains should try fallback, not show 'Unsupported'."""
+        from guest import handle_guest
+        msg = _make_guest_message(text="https://www.deviantart.com/art/123")
+        update = _make_update(msg)
+        context = _make_context()
+
+        fake_result = {"type": "photo", "id": "abc", "photo_file_id": "fid"}
+        with patch("guest.is_user_allowed", return_value=True), \
+             patch("guest.detect_platform", return_value=None), \
+             patch("guest.get_gallery_dl_domains", return_value=frozenset({"deviantart.com"})), \
+             patch("guest._gallery_dl_result", new_callable=AsyncMock, return_value=fake_result):
+            await handle_guest(update, context)
+            context.bot.answer_guest_query.assert_called_once()
+            result = context.bot.answer_guest_query.call_args[1]["result"]
+            assert result["type"] == "photo"
 
     @pytest.mark.asyncio
     async def test_answer_guest_query_called_with_result(self):

@@ -24,8 +24,8 @@ from logging_config import (
     log_unauthorized_access,
     set_current_request_id,
 )
-from platforms import detect_platform
-from utils import extract_urls, cleanup_file, cleanup_dir
+from platforms import detect_platform, extract_domain
+from utils import extract_urls, cleanup_file, cleanup_dir, get_gallery_dl_domains
 from downloader import (
     get_metadata,
     download_video,
@@ -181,6 +181,10 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     except Exception as e:
         logger.error("Platform detection failed: %s", e)
 
+    # For gallery-dl URLs, use domain as platform name (matches P2P handler logging)
+    if not platform:
+        platform = extract_domain(url)
+
     start_time = time.time()
 
     try:
@@ -224,9 +228,6 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def _download_and_build_result(url: str, platform: str | None) -> dict:
     """Download media and return InlineQueryResult."""
     try:
-        if not platform:
-            return _text_result("Unsupported platform")
-
         if platform == "youtube":
             return await _download_youtube(url)
 
@@ -235,6 +236,14 @@ async def _download_and_build_result(url: str, platform: str | None) -> dict:
 
         if platform == "instagram":
             return await _download_media_result(url, "instagram")
+
+        # For unknown platforms, try gallery-dl if domain is supported
+        if not platform:
+            domain = extract_domain(url)
+            gallery_dl_domains = get_gallery_dl_domains()
+            if not gallery_dl_domains or domain in gallery_dl_domains:
+                return await _gallery_dl_result(url)
+            return _text_result("Unsupported platform")
 
         # Future-proofing: gallery-dl fallback for any unrecognized platform
         return await _gallery_dl_result(url)
@@ -390,7 +399,11 @@ async def _upload_to_telegram(file_path: str, media_type: str) -> str | None:
                 if media_type == "video":
                     return msg.get("video", {}).get("file_id")
                 elif media_type == "photo":
-                    return msg.get("photo", {}).get("file_id")
+                    # Telegram returns photo as list of PhotoSize (smallest→largest)
+                    photo = msg.get("photo", [])
+                    if isinstance(photo, list) and photo:
+                        return photo[-1].get("file_id")
+                    return photo.get("file_id") if isinstance(photo, dict) else None
                 else:
                     return msg.get("document", {}).get("file_id")
 

@@ -102,13 +102,13 @@ Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloa
 
 ### guest.py
 Bot API 10.0 guest mode handler, depends on auth, config, downloader, platforms, utils, logging_config, httpx:
-- `handle_guest(update, context)` - Main handler for `guest_message` updates. Identifies caller via `guest_msg.from_user` (Telegram sends `from`, ptb maps to `from_user`). Auth check via `is_user_allowed()`. Unauthorized users get "You are not authorized" once via `answer_guest_query`, then silently ignored (uses `was_notified_guest()`/`mark_notified_guest()`). Logs unauthorized access to service.jsonl. Reply to bot message without URL is silently ignored. Reply to bot message with no text shows media type (e.g. `[photo]`) in logs. Extracts URLs from tag text OR replied-to message. Routes to download pipeline.
-- `_download_and_build_result(url, platform)` - Routes to platform-specific download: YouTube, TikTok, Instagram, or gallery-dl fallback
+- `handle_guest(update, context)` - Main handler for `guest_message` updates. Identifies caller via `guest_msg.from_user` (Telegram sends `from`, ptb maps to `from_user`). Auth check via `is_user_allowed()`. Unauthorized users get "You are not authorized" once via `answer_guest_query`, then silently ignored (uses `was_notified_guest()`/`mark_notified_guest()`). Logs unauthorized access to service.jsonl. Reply to bot message without URL is silently ignored. Reply to bot message with no text shows media type (e.g. `[photo]`) in logs. Extracts URLs from tag text OR replied-to message. Platform set from `extract_domain(url)` when `detect_platform()` returns None (for gallery-dl supported sites). Routes to download pipeline.
+- `_download_and_build_result(url, platform)` - Routes to platform-specific download: YouTube, TikTok, Instagram, or gallery-dl fallback. For unknown platforms, checks `get_gallery_dl_domains()` whitelist before attempting gallery-dl.
 - `_download_youtube(url)` - Downloads YouTube video, uploads to storage channel, returns `_video_result()`
 - `_download_media_result(url, platform)` - Downloads TikTok/Instagram content (video → gallery-dl images → gallery-dl video)
-- `_gallery_dl_result(url)` - gallery-dl fallback for unsupported platforms
-- `_upload_to_telegram(file_path, media_type)` - Uploads local file to storage channel via httpx, returns `file_id`
-- `_text_result(text)` / `_video_result(file_id)` / `_photo_result(file_id)` / `_media_group_result(file_ids)` - Build InlineQueryResult as raw dicts. Uses `video_file_id`/`photo_file_id` directly (not ptb classes) to avoid placeholder URL issues.
+- `_gallery_dl_result(url)` - gallery-dl fallback for unsupported platforms (tries images, then video)
+- `_upload_to_telegram(file_path, media_type)` - Uploads local file to storage channel via httpx, returns `file_id`. Handles Telegram's photo response as list of PhotoSize objects (returns file_id from largest size).
+- `_text_result(text)` / `_video_result(file_id)` / `_photo_result(file_id)` / `_media_group_result(file_ids)` - Build InlineQueryResult as raw dicts. Uses `video_file_id`/`photo_file_id` directly (not ptb classes) to avoid placeholder URL issues. Media group returns first photo only (inline results don't support groups).
 
 **Critical**: Guest handler must be registered BEFORE `handle_url` text handler in `bot.py`. `filters.TEXT` matches guest messages because `Update.effective_message` now includes `guest_message`.
 
@@ -229,11 +229,14 @@ Guest mode (GUEST_MODE_ENABLED=true):
         ├─ Platform detected → _download_and_build_result(url, platform)
         │   ├─ YouTube → _download_youtube()
         │   ├─ TikTok/Instagram → _download_media_result()
-        │   └─ Other → _gallery_dl_result()
+        │   ├─ Unknown platform, domain in gallery-dl list → _gallery_dl_result()
+        │   └─ Unknown platform, domain NOT in list → "Unsupported platform"
         │
         ├─ Download OK → _upload_to_telegram() → get file_id
+        │   (handles Telegram photo list response)
         │   ├─ answer_guest_query(InlineQueryResult with file_id)
-        │   └─ log_guest_request_completed(success=true) → requests.jsonl
+        │   │   └─ Single photo only (inline results don't support media groups)
+        │   └─ log_guest_request_completed(success=true, platform=domain) → requests.jsonl
         │
         └─ Download failed → answer_guest_query("Download failed: {error}")
             └─ log_guest_request_completed(success=false, error=...) → requests.jsonl
