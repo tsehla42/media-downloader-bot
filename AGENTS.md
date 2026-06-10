@@ -8,6 +8,16 @@ A Telegram bot that downloads videos and images from YouTube, TikTok, and Instag
 
 **Tech stack:** Python 3.12+, python-telegram-bot, yt-dlp (subprocess), gallery-dl (subprocess), pytest
 
+## Documentation
+
+For detailed documentation, see `docs/README.md` (human-readable overview) and the following module docs:
+
+- `docs/group-chats/` - How bot works in groups
+- `docs/guest-mode/` - Bot API 10.0 guest mode
+- `docs/p2p-chats/` - Private chat behavior
+- `docs/logs/` - Logging system
+- `docs/content-delivery/` - Media downloading
+
 ## Project Structure
 
 ```
