@@ -477,7 +477,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     url=retry_urls[0],
                     user=user,
                     chat=chat,
-                    event="reply_to_retry",
+                    event="reply_to_retry_received",
                 )
 
                 start_time = time.time()
@@ -503,7 +503,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     file_size_mb=file_size_mb,
                     user=user,
                     chat=chat,
-                    event="reply_to_retry",
+                    event="reply_to_retry_completed",
                 )
                 return
 

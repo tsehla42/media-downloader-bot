@@ -120,6 +120,7 @@ Structured JSON logging with zero external dependencies:
 - `setup_logging()` - Creates three `RotatingFileHandler` instances with filters + console handler
 - `with_request_logging()` - Decorator that wraps handlers and logs request lifecycle
 - `log_request_received()` / `log_request_completed()` / `log_request_failed()` - Log request events (use `requests_logger`)
+- `log_guest_request_received()` / `log_guest_request_completed()` - Log guest mode request lifecycle (use `requests_logger`). Only logs when URL is present.
 - `log_new_user()` / `log_bot_added_to_chat()` / `log_bot_rejected_group_addition()` / `log_bot_removed_from_chat()` / `log_admin_rights_changed()` / `log_user_blocked_bot()` / `log_unauthorized_access()` - System events (use `service_logger`)
 - `_extract_admin_rights(member)` - Extracts admin rights dict from ChatMemberAdministrator
 
@@ -215,15 +216,20 @@ Guest mode (GUEST_MODE_ENABLED=true):
         │
         ├─ No URL → answer_guest_query("Please include a URL")
         │
+        ├─ URL found → log_guest_request_received() → requests.jsonl
+        │   (includes user, chat, reply context)
+        │
         ├─ Platform detected → _download_and_build_result(url, platform)
         │   ├─ YouTube → _download_youtube()
         │   ├─ TikTok/Instagram → _download_media_result()
         │   └─ Other → _gallery_dl_result()
         │
         ├─ Download OK → _upload_to_telegram() → get file_id
-        │   └─ answer_guest_query(InlineQueryResult with file_id)
+        │   ├─ answer_guest_query(InlineQueryResult with file_id)
+        │   └─ log_guest_request_completed(success=true) → requests.jsonl
         │
         └─ Download failed → answer_guest_query("Download failed: {error}")
+            └─ log_guest_request_completed(success=false, error=...) → requests.jsonl
 ```
 
 ## External Dependencies
@@ -283,7 +289,57 @@ Request completed (in `requests.jsonl`):
 }
 ```
 
-Reply-to-retry uses `"event": "reply_to_retry"` and `"message": "Reply to retry received/completed"`.
+Reply-to-retry uses `"event": "reply_to_retry_received"` / `"reply_to_retry_completed"` and `"message": "Reply to retry received/completed"`.
+
+Guest request received (in `requests.jsonl`):
+```json
+{
+  "timestamp": "2026-06-10T20:41:50.042963+03:00",
+  "level": "INFO",
+  "message": "Guest request received",
+  "event": "guest_request_received",
+  "request_id": "8e314411",
+  "guest_query_id": "2697475888970155636",
+  "url": "@mmebodevbot https://vt.tiktok.com/ZS9Gg6dGp/",
+  "user": {"id": 628055047, "name": "Меменасе", "username": "memenac"},
+  "chat": {"id": -1003804964305, "name": "mememedia test", "type": "supergroup"},
+  "reply": null
+}
+```
+
+Guest request with reply:
+```json
+{
+  "timestamp": "2026-06-10T20:41:50.042963+03:00",
+  "level": "INFO",
+  "message": "Guest request received",
+  "event": "guest_request_received",
+  "request_id": "8e314411",
+  "guest_query_id": "2697475888970155636",
+  "url": "@mmebodevbot https://vt.tiktok.com/ZS9Gg6dGp/",
+  "user": {"id": 628055047, "name": "Меменасе", "username": "memenac"},
+  "chat": {"id": -1003804964305, "name": "mememedia test", "type": "supergroup"},
+  "reply": {"user_id": 390026995, "name": "tsehla", "username": "tsehla42", "message": "check this"}
+}
+```
+
+Guest request completed (in `requests.jsonl`):
+```json
+{
+  "timestamp": "2026-06-10T20:42:04.768463+03:00",
+  "level": "INFO",
+  "message": "Guest request completed",
+  "event": "guest_request_completed",
+  "request_id": "8e314411",
+  "guest_query_id": "2697475888970155636",
+  "url": "https://vt.tiktok.com/ZS9Gg6dGp/",
+  "platform": "tiktok",
+  "duration_ms": 4725,
+  "success": true,
+  "user": {"id": 628055047, "name": "Меменасе", "username": "memenac"},
+  "chat": {"id": -1003804964305, "name": "mememedia test", "type": "supergroup"}
+}
+```
 
 Service event (in `service.jsonl`):
 ```json
@@ -343,7 +399,13 @@ cat logs/requests.jsonl | jq 'select(.request_id == "3df4888f")'
 cat logs/request-details.jsonl | jq 'select(.request_id == "3df4888f")'
 
 # Reply-to-retry requests
-cat logs/requests.jsonl | jq 'select(.event == "reply_to_retry")'
+cat logs/requests.jsonl | jq 'select(.event | test("reply_to_retry"))'
+
+# Guest mode requests
+cat logs/requests.jsonl | jq 'select(.event | test("guest_request"))'
+
+# Guest requests with reply context
+cat logs/requests.jsonl | jq 'select(.event == "guest_request_received" and .reply != null)'
 
 # Bot startup events
 cat logs/service.jsonl | jq 'select(.event == "bot_started" or .message == "Bot started")'

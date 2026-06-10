@@ -100,7 +100,11 @@ def log_request_received(
     event: str = "request_received",
 ) -> None:
     """Log when a request is received."""
-    message = "Reply to retry received" if event == "reply_to_retry" else "Request received"
+    messages = {
+        "request_received": "Request received",
+        "reply_to_retry_received": "Reply to retry received",
+    }
+    message = messages.get(event, "Request received")
     log_data = {
         "event": event,
         "message": message,
@@ -117,7 +121,7 @@ def log_request_received(
             "type": getattr(chat, "type", None),
         },
     }
-    requests_logger.info("request_received", extra={"extra_data": log_data})
+    requests_logger.info(event, extra={"extra_data": log_data})
 
 
 def log_request_completed(
@@ -134,7 +138,11 @@ def log_request_completed(
     event: str = "request_completed",
 ) -> None:
     """Log when a request completes (success or expected failure)."""
-    message = "Reply to retry completed" if event == "reply_to_retry" else "Request completed"
+    messages = {
+        "request_completed": "Request completed",
+        "reply_to_retry_completed": "Reply to retry completed",
+    }
+    message = messages.get(event, "Request completed")
     log_data = {
         "event": event,
         "message": message,
@@ -195,6 +203,79 @@ def log_request_failed(
             "type": getattr(chat, "type", None),
         }
     requests_logger.error("request_failed", extra={"extra_data": log_data})
+
+
+def log_guest_request_received(
+    request_id: str,
+    guest_query_id: str,
+    url: str,
+    caller: object,
+    chat: object,
+    reply: dict | None = None,
+) -> None:
+    """Log when a guest request is received (only when URL is present)."""
+    log_data = {
+        "event": "guest_request_received",
+        "message": "Guest request received",
+        "request_id": request_id,
+        "guest_query_id": guest_query_id,
+        "url": url,
+        "user": {
+            "id": caller.id,
+            "name": getattr(caller, "first_name", None),
+            "username": getattr(caller, "username", None),
+        },
+        "chat": {
+            "id": chat.id,
+            "name": getattr(chat, "title", None),
+            "type": getattr(chat, "type", None),
+        },
+        "reply": reply,
+    }
+    requests_logger.info("guest_request_received", extra={"extra_data": log_data})
+
+
+def log_guest_request_completed(
+    request_id: str,
+    guest_query_id: str,
+    url: str,
+    platform: str | None,
+    duration_ms: int,
+    success: bool,
+    content_type: str | None = None,
+    file_size_mb: float | None = None,
+    error: str | None = None,
+    caller: object = None,
+    chat: object = None,
+) -> None:
+    """Log when a guest request completes."""
+    log_data = {
+        "event": "guest_request_completed",
+        "message": "Guest request completed",
+        "request_id": request_id,
+        "guest_query_id": guest_query_id,
+        "url": url,
+        "platform": platform,
+        "duration_ms": duration_ms,
+        "success": success,
+        "content_type": content_type,
+        "file_size_mb": file_size_mb,
+    }
+    if error:
+        log_data["error"] = error
+    if caller:
+        log_data["user"] = {
+            "id": caller.id,
+            "name": getattr(caller, "first_name", None),
+            "username": getattr(caller, "username", None),
+        }
+    if chat:
+        log_data["chat"] = {
+            "id": chat.id,
+            "name": getattr(chat, "title", None),
+            "type": getattr(chat, "type", None),
+        }
+    requests_logger.info("guest_request_completed", extra={"extra_data": log_data})
 
 
 def log_bot_added_to_chat(chat, added_by) -> None:

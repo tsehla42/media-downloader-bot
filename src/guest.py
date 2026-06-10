@@ -8,6 +8,7 @@ guest_message update and replies via answerGuestQuery().
 import asyncio
 import logging
 import os
+import time
 import uuid
 
 import httpx
@@ -16,7 +17,12 @@ from telegram.ext import ContextTypes
 
 from auth import is_user_allowed
 from config import DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, STORAGE_CHANNEL_ID
-from logging_config import details_logger
+from logging_config import (
+    details_logger,
+    log_guest_request_received,
+    log_guest_request_completed,
+    set_current_request_id,
+)
 from platforms import detect_platform
 from utils import extract_urls, cleanup_file, cleanup_dir
 from downloader import (
@@ -99,39 +105,35 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     caller_id = caller.id if caller else 0
     guest_query_id = guest_msg.guest_query_id
     text = guest_msg.text or ""
+    chat = guest_msg.chat
 
     request_id = uuid.uuid4().hex[:8]
-
-    details_logger.info(
-        "guest_message received",
-        extra={
-            "extra_data": {
-                "event": "guest_message",
-                "request_id": request_id,
-                "guest_query_id": guest_query_id,
-                "caller_id": caller_id,
-                "caller_name": caller.first_name if caller else None,
-                "caller_username": caller.username if caller else None,
-                "text": text,
-            }
-        },
-    )
+    set_current_request_id(request_id)
 
     # Auth check
     if not is_user_allowed(caller_id):
         details_logger.info(
             "guest_message unauthorized",
-            extra={"extra_data": {"event": "guest_message_unauthorized", "request_id": request_id, "caller_id": caller_id}},
+            extra={"extra_data": {"event": "guest_request_unauthorized", "request_id": request_id, "caller_id": caller_id}},
         )
         return
 
     # Extract URLs from tag message text
     urls = extract_urls(text)
 
-    # Also check replied-to message for URLs
-    if not urls and guest_msg.reply_to_message:
-        replied_text = guest_msg.reply_to_message.text or ""
-        urls = extract_urls(replied_text)
+    # Check replied-to message for URLs
+    reply_data = None
+    if guest_msg.reply_to_message:
+        replied_to = guest_msg.reply_to_message
+        replied_text = replied_to.text or ""
+        urls = extract_urls(replied_text) if not urls else urls
+        replied_user = getattr(replied_to, "from_user", None)
+        reply_data = {
+            "user_id": replied_user.id if replied_user else None,
+            "name": getattr(replied_user, "first_name", None) if replied_user else None,
+            "username": getattr(replied_user, "username", None) if replied_user else None,
+            "message": replied_text[:200] if replied_text else None,
+        }
 
     if not urls:
         await context.bot.answer_guest_query(
@@ -139,6 +141,16 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             result=_text_result("Please include a URL to download"),
         )
         return
+
+    # Log Guest request received (only when URL is present)
+    log_guest_request_received(
+        request_id=request_id,
+        guest_query_id=guest_query_id,
+        url=text,
+        caller=caller,
+        chat=chat,
+        reply=reply_data,
+    )
 
     # Process first URL
     url = urls[0]
@@ -148,15 +160,36 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     except Exception as e:
         logger.error("Platform detection failed: %s", e)
 
-    extra = {"url": url, "caller_id": caller_id, "guest_query_id": guest_query_id}
-    details_logger.info("guest_mode: processing URL", extra=extra)
+    start_time = time.time()
 
     try:
         result = await _download_and_build_result(url, platform)
         await context.bot.answer_guest_query(guest_query_id, result=result)
-        details_logger.info("guest_mode: reply sent", extra=extra)
+
+        duration_ms = int((time.time() - start_time) * 1000)
+        log_guest_request_completed(
+            request_id=request_id,
+            guest_query_id=guest_query_id,
+            url=url,
+            platform=platform,
+            duration_ms=duration_ms,
+            success=True,
+            caller=caller,
+            chat=chat,
+        )
     except Exception as e:
-        details_logger.error("guest_mode: download failed: %s", e, exc_info=True, extra=extra)
+        duration_ms = int((time.time() - start_time) * 1000)
+        log_guest_request_completed(
+            request_id=request_id,
+            guest_query_id=guest_query_id,
+            url=url,
+            platform=platform,
+            duration_ms=duration_ms,
+            success=False,
+            error=str(e),
+            caller=caller,
+            chat=chat,
+        )
         await context.bot.answer_guest_query(
             guest_query_id,
             result=_text_result(f"Download failed: {e}"),

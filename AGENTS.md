@@ -66,7 +66,7 @@ media-downloader-bot/
 | `src/platforms/instagram.py` | downloader, telegram_utils | Instagram: `handle_instagram()` with gallery-dl fallback and cookies |
 | `src/utils.py` | nothing | URL validation, file cleanup, `get_gallery_dl_domains()` (imports/auto-generates gallery-dl domain whitelist) |
 | `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()`, `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()` |
-| `src/logging_config.py` | config | Structured JSON logging: three-file split (requests/details/service), JSONFormatter, filter-based routing, with_request_logging decorator, contextvars for request_id, service log functions (log_new_user, log_bot_added_to_chat, log_bot_rejected_group_addition, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot, log_unauthorized_access) |
+| `src/logging_config.py` | config | Structured JSON logging: three-file split (requests/details/service), JSONFormatter, filter-based routing, with_request_logging decorator, contextvars for request_id, request lifecycle functions (log_request_received/completed/failed), guest request functions (log_guest_request_received/completed), service log functions (log_new_user, log_bot_added_to_chat, log_bot_rejected_group_addition, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot, log_unauthorized_access) |
 | `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader, logging_config | Thin orchestrator: `handle_url()` (includes reply-to-retry and gallery-dl fallback), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` (handles bot added/removed/promoted/demoted/blocked, admin check for group additions) |
 | `src/guest.py` | auth, config, downloader, platforms, utils, logging_config, httpx | Bot API 10.0 guest mode: `handle_guest()` receives guest_message updates, extracts URLs (from tag text or replied-to message), downloads via platform handlers, uploads to storage channel for file_id, replies via `answer_guest_query()`. Uses raw dicts for InlineQueryResult to avoid ptb placeholder URL issues. |
 | `src/bot.py` | config, handlers, commands, platforms.youtube, logging_config, guest | Entry point, wires everything together, initializes logging, global error handler. Guest handler registered BEFORE text handler (filters.TEXT matches guest messages via effective_message). |
@@ -98,7 +98,7 @@ media-downloader-bot/
     - `request_received` when handler starts (in `requests.jsonl`)
     - `request_completed` when handler finishes (success or expected failure) (in `requests.jsonl`)
     - `request_failed` when handler throws exception (in `requests.jsonl`)
-    - Reply-to-retry uses `"event": "reply_to_retry"` to differentiate from normal requests
+    - Reply-to-retry uses `"event": "reply_to_retry_received"` / `"reply_to_retry_completed"` to differentiate from normal requests
 11. Intermediate download steps (yt-dlp calls, retries, gallery-dl attempts) logged to `request-details.jsonl` via `details_logger`
 12. Bot start/stop, chat membership, new user events logged to `service.jsonl` via `service_logger`
 13. `my_chat_member_handler` (registered via `ChatMemberHandler`):
@@ -109,9 +109,11 @@ media-downloader-bot/
     - Caller identified via `guest_msg.from_user` (Telegram sends `from`, ptb maps to `from_user`)
     - Auth check via `is_user_allowed(caller_id)` (same allowlist as regular messages)
     - URL extracted from tag text OR replied-to message
+    - `log_guest_request_received()` logs to `requests.jsonl` with user, chat, reply context
     - Platform detected, media downloaded via platform handlers
     - File uploaded to storage channel (`STORAGE_CHANNEL_ID`) to get `file_id`
     - Reply via `answer_guest_query()` with InlineQueryResult (raw dict with `video_file_id`/`photo_file_id`)
+    - `log_guest_request_completed()` logs success/failure, platform, duration to `requests.jsonl`
     - **Handler order**: guest handler registered BEFORE text handler because `filters.TEXT` matches guest messages via `effective_message`
 
 ## Key Design Decisions
