@@ -44,6 +44,8 @@ docs/*
 !docs/group-chats/**
 !docs/logs/
 !docs/logs/**
+!docs/p2p-chats/
+!docs/p2p-chats/**
 
 CLAUDE.md
 
