@@ -40,6 +40,8 @@ docs/*
 !docs/architecture.md
 !docs/guest-mode/
 !docs/guest-mode/**
+!docs/group-chats/
+!docs/group-chats/**
 !docs/logs/
 !docs/logs/**
 
