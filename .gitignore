@@ -46,6 +46,8 @@ docs/*
 !docs/logs/**
 !docs/p2p-chats/
 !docs/p2p-chats/**
+!docs/content-delivery/
+!docs/content-delivery/**
 
 CLAUDE.md
 
