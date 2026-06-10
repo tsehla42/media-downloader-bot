@@ -8,6 +8,16 @@ A Telegram bot that downloads videos and images from YouTube, TikTok, and Instag
 
 **Tech stack:** Python 3.12+, python-telegram-bot, yt-dlp (subprocess), gallery-dl (subprocess), pytest
 
+## Documentation
+
+For detailed documentation, see `docs/README.md` (human-readable overview) and the following module docs:
+
+- `docs/group-chats/` - How bot works in groups
+- `docs/guest-mode/` - Bot API 10.0 guest mode
+- `docs/p2p-chats/` - Private chat behavior
+- `docs/logs/` - Logging system
+- `docs/content-delivery/` - Media downloading
+
 ## Project Structure
 
 ```
@@ -42,7 +52,7 @@ media-downloader-bot/
 │   └── test_logging.py
 ├── docs/
 │   ├── README.md       # Project overview
-│   └── architecture.md # Module responsibilities and data flow
+│   └── README.md       # Module responsibilities and data flow
 ├── logs/               # Persistent log files (gitignored, mounted as volume)
 ├── requirements.txt    # Dependencies
 ├── .env.example        # Config template
@@ -181,7 +191,6 @@ When asked to "update bot" or "deploy", always read `docs/deploy.md` first.
 
 ## Docs Index
 
-- [Project Overview](docs/README.md) - Quick summary of what/why
-- [Architecture](docs/architecture.md) - Detailed module responsibilities and data flow
-- [Guest Mode Session](docs/2026-06-05-guest-mode-session.md) - Bot API 10.0 implementation notes and debugging log
+- [Project Overview](docs/README.md) - Quick summary of what/why, architecture, and links to detailed docs
+- [Guest Mode](docs/guest-mode/README.md) - Bot API 10.0 guest mode overview and technical reference
 - [Deployment](docs/deploy.md) - Production server deployment flow

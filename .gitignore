@@ -37,11 +37,20 @@ bot-downloads/
 *~
 
 docs/*
-!docs/architecture.md
-!docs/2026-06-05-guest-mode-session.md
+# Whitelist module documentation
+!docs/README.md
+!docs/group-chats/
+!docs/guest-mode/
+!docs/p2p-chats/
+!docs/logs/
+!docs/content-delivery/
+
+# Gitignore internal/ephemeral docs
+# (superpowers/, todo.md, deploy.md stay gitignored by default)
 
 CLAUDE.md
 
 # Logs
-logs/
+/logs/
 *.jsonl
+!docs/logs/**/*.jsonl

@@ -1,0 +1,112 @@
+# TikTok Downloads
+
+TikTok video download handling.
+
+## Supported URLs
+
+- `tiktok.com/@user/video/...`
+- `vm.tiktok.com/...`
+- `tiktok.com/t/...`
+
+## Download Flow
+
+1. Detect platform as `tiktok`
+2. Fetch metadata via `get_metadata()` to check file extension
+3. If metadata indicates photo post (ext in jpg/jpeg/png/webp): try gallery-dl images first
+4. If not a photo post (or gallery-dl fails): try yt-dlp video download
+5. If video download fails: fallback to gallery-dl images
+6. Send to user
+
+## Three-Stage Process
+
+```python
+# src/platforms/tiktok.py
+async def handle_tiktok(update, context, url: str) -> bool:
+    """Handle TikTok URL: check metadata for photo posts, fallback to gallery-dl."""
+    reply_params = {"message_id": update.message.message_id}
+
+    # Stage 1: Check metadata for photo posts
+    metadata = get_metadata(url)
+    if metadata:
+        ext = (metadata.get("ext") or "").lower()
+        if ext in IMAGE_EXTENSIONS:  # {"jpg", "jpeg", "png", "webp"}
+            images = download_gallery_dl_images(url, out_dir, "")
+            if images:
+                await send_images(update.message, images, reply_params)
+                return True
+
+    # Stage 2: Try video download via yt-dlp
+    success = download_video(url, output_path, MAX_FILE_SIZE, platform="tiktok")
+    if success:
+        # Find downloaded file and send as video
+        # ...
+        return True
+
+    # Stage 3: Fallback to gallery-dl for images
+    images = download_gallery_dl_images(url, out_dir, "")
+    if images:
+        await send_images(update.message, images, reply_params)
+        return True
+
+    return False
+```
+
+## gallery-dl Fallback
+
+TikTok videos often have watermarks when downloaded via yt-dlp. gallery-dl can sometimes get cleaner versions. For photo posts, gallery-dl is the primary tool.
+
+```python
+# src/downloader.py
+def download_gallery_dl_images(url: str, output_dir: str, cookies: str = "") -> list[str]:
+    """Download images using gallery-dl."""
+    gd_path = _find_gallery_dl()
+    if not gd_path:
+        return []
+
+    os.makedirs(output_dir, exist_ok=True)
+    output_dir = os.path.abspath(output_dir)
+
+    cmd = [gd_path, "-d", output_dir]
+    if cookies:
+        cookies = os.path.abspath(cookies)
+        if not os.path.isfile(cookies):
+            return []
+        cmd.extend(["--cookies", cookies])
+    cmd.append(url)
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+    if result.returncode != 0:
+        return []
+
+    images = sorted(
+        glob.glob(f"{output_dir}/**/*.jpg", recursive=True)
+        + glob.glob(f"{output_dir}/**/*.jpeg", recursive=True)
+        + glob.glob(f"{output_dir}/**/*.png", recursive=True)
+        + glob.glob(f"{output_dir}/**/*.webp", recursive=True)
+    )
+    return images
+```
+
+## Watermark Issue
+
+Some TikTok videos have watermarks even after download. This is a known issue with yt-dlp.
+
+**Workaround:** gallery-dl sometimes gets cleaner versions, but not always.
+
+**Status:** No perfect solution yet. See todo.md for updates.
+
+## Error Handling
+
+### Download Failed
+- Try gallery-dl fallback
+- If fallback fails, send error
+
+### Watermark Present
+- Current limitation
+- Document in troubleshooting
+
+## Related
+
+- [yt-dlp Integration](README.md) - General yt-dlp docs
+- [gallery-dl Fallback](../gallery-dl/fallback-strategy.md) - Fallback logic
