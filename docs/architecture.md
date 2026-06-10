@@ -28,8 +28,10 @@ Loads settings from `.env` via python-dotenv. Exports constants:
 Authorization checks, depends on config:
 - `is_authorized(update)` - Groups: always allowed (bot only exists if admin added it). P2P: checks ALLOWED_USER_IDS (empty sources = allow all; configured sources = user must be in list).
 - `is_bot_admin(user_id)` - Checks if user is in BOT_ADMIN_IDS (empty = allow all)
-- `was_notified(user_id)` - Checks if user has been told they're not authorized (in-memory set)
+- `was_notified(user_id)` - Checks if user has been told they're not authorized (P2P, in-memory set)
 - `mark_notified(user_id)` - Marks user as notified (resets on restart)
+- `was_notified_guest(user_id)` - Checks if user has been told they're not authorized (guest mode, separate set)
+- `mark_notified_guest(user_id)` - Marks guest user as notified (resets on restart)
 - `is_group_chat(update)` - Checks if message is from group/supergroup
 - `_is_allowed(user_id)` - Checks if user is in allowlist (no sources = allow all; sources configured but empty = deny all)
 - `_is_allowed_group(chat_id)` - Checks if group is in allowlist (empty = allow all)
@@ -96,11 +98,11 @@ Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloa
 - `audio_command(update, context)` - Download as MP3 (uses notification tracking for unauthorized users)
 - `_download_and_send(update, context, url, silent, reply_to_message_id)` - Orchestrates download with YouTube size check and error suppression
 - `handle_gallery_dl_fallback(update, context, url)` - Tries gallery-dl for unsupported platforms (images then video), silent on failure
-- `handle_url(update, context)` - Main handler: authorization check, detects group/P2P, splits supported/unsupported URLs, filters unsupported against gallery-dl domain whitelist, handles reply-to-retry, routes remaining unsupported URLs to gallery-dl fallback
+- `handle_url(update, context)` - Main handler: authorization check, detects group/P2P, unauthorized reply-to-bot check in groups (silently ignores), splits supported/unsupported URLs, filters unsupported against gallery-dl domain whitelist, handles reply-to-retry, routes remaining unsupported URLs to gallery-dl fallback
 
 ### guest.py
 Bot API 10.0 guest mode handler, depends on auth, config, downloader, platforms, utils, logging_config, httpx:
-- `handle_guest(update, context)` - Main handler for `guest_message` updates. Identifies caller via `guest_msg.from_user` (Telegram sends `from`, ptb maps to `from_user`). Auth check via `is_user_allowed()`. Extracts URLs from tag text OR replied-to message. Routes to download pipeline.
+- `handle_guest(update, context)` - Main handler for `guest_message` updates. Identifies caller via `guest_msg.from_user` (Telegram sends `from`, ptb maps to `from_user`). Auth check via `is_user_allowed()`. Unauthorized users get "You are not authorized" once via `answer_guest_query`, then silently ignored (uses `was_notified_guest()`/`mark_notified_guest()`). Logs unauthorized access to service.jsonl. Reply to bot message without URL is silently ignored. Reply to bot message with no text shows media type (e.g. `[photo]`) in logs. Extracts URLs from tag text OR replied-to message. Routes to download pipeline.
 - `_download_and_build_result(url, platform)` - Routes to platform-specific download: YouTube, TikTok, Instagram, or gallery-dl fallback
 - `_download_youtube(url)` - Downloads YouTube video, uploads to storage channel, returns `_video_result()`
 - `_download_media_result(url, platform)` - Downloads TikTok/Instagram content (video → gallery-dl images → gallery-dl video)
@@ -212,9 +214,14 @@ Guest mode (GUEST_MODE_ENABLED=true):
         │
         ├─ Caller: guest_msg.from_user (Telegram 'from' → ptb from_user)
         ├─ Auth: is_user_allowed(caller_id)
+        │   ├─ Unauthorized → first call: answer_guest_query("You are not authorized")
+        │   │   + log_unauthorized_access() → service.jsonl
+        │   │   Subsequent calls: silently ignored (via was_notified_guest())
+        │   └─ Authorized → continue
         ├─ URL: extract from tag text OR replied-to message
         │
-        ├─ No URL → answer_guest_query("Please include a URL")
+        ├─ No URL → reply to bot? → silently ignore
+        │          → tag only? → answer_guest_query("Please include a URL")
         │
         ├─ URL found → log_guest_request_received() → requests.jsonl
         │   (includes user, chat, reply context)
@@ -353,7 +360,7 @@ Service event (in `service.jsonl`):
 }
 ```
 
-Service events: `bot_started`, `bot_stopped`, `new_user_started`, `bot_added_to_chat`, `bot_rejected_group_addition`, `bot_removed_from_chat`, `bot_added_as_admin`, `bot_admin_rights_changed`, `bot_removed_as_admin`, `user_blocked_bot`, `unauthorized_access`.
+Service events: `bot_started`, `bot_stopped`, `new_user_started`, `bot_added_to_chat`, `bot_rejected_group_addition`, `bot_removed_from_chat`, `bot_added_as_admin`, `bot_admin_rights_changed`, `bot_removed_as_admin`, `user_blocked_bot`, `unauthorized_access` (includes guest mode unauthorized with `"command": "guest"`).
 
 Detail log (in `request-details.jsonl`):
 ```json
