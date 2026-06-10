@@ -187,16 +187,16 @@ class TestHandleGuestAuth:
     async def test_unauthorized_first_call_sends_message(self):
         """First unauthorized guest call sends unauth message."""
         from guest import handle_guest
-        from auth import _already_told_users
-        _already_told_users.clear()
+        from auth import _already_told_guest_users
+        _already_told_guest_users.clear()
 
         msg = _make_guest_message(caller_id=99999)
         update = _make_update(msg)
         context = _make_context()
 
         with patch("guest.is_user_allowed", return_value=False), \
-             patch("guest.was_notified", return_value=False), \
-             patch("guest.mark_notified"), \
+             patch("guest.was_notified_guest", return_value=False), \
+             patch("guest.mark_notified_guest"), \
              patch("guest.log_unauthorized_access"):
             await handle_guest(update, context)
             context.bot.answer_guest_query.assert_called_once()
@@ -213,7 +213,7 @@ class TestHandleGuestAuth:
         context = _make_context()
 
         with patch("guest.is_user_allowed", return_value=False), \
-             patch("guest.was_notified", return_value=True), \
+             patch("guest.was_notified_guest", return_value=True), \
              patch("guest.log_unauthorized_access"):
             await handle_guest(update, context)
             context.bot.answer_guest_query.assert_not_called()
@@ -232,7 +232,7 @@ class TestHandleGuestAuth:
         context = _make_context()
 
         with patch("guest.is_user_allowed", return_value=False), \
-             patch("guest.was_notified", return_value=True), \
+             patch("guest.was_notified_guest", return_value=True), \
              patch("guest.log_unauthorized_access", mock_log):
             await handle_guest(update, context)
             mock_log.assert_called_once()

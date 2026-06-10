@@ -15,7 +15,7 @@ import httpx
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from auth import is_user_allowed, was_notified, mark_notified
+from auth import is_user_allowed, was_notified_guest, mark_notified_guest
 from config import DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, STORAGE_CHANNEL_ID
 from logging_config import (
     details_logger,
@@ -113,12 +113,12 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     # Auth check
     if not is_user_allowed(caller_id):
-        if not was_notified(caller_id):
+        if not was_notified_guest(caller_id):
             await context.bot.answer_guest_query(
                 guest_query_id,
                 result=_text_result("You are not authorized to use this bot"),
             )
-            mark_notified(caller_id)
+            mark_notified_guest(caller_id)
         log_unauthorized_access(caller, chat, "guest")
         return
 
@@ -132,11 +132,26 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         replied_text = replied_to.text or ""
         urls = extract_urls(replied_text) if not urls else urls
         replied_user = getattr(replied_to, "from_user", None)
+
+        # Determine message content: text or media type
+        message_content = replied_text[:200] if replied_text else None
+        if not message_content:
+            if getattr(replied_to, "photo", None):
+                message_content = "[photo]"
+            elif getattr(replied_to, "video", None):
+                message_content = "[video]"
+            elif getattr(replied_to, "animation", None):
+                message_content = "[animation]"
+            elif getattr(replied_to, "document", None):
+                message_content = "[document]"
+            elif getattr(replied_to, "sticker", None):
+                message_content = "[sticker]"
+
         reply_data = {
             "user_id": replied_user.id if replied_user else None,
             "name": getattr(replied_user, "first_name", None) if replied_user else None,
             "username": getattr(replied_user, "username", None) if replied_user else None,
-            "message": replied_text[:200] if replied_text else None,
+            "message": message_content,
         }
 
     if not urls:
