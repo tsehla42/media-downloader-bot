@@ -42,7 +42,7 @@ media-downloader-bot/
 │   └── test_logging.py
 ├── docs/
 │   ├── README.md       # Project overview
-│   └── architecture.md # Module responsibilities and data flow
+│   └── README.md       # Module responsibilities and data flow
 ├── logs/               # Persistent log files (gitignored, mounted as volume)
 ├── requirements.txt    # Dependencies
 ├── .env.example        # Config template
