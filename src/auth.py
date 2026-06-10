@@ -5,6 +5,7 @@ from telegram import Update
 from config import ALLOWED_USER_IDS, ALLOWED_GROUP_IDS, BOT_ADMIN_IDS, ALLOWED_IDS_CONFIGURED
 
 _already_told_users: set[int] = set()
+_already_told_guest_users: set[int] = set()
 
 
 def is_bot_admin(user_id: int) -> bool:
@@ -24,6 +25,16 @@ def mark_notified(user_id: int) -> None:
     _already_told_users.add(user_id)
 
 
+def was_notified_guest(user_id: int) -> bool:
+    """Check if user has already been told they're not authorized (guest mode)."""
+    return user_id in _already_told_guest_users
+
+
+def mark_notified_guest(user_id: int) -> None:
+    """Mark user as having been notified about unauthorized access (guest mode)."""
+    _already_told_guest_users.add(user_id)
+
+
 def is_group_chat(update: Update) -> bool:
     """Check if the update is from a group chat."""
     chat = update.effective_chat
@@ -39,6 +50,11 @@ def _is_allowed(user_id: int) -> bool:
     if not ALLOWED_IDS_CONFIGURED:
         return True
     return user_id in ALLOWED_USER_IDS
+
+
+def is_user_allowed(user_id: int) -> bool:
+    """Public check if a user ID is authorized. Used by guest mode handler."""
+    return _is_allowed(user_id)
 
 
 def _is_allowed_group(chat_id: int) -> bool:

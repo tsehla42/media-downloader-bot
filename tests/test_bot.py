@@ -17,6 +17,7 @@ def test_bot_registers_my_chat_member_handler():
     with patch("bot.Application") as mock_app_builder, \
          patch("bot.setup_logging"), \
          patch("bot.BOT_TOKEN", "test-token"), \
+         patch("bot.GUEST_MODE_ENABLED", False), \
          patch("bot.start_command"), \
          patch("bot.help_command"), \
          patch("bot.handle_url"), \

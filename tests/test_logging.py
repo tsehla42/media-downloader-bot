@@ -835,7 +835,7 @@ def test_setup_logging_details_filter_on_file_handler():
 
 
 def test_reply_to_retry_logs_request_received():
-    """Reply-to-retry branch calls log_request_received with structured data."""
+    """Reply-to-retry branch calls log_request_received with reply_to_retry_received event."""
     from unittest.mock import AsyncMock
     from handlers import handle_url
 
@@ -875,6 +875,11 @@ def test_reply_to_retry_logs_request_received():
     assert call_args["url"] == "https://tiktok.com/@user/video/123"
     assert call_args["user"].id == 123
     assert call_args["chat"].id == -100
+    assert call_args["event"] == "reply_to_retry_received"
+
+    mock_completed.assert_called_once()
+    completed_args = mock_completed.call_args[1]
+    assert completed_args["event"] == "reply_to_retry_completed"
 
 
 def test_log_user_blocked_bot_basic():
@@ -986,3 +991,152 @@ def test_log_custom_title_changed_basic():
         assert "admin_rights" not in log_data
         assert "new_admin_rights" not in log_data
         assert "rights_added" not in log_data
+
+
+def test_log_guest_request_received_basic():
+    """log_guest_request_received outputs JSON with all required fields."""
+    from logging_config import log_guest_request_received
+
+    caller = MagicMock()
+    caller.id = 12345678
+    caller.first_name = "Alice"
+    caller.username = "user_alice"
+
+    chat = MagicMock()
+    chat.id = -1003804964305
+    chat.title = "Test Group"
+    chat.type = "supergroup"
+
+    with patch("logging_config.requests_logger") as mock_logger:
+        log_guest_request_received(
+            request_id="8e314411",
+            guest_query_id="2697475888970155636",
+            url="@mmebodevbot https://vt.tiktok.com/ZS9Gg6dGp/",
+            caller=caller,
+            chat=chat,
+            reply=None,
+        )
+
+        mock_logger.info.assert_called_once()
+        call_args = mock_logger.info.call_args
+        assert call_args[0][0] == "guest_request_received"
+        log_data = call_args[1]["extra"]["extra_data"]
+
+        assert log_data["event"] == "guest_request_received"
+        assert log_data["message"] == "Guest request received"
+        assert log_data["request_id"] == "8e314411"
+        assert log_data["guest_query_id"] == "2697475888970155636"
+        assert log_data["url"] == "@mmebodevbot https://vt.tiktok.com/ZS9Gg6dGp/"
+        assert log_data["user"]["id"] == 12345678
+        assert log_data["user"]["name"] == "Alice"
+        assert log_data["user"]["username"] == "user_alice"
+        assert log_data["chat"]["id"] == -1003804964305
+        assert log_data["chat"]["name"] == "Test Group"
+        assert log_data["chat"]["type"] == "supergroup"
+        assert log_data["reply"] is None
+
+
+def test_log_guest_request_received_with_reply():
+    """log_guest_request_received includes reply data when present."""
+    from logging_config import log_guest_request_received
+
+    caller = MagicMock()
+    caller.id = 12345678
+    caller.first_name = "Alice"
+    caller.username = "user_alice"
+
+    chat = MagicMock()
+    chat.id = -1003804964305
+    chat.title = "Test Group"
+    chat.type = "supergroup"
+
+    reply = {
+        "user_id": 87654321,
+        "name": "Bob",
+        "username": "user_bob",
+        "message": "check this out",
+    }
+
+    with patch("logging_config.requests_logger") as mock_logger:
+        log_guest_request_received(
+            request_id="8e314411",
+            guest_query_id="2697475888970155636",
+            url="@mmebodevbot https://vt.tiktok.com/ZS9Gg6dGp/",
+            caller=caller,
+            chat=chat,
+            reply=reply,
+        )
+
+        log_data = mock_logger.info.call_args[1]["extra"]["extra_data"]
+        assert log_data["reply"]["user_id"] == 87654321
+        assert log_data["reply"]["name"] == "Bob"
+        assert log_data["reply"]["username"] == "user_bob"
+        assert log_data["reply"]["message"] == "check this out"
+
+
+def test_log_guest_request_completed_basic():
+    """log_guest_request_completed outputs JSON with all required fields."""
+    from logging_config import log_guest_request_completed
+
+    caller = MagicMock()
+    caller.id = 12345678
+    caller.first_name = "Alice"
+    caller.username = "user_alice"
+
+    chat = MagicMock()
+    chat.id = -1003804964305
+    chat.title = "Test Group"
+    chat.type = "supergroup"
+
+    with patch("logging_config.requests_logger") as mock_logger:
+        log_guest_request_completed(
+            request_id="8e314411",
+            guest_query_id="2697475888970155636",
+            url="https://vt.tiktok.com/ZS9Gg6dGp/",
+            platform="tiktok",
+            duration_ms=4725,
+            success=True,
+            content_type="video",
+            file_size_mb=2.61,
+            caller=caller,
+            chat=chat,
+        )
+
+        mock_logger.info.assert_called_once()
+        call_args = mock_logger.info.call_args
+        assert call_args[0][0] == "guest_request_completed"
+        log_data = call_args[1]["extra"]["extra_data"]
+
+        assert log_data["event"] == "guest_request_completed"
+        assert log_data["message"] == "Guest request completed"
+        assert log_data["request_id"] == "8e314411"
+        assert log_data["guest_query_id"] == "2697475888970155636"
+        assert log_data["url"] == "https://vt.tiktok.com/ZS9Gg6dGp/"
+        assert log_data["platform"] == "tiktok"
+        assert log_data["duration_ms"] == 4725
+        assert log_data["success"] is True
+        assert log_data["content_type"] == "video"
+        assert log_data["file_size_mb"] == 2.61
+        assert log_data["user"]["id"] == 12345678
+        assert log_data["chat"]["id"] == -1003804964305
+
+
+def test_log_guest_request_completed_with_error():
+    """log_guest_request_completed includes error field on failure."""
+    from logging_config import log_guest_request_completed
+
+    with patch("logging_config.requests_logger") as mock_logger:
+        log_guest_request_completed(
+            request_id="abc123",
+            guest_query_id="q1",
+            url="https://example.com",
+            platform=None,
+            duration_ms=100,
+            success=False,
+            error="timeout",
+        )
+
+        log_data = mock_logger.info.call_args[1]["extra"]["extra_data"]
+        assert log_data["success"] is False
+        assert log_data["error"] == "timeout"
+        assert log_data["platform"] is None
