@@ -37,17 +37,16 @@ bot-downloads/
 *~
 
 docs/*
-!docs/architecture.md
-!docs/guest-mode/
-!docs/guest-mode/**
+# Whitelist module documentation
+!docs/README.md
 !docs/group-chats/
-!docs/group-chats/**
-!docs/logs/
-!docs/logs/**
+!docs/guest-mode/
 !docs/p2p-chats/
-!docs/p2p-chats/**
+!docs/logs/
 !docs/content-delivery/
-!docs/content-delivery/**
+
+# Gitignore internal/ephemeral docs
+# (superpowers/, todo.md, deploy.md stay gitignored by default)
 
 CLAUDE.md
 
