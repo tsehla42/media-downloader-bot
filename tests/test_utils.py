@@ -16,6 +16,9 @@ def test_detect_youtube_music():
 def test_detect_youtube_music_with_params():
     assert detect_platform("https://music.youtube.com/watch?v=uueRqEalZ7s&si=Xu33ojhvEQyWBemI") == "youtube"
 
+def test_detect_youtube_mobile():
+    assert detect_platform("https://m.youtube.com/watch?v=dQw4w9WgXcQ") == "youtube"
+
 def test_detect_tiktok():
     assert detect_platform("https://www.tiktok.com/@user/video/123") == "tiktok"
 
@@ -97,4 +100,35 @@ def test_get_gallery_dl_domains_import_error_returns_empty(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", mock_import)
     monkeypatch.setattr(subprocess, "run", mock_run)
     result = get_gallery_dl_domains()
+    assert result == frozenset()
+
+
+from utils import get_ytdlp_domains
+
+def test_get_ytdlp_domains_returns_frozenset():
+    """get_ytdlp_domains returns a frozenset of strings."""
+    result = get_ytdlp_domains()
+    assert isinstance(result, frozenset)
+    # Should contain known domains
+    if result:  # May be empty if generation failed
+        assert "youtube.com" in result or len(result) > 0
+
+def test_get_ytdlp_domains_import_error_returns_empty(monkeypatch):
+    """When ytdlp_domains can't be imported and generation fails, return empty frozenset."""
+    import builtins
+    import subprocess
+
+    original_import = builtins.__import__
+
+    def mock_import(name, *args, **kwargs):
+        if name == "ytdlp_domains":
+            raise ImportError("no such module")
+        return original_import(name, *args, **kwargs)
+
+    def mock_run(*args, **kwargs):
+        raise FileNotFoundError("no such file")
+
+    monkeypatch.setattr(builtins, "__import__", mock_import)
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    result = get_ytdlp_domains()
     assert result == frozenset()

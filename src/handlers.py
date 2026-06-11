@@ -17,11 +17,11 @@ def _log_extra(context, url: str) -> dict:
         "platform": context.user_data.get("_platform", ""),
     }
 from platforms import detect_platform, extract_domain
-from utils import get_gallery_dl_domains
+from utils import get_gallery_dl_domains, get_ytdlp_domains
 from platforms.youtube import handle_youtube, handle_ytmusic, AUDIO_TITLE_MAX, _store_download_metadata
 from platforms.instagram import handle_instagram
 from platforms.tiktok import handle_tiktok
-from downloader import get_metadata, download_audio, download_gallery_dl_images, download_gallery_dl_video
+from downloader import get_metadata, download_audio, download_video, download_gallery_dl_images, download_gallery_dl_video
 from commands import get_caption_for_user
 from auth import is_authorized, is_group_chat, was_notified, mark_notified, is_bot_admin, _is_allowed
 from logging_config import (
@@ -247,10 +247,70 @@ async def _download_and_send(
     context.user_data["_platform"] = platform or ""
 
     if not platform:
+        # Check if domain is in yt-dlp supported domains
+        ytdlp_domains = get_ytdlp_domains()
+        domain = extract_domain(url)
+        if domain in ytdlp_domains:
+            # Generic yt-dlp download for non-yt/tt/ig sites
+            metadata = get_metadata(url)
+            extra = _log_extra(context, url)
+            if not metadata:
+                context.user_data["_request_success"] = False
+                details_logger.info("ytdlp_metadata_failed", extra=extra)
+                if not (is_group_chat(update) and silent):
+                    await update.message.reply_text(
+                        "Failed to fetch metadata",
+                        reply_parameters=reply_params,
+                    )
+                return False
+
+            title = metadata.get("title", "video")
+            estimated_size = metadata.get("filesize") or metadata.get("filesize_approx")
+            if estimated_size and estimated_size > MAX_FILE_SIZE * 1024 * 1024:
+                context.user_data["_request_success"] = False
+                if not (is_group_chat(update) and silent):
+                    await update.message.reply_text(
+                        "This video is above Telegram's 50MB limit",
+                        reply_parameters=reply_params,
+                    )
+                return False
+
+            tmp_id = uuid.uuid4().hex[:8]
+            output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
+            base = os.path.join(DOWNLOAD_DIR, tmp_id)
+            os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+            try:
+                video_ok = download_video(url, output_path)
+                if not video_ok:
+                    context.user_data["_request_success"] = False
+                    if not (is_group_chat(update) and silent):
+                        await update.message.reply_text(
+                            "Download failed",
+                            reply_parameters=reply_params,
+                        )
+                    return False
+
+                for ext in ["mp4", "webm", "mkv"]:
+                    filepath = f"{base}.{ext}"
+                    if os.path.isfile(filepath):
+                        with open(filepath, "rb") as f:
+                            await update.message.reply_video(
+                                video=f,
+                                reply_parameters=reply_params,
+                            )
+                        context.user_data["_content_type"] = "video"
+                        context.user_data["_file_size_mb"] = round(os.path.getsize(filepath) / (1024 * 1024), 2)
+                        return True
+                return False
+            finally:
+                for ext in ["mp4", "webm", "mkv"]:
+                    cleanup_file(f"{base}.{ext}")
+
         context.user_data["_request_success"] = False
         if not (is_group_chat(update) and silent):
             await update.message.reply_text(
-                "Unsupported platform. I support YouTube, TikTok, and Instagram",
+                "Unsupported platform",
                 reply_parameters=reply_params,
             )
         return False
@@ -532,62 +592,60 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             )
         return
 
-    # Split into supported (YT/TT/IG) and unsupported URLs
-    supported_urls = [url for url in urls if detect_platform(url)]
-    unsupported_urls = [url for url in urls if not detect_platform(url)]
+    # Split URLs by domain support
+    ytdlp_domains = get_ytdlp_domains()
+    gallery_dl_domains = get_gallery_dl_domains()
+
+    # Categorize URLs
+    youtube_urls = []
+    other_ytdlp_urls = []
+    gallery_dl_urls = []
+    unsupported_urls = []
+
+    for url in urls:
+        domain = extract_domain(url)
+        platform = detect_platform(url)
+        if platform == "youtube":
+            youtube_urls.append(url)
+        elif platform in ("tiktok", "instagram"):
+            # TikTok and Instagram are handled by platform-specific handlers
+            other_ytdlp_urls.append(url)
+        elif domain in ytdlp_domains:
+            other_ytdlp_urls.append(url)
+        elif domain in gallery_dl_domains:
+            gallery_dl_urls.append(url)
+        else:
+            unsupported_urls.append(url)
 
     # In groups: ignore if nothing to process
-    if is_group_chat(update) and not supported_urls and not unsupported_urls:
+    if is_group_chat(update) and not youtube_urls and not other_ytdlp_urls and not gallery_dl_urls and not unsupported_urls:
         return
-
-    # In P2P: error shown after gallery-dl attempt if needed (see below)
-
-    # Split YouTube from non-YouTube for typing indicator handling
-    youtube_urls = [url for url in supported_urls if detect_platform(url) == "youtube"]
-    non_youtube_urls = [url for url in supported_urls if detect_platform(url) != "youtube"]
 
     # YouTube: no typing during metadata fetch, handled inside _download_and_send
     for url in youtube_urls:
         await _download_and_send(update, context, url)
 
-    # Non-YouTube: typing wraps full flow (current behavior)
-    if non_youtube_urls:
+    # Other supported URLs: typing wraps full flow
+    if other_ytdlp_urls:
         async with typing_indicator(update.message.chat.id, context.bot):
-            for url in non_youtube_urls:
+            for url in other_ytdlp_urls:
                 await _download_and_send(update, context, url)
 
-    # Filter unsupported URLs against gallery-dl domain whitelist
-    gallery_dl_domains = get_gallery_dl_domains()
-    if gallery_dl_domains:
-        skipped = [url for url in unsupported_urls if extract_domain(url) not in gallery_dl_domains]
-        for url in skipped:
-            details_logger.debug("gallery-dl: skipping unsupported domain %s", extract_domain(url))
-        unsupported_urls = [url for url in unsupported_urls if extract_domain(url) in gallery_dl_domains]
-        if skipped and not supported_urls:
-            context.user_data["_platform"] = extract_domain(skipped[0])
-            context.user_data["_request_success"] = False
-    else:
-        if unsupported_urls:
-            details_logger.warning("gallery-dl: domain list unavailable, skipping fallback")
-            context.user_data["_platform"] = extract_domain(unsupported_urls[0])
-            context.user_data["_request_success"] = False
-        unsupported_urls = []
-
-    # Process remaining unsupported URLs via gallery-dl fallback
-    if unsupported_urls:
+    # Process gallery-dl URLs
+    if gallery_dl_urls:
         any_handled = False
-        for url in unsupported_urls:
+        for url in gallery_dl_urls:
             handled = await handle_gallery_dl_fallback(update, context, url)
             if handled:
                 any_handled = True
-        if not any_handled and not is_group_chat(update) and not supported_urls:
+        if not any_handled and not is_group_chat(update) and not youtube_urls and not other_ytdlp_urls:
             await update.message.reply_text(
-                "Unsupported platform. I support YouTube, TikTok, and Instagram",
+                "Unsupported platform",
                 reply_parameters={"message_id": update.message.message_id},
             )
-    elif not is_group_chat(update) and not supported_urls:
-        # All unsupported URLs were filtered out (not in gallery-dl whitelist)
+    elif unsupported_urls and not is_group_chat(update) and not youtube_urls and not other_ytdlp_urls and not gallery_dl_urls:
+        # All URLs are unsupported
         await update.message.reply_text(
-            "Unsupported platform. I support YouTube, TikTok, and Instagram",
+            "Unsupported platform",
             reply_parameters={"message_id": update.message.message_id},
         )

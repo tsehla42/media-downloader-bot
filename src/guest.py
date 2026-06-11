@@ -25,7 +25,7 @@ from logging_config import (
     set_current_request_id,
 )
 from platforms import detect_platform, extract_domain
-from utils import extract_urls, cleanup_file, cleanup_dir, get_gallery_dl_domains
+from utils import extract_urls, cleanup_file, cleanup_dir, get_gallery_dl_domains, get_ytdlp_domains
 from downloader import (
     get_metadata,
     download_video,
@@ -228,6 +228,7 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def _download_and_build_result(url: str, platform: str | None) -> dict:
     """Download media and return InlineQueryResult."""
     try:
+        # Check if it's a main platform (yt/tt/ig)
         if platform == "youtube":
             return await _download_youtube(url)
 
@@ -237,16 +238,20 @@ async def _download_and_build_result(url: str, platform: str | None) -> dict:
         if platform == "instagram":
             return await _download_media_result(url, "instagram")
 
-        # For unknown platforms, try gallery-dl if domain is supported
-        if not platform:
-            domain = extract_domain(url)
-            gallery_dl_domains = get_gallery_dl_domains()
-            if not gallery_dl_domains or domain in gallery_dl_domains:
-                return await _gallery_dl_result(url)
-            return _text_result("Unsupported platform")
+        # Check yt-dlp domains
+        domain = extract_domain(url)
+        ytdlp_domains = get_ytdlp_domains()
+        if domain in ytdlp_domains:
+            # Generic yt-dlp download
+            return await _ytdlp_generic_result(url)
 
-        # Future-proofing: gallery-dl fallback for any unrecognized platform
-        return await _gallery_dl_result(url)
+        # Check gallery-dl domains
+        gallery_dl_domains = get_gallery_dl_domains()
+        if domain in gallery_dl_domains:
+            return await _gallery_dl_result(url)
+
+        # Unsupported
+        return _text_result("Unsupported platform")
 
     except Exception as e:
         return _text_result(f"Error: {e}")
@@ -327,6 +332,43 @@ async def _download_media_result(url: str, platform: str) -> dict:
         return _text_result("Could not download media from this URL")
     finally:
         cleanup_dir(output_dir)
+
+
+async def _ytdlp_generic_result(url: str) -> dict:
+    """Generic yt-dlp download for non-yt/tt/ig sites."""
+    metadata = await asyncio.to_thread(get_metadata, url)
+    if not metadata:
+        return _text_result("Failed to fetch metadata")
+
+    title = metadata.get("title", "video")
+    estimated_size = metadata.get("filesize") or metadata.get("filesize_approx")
+    if estimated_size and estimated_size > MAX_FILE_SIZE * 1024 * 1024:
+        return _text_result("This video is above Telegram's 50MB limit")
+
+    thumbnail_url = metadata.get("thumbnail", "")
+    tmp_id = uuid.uuid4().hex[:8]
+    output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
+    base = os.path.join(DOWNLOAD_DIR, tmp_id)
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+    try:
+        success = await asyncio.to_thread(download_video, url, output_path)
+        if not success:
+            return _text_result("Download failed")
+
+        for ext in ["mp4", "webm", "mkv"]:
+            filepath = f"{base}.{ext}"
+            if os.path.isfile(filepath):
+                file_id = await _upload_to_telegram(filepath, "video")
+                if file_id:
+                    return _video_result(file_id, title=title, thumbnail_url=thumbnail_url)
+                return _text_result("Failed to upload video to Telegram")
+        return _text_result("Downloaded file not found")
+    finally:
+        for ext in ["mp4", "webm", "mkv"]:
+            fpath = f"{base}.{ext}"
+            if os.path.isfile(fpath):
+                os.unlink(fpath)
 
 
 async def _gallery_dl_result(url: str) -> dict:

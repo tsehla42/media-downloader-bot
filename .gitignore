@@ -20,6 +20,7 @@ venv/
 cookies.txt
 allowed-contacts.json
 src/gallery_dl_domains.py
+src/ytdlp_domains.py
 
 # Test
 .pytest_cache/

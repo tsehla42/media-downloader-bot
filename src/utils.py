@@ -57,3 +57,27 @@ def get_gallery_dl_domains() -> frozenset[str]:
             return GALLERY_DL_DOMAINS
         except Exception:
             return frozenset()
+
+
+def get_ytdlp_domains() -> frozenset[str]:
+    """Get yt-dlp supported domains. Auto-generates if missing."""
+    try:
+        from ytdlp_domains import YTDLP_DOMAINS
+        return YTDLP_DOMAINS
+    except ImportError:
+        # Try to generate the file
+        try:
+            import subprocess
+            import sys
+            from pathlib import Path
+            script = str(Path(__file__).resolve().parent.parent / "scripts" / "generate_ytdlp_domains.py")
+            subprocess.run(
+                [sys.executable, script],
+                timeout=30,
+                check=True,
+                capture_output=True,
+            )
+            from ytdlp_domains import YTDLP_DOMAINS
+            return YTDLP_DOMAINS
+        except Exception:
+            return frozenset()

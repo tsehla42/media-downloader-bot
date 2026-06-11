@@ -1256,6 +1256,9 @@ async def test_handle_url_routes_pinterest_to_gallery_dl_fallback(update, contex
 
     with patch("handlers.is_authorized", return_value=True), \
          patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.get_ytdlp_domains", return_value=frozenset()), \
+         patch("handlers.get_gallery_dl_domains", return_value=frozenset(["pinterest.com"])), \
+         patch("handlers.extract_domain", return_value="pinterest.com"), \
          patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=True) as mock_fallback:
         await handle_url(update, context)
 
@@ -1364,8 +1367,16 @@ async def test_handle_url_mixed_supported_and_unsupported(update, context):
             return "youtube"
         return None
 
+    def mock_extract_domain(url):
+        if "pinterest" in url:
+            return "pinterest.com"
+        return ""
+
     with patch("handlers.is_authorized", return_value=True), \
          patch("handlers.detect_platform", side_effect=mock_detect_platform), \
+         patch("handlers.get_ytdlp_domains", return_value=frozenset()), \
+         patch("handlers.get_gallery_dl_domains", return_value=frozenset(["pinterest.com"])), \
+         patch("handlers.extract_domain", side_effect=mock_extract_domain), \
          patch("handlers.get_metadata", return_value={"title": "Test"}), \
          patch("platforms.youtube.download_video", return_value=True), \
          patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=True) as mock_fallback, \
@@ -1731,6 +1742,7 @@ async def test_handle_url_skips_unsupported_domain_not_in_whitelist(update, cont
 
     with patch("handlers.is_authorized", return_value=True), \
          patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.get_ytdlp_domains", return_value=frozenset()), \
          patch("handlers.get_gallery_dl_domains", return_value=frozenset(["pinterest.com", "reddit.com"])), \
          patch("handlers.extract_domain", return_value="github.com"), \
          patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock) as mock_fallback:
@@ -1751,6 +1763,7 @@ async def test_handle_url_passes_whitelisted_domain_to_gallery_dl(update, contex
 
     with patch("handlers.is_authorized", return_value=True), \
          patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.get_ytdlp_domains", return_value=frozenset()), \
          patch("handlers.get_gallery_dl_domains", return_value=frozenset(["pinterest.com"])), \
          patch("handlers.extract_domain", return_value="pinterest.com"), \
          patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock, return_value=True) as mock_fallback:
@@ -1766,7 +1779,9 @@ async def test_handle_url_skips_all_when_domain_list_empty(update, context):
 
     with patch("handlers.is_authorized", return_value=True), \
          patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.get_ytdlp_domains", return_value=frozenset()), \
          patch("handlers.get_gallery_dl_domains", return_value=frozenset()), \
+         patch("handlers.extract_domain", return_value="pinterest.com"), \
          patch("handlers.handle_gallery_dl_fallback", new_callable=AsyncMock) as mock_fallback:
         await handle_url(update, context)
 
@@ -2117,3 +2132,36 @@ async def test_handle_url_ignores_unauthorized_reply_to_bot_in_group():
          patch("handlers._is_allowed", return_value=False):
         await handle_url(update, context)
         update.message.reply_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_url_ytdlp_supported_site(update, context):
+    """handle_url processes yt-dlp supported sites (non-yt/tt/ig) via generic download."""
+    update.message.text = "https://www.dailymotion.com/video/x7tgfd"
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.get_ytdlp_domains", return_value=frozenset(["dailymotion.com"])), \
+         patch("handlers.get_gallery_dl_domains", return_value=frozenset()), \
+         patch("handlers.detect_platform", return_value=None), \
+         patch("handlers.get_metadata", return_value={"title": "Test Video"}), \
+         patch("handlers.download_video", return_value=True), \
+         patch("handlers.cleanup_file"), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.getsize", return_value=1024*1024), \
+         patch("builtins.open", MagicMock()):
+        update.message.reply_video = AsyncMock()
+        await handle_url(update, context)
+        update.message.reply_video.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_url_unsupported_site(update, context):
+    """handle_url shows 'Unsupported platform' for sites not in any domain list."""
+    update.message.text = "https://unknown-site.com/video"
+    with patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.get_ytdlp_domains", return_value=frozenset()), \
+         patch("handlers.get_gallery_dl_domains", return_value=frozenset()), \
+         patch("handlers.detect_platform", return_value=None):
+        await handle_url(update, context)
+        update.message.reply_text.assert_called_once()
+        text = update.message.reply_text.call_args[0][0]
+        assert text == "Unsupported platform"

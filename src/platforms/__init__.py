@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 __all__ = ["SUPPORTED_PLATFORMS", "detect_platform", "extract_domain"]
 
 SUPPORTED_PLATFORMS = {
-    "youtube": ["youtube.com", "youtu.be", "music.youtube.com"],
+    "youtube": ["youtube.com", "youtu.be", "music.youtube.com", "m.youtube.com"],
     "tiktok": ["tiktok.com", "vm.tiktok.com", "vt.tiktok.com", "m.tiktok.com", "douyin.com"],
     "instagram": ["instagram.com"],
 }

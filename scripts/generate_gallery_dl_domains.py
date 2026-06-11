@@ -43,6 +43,8 @@ def write_output(domains: frozenset[str]) -> None:
     content = f'''"""Auto-generated gallery-dl supported domains. Do not edit manually.
 
 Regenerate: python scripts/generate_gallery_dl_domains.py
+
+# Count: {len(domains)}
 """
 
 GALLERY_DL_DOMAINS: frozenset[str] = frozenset({{
