@@ -69,6 +69,44 @@ def get_metadata(url: str) -> dict | None:
         return None
 
 
+def _ensure_faststart(filepath: str) -> bool:
+    """Move moov atom to front of MP4 for Telegram streaming.
+
+    Uses ffmpeg to reposition the moov atom without re-encoding.
+    Non-MP4 files are remuxed to MP4. Returns True on success or if
+    the file is not an MP4 (nothing to do).
+    """
+    if not filepath.endswith(".mp4"):
+        return True
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return True  # ffmpeg not available, skip
+
+    tmp = filepath + ".faststart.mp4"
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg, "-y", "-i", filepath,
+                "-c", "copy", "-movflags", "+faststart",
+                tmp,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode == 0 and os.path.isfile(tmp):
+            os.replace(tmp, filepath)
+            return True
+        # Cleanup on failure
+        if os.path.isfile(tmp):
+            os.unlink(tmp)
+    except (subprocess.TimeoutExpired, OSError):
+        if os.path.isfile(tmp):
+            os.unlink(tmp)
+    return False
+
+
 def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_MB, platform: str = "") -> bool:
     """Download video, retrying with lower quality if too large."""
     ytdlp = _find_ytdlp()
@@ -95,6 +133,7 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     )
 
     if result.returncode == 0:
+        _apply_faststart(output_path, extra)
         logger.info("download_video: yt-dlp ok", extra=extra)
         return True
 
@@ -116,8 +155,24 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     if result.returncode != 0:
         logger.warning("download_video: yt-dlp failed (code %d)", result.returncode, extra=extra)
     else:
+        _apply_faststart(output_path, extra)
         logger.info("download_video: yt-dlp ok (fallback)", extra=extra)
     return result.returncode == 0
+
+
+def _apply_faststart(output_path: str, extra: dict) -> None:
+    """Apply faststart to downloaded file. Best-effort, logs on failure."""
+    # output_path may contain %(ext)s — resolve actual file
+    import glob as _glob
+    base = output_path.replace("%(ext)s", "")
+    for ext in ["mp4", "webm", "mkv"]:
+        candidate = f"{base}.{ext}"
+        if os.path.isfile(candidate) and candidate.endswith(".mp4"):
+            if _ensure_faststart(candidate):
+                details_logger.info("faststart applied", extra=extra)
+            else:
+                details_logger.info("faststart skipped (ffmpeg unavailable or failed)", extra=extra)
+            break
 
 
 def download_audio(url: str, output_path: str) -> bool:
