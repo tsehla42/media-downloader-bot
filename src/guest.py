@@ -426,6 +426,8 @@ async def _upload_to_telegram(file_path: str, media_type: str) -> str | None:
                 else:
                     files = {"document": f}
                 data = {"chat_id": STORAGE_CHANNEL_ID}
+                if media_type == "video":
+                    data["supports_streaming"] = "true"
 
                 response = await client.post(url, data=data, files=files)
                 result = response.json()

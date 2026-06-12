@@ -103,7 +103,7 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     result = subprocess.run(
         [
             ytdlp,
-            "-f", "worst",
+            "-f", f"worst[filesize<{max_bytes}]/worst",
             "-o", output_path,
             "--no-playlist",
             url,

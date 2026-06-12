@@ -58,6 +58,28 @@ def test_download_video_retries_on_too_large():
         assert result is True
         assert mock_run.call_count == 2
 
+
+def test_download_video_fallback_prefers_quality_constrained_worst():
+    """Fallback should use 'worst[filesize<50MB]/worst' to avoid watermarked formats.
+
+    TikTok's download_addr (watermarked) can be smaller than play_addr (clean).
+    Using bare 'worst' may pick the watermarked version. Constraining by filesize
+    first tries a small clean format before falling back to bare worst.
+    """
+    with patch("downloader.subprocess.run") as mock_run:
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="File is too large"),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
+        result = download_video("https://tiktok.com/@user/video/123", "/tmp/test.mp4")
+        assert result is True
+        assert mock_run.call_count == 2
+        # Check the fallback command uses filesize-constrained worst
+        fallback_args = mock_run.call_args_list[1][0][0]
+        format_idx = fallback_args.index("-f")
+        format_value = fallback_args[format_idx + 1]
+        assert "worst[filesize<" in format_value
+
 def test_download_audio_uses_extract_audio():
     with patch("downloader.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(

@@ -116,6 +116,37 @@ async def test_download_and_send_replies_with_video():
 
 
 @pytest.mark.asyncio
+async def test_reply_video_includes_supports_streaming():
+    """reply_video must pass supports_streaming=True for Telegram inline playback."""
+    update = MagicMock()
+    update.message.text = "https://youtube.com/watch?v=abc"
+    update.message.message_id = 99
+    update.message.from_user.id = 123
+    update.message.from_user.first_name = "Test"
+    update.message.from_user.username = "test"
+    update.message.chat.id = -100
+    update.message.chat.title = "Group"
+    update.message.chat.type = "group"
+    update.message.reply_video = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={"title": "Test Video", "duration": 60, "format": "720p"}), \
+         patch("platforms.youtube.download_video", return_value=True):
+        with patch("os.path.isfile", return_value=True), \
+             patch("os.path.getsize", return_value=1024*1024), \
+             patch("handlers.cleanup_file"), \
+             patch("builtins.open", MagicMock()):
+            await _download_and_send(update, context, "https://youtube.com/watch?v=abc")
+
+        update.message.reply_video.assert_called_once()
+        kwargs = update.message.reply_video.call_args[1]
+        assert kwargs.get("supports_streaming") is True
+
+
+@pytest.mark.asyncio
 async def test_download_and_send_logs_error_on_exception():
     """_download_and_send replies with error message when download raises an exception."""
     update = MagicMock()

@@ -53,6 +53,10 @@ def detect_platform(url: str) -> str | None:
 - If too large, tries lower quality
 - If still too large, sends error message
 
+## Video Streaming
+
+All video sends include `supports_streaming=True` so Telegram plays them inline (streaming) rather than requiring full download first. This applies to all paths: direct reply, gallery-dl fallback, guest mode upload, and YouTube Music callbacks.
+
 ## Temporary Files
 
 - Downloads stored in `DOWNLOAD_DIR` (default: `/tmp/bot-downloads/`)

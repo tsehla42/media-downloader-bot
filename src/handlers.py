@@ -298,6 +298,7 @@ async def _download_and_send(
                             await update.message.reply_video(
                                 video=f,
                                 reply_parameters=reply_params,
+                                supports_streaming=True,
                             )
                         context.user_data["_content_type"] = "video"
                         context.user_data["_file_size_mb"] = round(os.path.getsize(filepath) / (1024 * 1024), 2)
@@ -480,6 +481,7 @@ async def handle_gallery_dl_fallback(update: Update, context: ContextTypes.DEFAU
                     await update.message.reply_video(
                         video=f,
                         reply_parameters=reply_params,
+                        supports_streaming=True,
                     )
             except Exception as e:
                 details_logger.error("gallery-dl video send failed: %s", e)

@@ -55,6 +55,7 @@ async def _download_and_send_video(
             video=f,
             caption=caption,
             reply_parameters=reply_params,
+            supports_streaming=True,
         )
     if context:
         _store_download_metadata(context, "video", downloaded)
@@ -230,6 +231,7 @@ async def ytmusic_callback(update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                 video=f,
                                 caption=caption,
                                 reply_parameters=reply_params,
+                                supports_streaming=True,
                             )
                         _store_download_metadata(context, "both", downloaded)
                         _log.info("ytmusic_callback: video sent for %s", url)

@@ -40,6 +40,7 @@ async def handle_instagram(update, context, url: str) -> bool:
                     await update.message.reply_video(
                         video=f,
                         reply_parameters=reply_params,
+                        supports_streaming=True,
                     )
                 context.user_data["_content_type"] = "video"
                 try:

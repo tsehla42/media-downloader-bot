@@ -90,11 +90,9 @@ def download_gallery_dl_images(url: str, output_dir: str, cookies: str = "") -> 
 
 ## Watermark Issue
 
-Some TikTok videos have watermarks even after download. This is a known issue with yt-dlp.
+TikTok serves two types of video formats: `play_addr` (clean, no watermark) and `download_addr` (watermarked). When yt-dlp's first download attempt fails (e.g. file too large), the fallback retries with `worst[filesize<50MB]/worst` instead of bare `worst`. This prefers a filesize-constrained clean format before falling back to potentially watermarked versions.
 
-**Workaround:** gallery-dl sometimes gets cleaner versions, but not always.
-
-**Status:** No perfect solution yet. See todo.md for updates.
+**Known limitation:** TikTok's API is inconsistent per region — some requests only return one format, and whether it's watermarked varies. See [yt-dlp#15690](https://github.com/yt-dlp/yt-dlp/issues/15690).
 
 ## Error Handling
 
