@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from logging_config import setup_logging, details_logger, service_logger
+from logging_config import setup_logging, details_logger, service_logger, log_error
 
 from telegram import BotCommand, Update
 from telegram.ext import (
@@ -21,7 +21,7 @@ from commands import start_command, help_command, caption_command
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log the error and send a telegram message to inform the user."""
-    details_logger.error("Exception while handling an update:", exc_info=context.error)
+    log_error(context.error, update)
 
     if isinstance(update, Update) and update.effective_chat:
         try:

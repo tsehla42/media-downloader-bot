@@ -911,7 +911,7 @@ def test_log_user_blocked_bot_basic():
         assert log_data["user"]["id"] == 99999
         assert log_data["user"]["name"] == "Angry"
         assert log_data["user"]["username"] == "angry_user"
-        assert log_data["chat"]["name"] is None
+        assert log_data["chat"]["name"] == "Angry"
 
 
 def test_log_admin_rights_changed_basic():
@@ -1140,3 +1140,288 @@ def test_log_guest_request_completed_with_error():
         assert log_data["success"] is False
         assert log_data["error"] == "timeout"
         assert log_data["platform"] is None
+
+
+class TestEnrichChat:
+    """Tests for _enrich_chat() helper."""
+
+    def test_private_chat_with_user(self):
+        """Private chat gets name from user.first_name."""
+        from logging_config import _enrich_chat
+        chat = MagicMock()
+        chat.id = 123
+        chat.type = "private"
+        chat.title = None
+        chat.username = None
+        user = MagicMock()
+        user.first_name = "Alice"
+        user.username = "alice42"
+        result = _enrich_chat(chat, user)
+        assert result == {"id": 123, "type": "private", "name": "Alice", "username": "alice42"}
+
+    def test_private_chat_no_username(self):
+        """Private chat without user username omits username field."""
+        from logging_config import _enrich_chat
+        chat = MagicMock()
+        chat.id = 123
+        chat.type = "private"
+        chat.title = None
+        chat.username = None
+        user = MagicMock()
+        user.first_name = "Bob"
+        user.username = None
+        result = _enrich_chat(chat, user)
+        assert result == {"id": 123, "type": "private", "name": "Bob"}
+        assert "username" not in result
+
+    def test_private_chat_no_user(self):
+        """Private chat without user falls back to chat.title (even if None)."""
+        from logging_config import _enrich_chat
+        chat = MagicMock()
+        chat.id = 123
+        chat.type = "private"
+        chat.title = None
+        chat.username = None
+        result = _enrich_chat(chat)
+        assert result == {"id": 123, "type": "private"}
+
+    def test_group_with_chat_username(self):
+        """Group gets username from chat.username."""
+        from logging_config import _enrich_chat
+        chat = MagicMock()
+        chat.id = -100
+        chat.type = "supergroup"
+        chat.title = "My Group"
+        chat.username = "mygroup"
+        result = _enrich_chat(chat)
+        assert result == {"id": -100, "type": "supergroup", "name": "My Group", "username": "mygroup"}
+
+    def test_group_without_chat_username(self):
+        """Group without username omits username field."""
+        from logging_config import _enrich_chat
+        chat = MagicMock()
+        chat.id = -100
+        chat.type = "group"
+        chat.title = "Test Group"
+        chat.username = None
+        result = _enrich_chat(chat)
+        assert result == {"id": -100, "type": "group", "name": "Test Group"}
+        assert "username" not in result
+
+    def test_group_empty_username_omitted(self):
+        """Group with empty string username omits username field."""
+        from logging_config import _enrich_chat
+        chat = MagicMock()
+        chat.id = -100
+        chat.type = "group"
+        chat.title = "Test"
+        chat.username = ""
+        result = _enrich_chat(chat)
+        assert "username" not in result
+
+    def test_private_chat_title_over_user_name(self):
+        """If private chat has a title set, prefer it over user.first_name."""
+        from logging_config import _enrich_chat
+        chat = MagicMock()
+        chat.id = 123
+        chat.type = "private"
+        chat.title = "Chat Title"
+        chat.username = "chatuser"
+        user = MagicMock()
+        user.first_name = "Alice"
+        user.username = "alice42"
+        result = _enrich_chat(chat, user)
+        assert result["name"] == "Chat Title"
+        assert result["username"] == "chatuser"
+
+    def test_private_chat_with_chat_owner(self):
+        """Private chat combines caller and owner as 'caller | owner'."""
+        from logging_config import _enrich_chat
+        chat = MagicMock()
+        chat.id = 123
+        chat.type = "private"
+        chat.title = None
+        chat.username = None
+        user = MagicMock()
+        user.first_name = "Alice"
+        user.username = "user_alice"
+        result = _enrich_chat(chat, user, chat_owner_name="Bob", chat_owner_username="user_bob")
+        assert result["name"] == "Alice | Bob"
+        assert result["username"] == "user_alice | user_bob"
+
+    def test_private_chat_owner_only_no_caller(self):
+        """Private chat with owner but no caller shows owner only."""
+        from logging_config import _enrich_chat
+        chat = MagicMock()
+        chat.id = 123
+        chat.type = "private"
+        chat.title = None
+        chat.username = None
+        result = _enrich_chat(chat, chat_owner_name="Owner", chat_owner_username="owner42")
+        assert result["name"] == "Owner"
+        assert result["username"] == "owner42"
+
+    def test_private_chat_owner_partial(self):
+        """Private chat with owner name but no username."""
+        from logging_config import _enrich_chat
+        chat = MagicMock()
+        chat.id = 123
+        chat.type = "private"
+        chat.title = None
+        chat.username = None
+        user = MagicMock()
+        user.first_name = "Alice"
+        user.username = "alice42"
+        result = _enrich_chat(chat, user, chat_owner_name="Bob")
+        assert result["name"] == "Alice | Bob"
+        assert result["username"] == "alice42"
+
+    def test_group_ignores_chat_owner(self):
+        """Group chat ignores chat_owner params (only applies to private)."""
+        from logging_config import _enrich_chat
+        chat = MagicMock()
+        chat.id = -100
+        chat.type = "supergroup"
+        chat.title = "My Group"
+        chat.username = "mygroup"
+        result = _enrich_chat(chat, chat_owner_name="Owner")
+        assert result["name"] == "My Group"
+        assert result["username"] == "mygroup"
+
+
+def test_errors_filter_accepts_errors_logger():
+    """ErrorsFilter accepts records from media_downloader.errors logger."""
+    from logging_config import ErrorsFilter
+    import logging
+
+    f = ErrorsFilter()
+    record = logging.LogRecord(
+        name="media_downloader.errors", level=logging.ERROR,
+        pathname="test.py", lineno=1, msg="test", args=(), exc_info=None,
+    )
+    assert f.filter(record) is True
+
+
+def test_errors_filter_rejects_details_logger():
+    """ErrorsFilter rejects records from media_downloader.details logger."""
+    from logging_config import ErrorsFilter
+    import logging
+
+    f = ErrorsFilter()
+    record = logging.LogRecord(
+        name="media_downloader.details", level=logging.ERROR,
+        pathname="test.py", lineno=1, msg="test", args=(), exc_info=None,
+    )
+    assert f.filter(record) is False
+
+
+def test_resolve_error_log_file_development():
+    """MODE=dev returns errors.dev.jsonl."""
+    from logging_config import _resolve_error_log_file
+    assert _resolve_error_log_file("dev") == "errors.dev.jsonl"
+
+
+def test_resolve_error_log_file_production():
+    """MODE=prod returns errors.jsonl."""
+    from logging_config import _resolve_error_log_file
+    assert _resolve_error_log_file("prod") == "errors.jsonl"
+
+
+def test_log_error_basic():
+    """log_error outputs JSON with error_id, error_type, traceback."""
+    from logging_config import log_error
+
+    error = ValueError("something broke")
+
+    with patch("logging_config.error_logger") as mock_logger:
+        log_error(error)
+
+        mock_logger.error.assert_called_once()
+        log_data = mock_logger.error.call_args[1]["extra"]["extra_data"]
+
+        assert log_data["event"] == "unhandled_exception"
+        assert "error_id" in log_data
+        assert len(log_data["error_id"]) == 8
+        assert log_data["error_type"] == "ValueError"
+        assert log_data["error_message"] == "something broke"
+        assert "traceback" in log_data
+        assert "ValueError" in log_data["traceback"]
+        assert "request_id" not in log_data  # No context set
+
+
+def test_log_error_with_request_id():
+    """log_error includes request_id when passed."""
+    from logging_config import log_error
+
+    error = RuntimeError("oops")
+
+    with patch("logging_config.error_logger") as mock_logger:
+        log_error(error, request_id="abc12345")
+
+        log_data = mock_logger.error.call_args[1]["extra"]["extra_data"]
+        assert log_data["request_id"] == "abc12345"
+
+
+def test_log_error_with_update():
+    """log_error extracts chat_id and user_id from update."""
+    from logging_config import log_error
+
+    error = ConnectionError("timeout")
+    update = MagicMock()
+    update.effective_chat.id = -100
+    update.effective_user.id = 42
+
+    with patch("logging_config.error_logger") as mock_logger:
+        log_error(error, update=update)
+
+        log_data = mock_logger.error.call_args[1]["extra"]["extra_data"]
+        assert log_data["chat_id"] == -100
+        assert log_data["user_id"] == 42
+
+
+def test_log_error_without_user():
+    """log_error handles update with no effective_user."""
+    from logging_config import log_error
+
+    error = ConnectionError("timeout")
+    update = MagicMock()
+    update.effective_chat.id = -100
+    update.effective_user = None
+
+    with patch("logging_config.error_logger") as mock_logger:
+        log_error(error, update=update)
+
+        log_data = mock_logger.error.call_args[1]["extra"]["extra_data"]
+        assert log_data["chat_id"] == -100
+        assert "user_id" not in log_data
+
+
+def test_setup_logging_creates_error_log_file():
+    """setup_logging creates errors.jsonl when LOG_OUTPUT=file."""
+    import importlib
+    import config
+    from logging_config import setup_logging
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch.dict(os.environ, {"LOG_OUTPUT": "file", "LOG_DIR": tmpdir, "MODE": "production"}):
+            importlib.reload(config)
+            setup_logging()
+
+        assert os.path.exists(os.path.join(tmpdir, "errors.jsonl"))
+
+
+def test_setup_logging_error_filter_on_handler():
+    """Error file handler has ErrorsFilter applied."""
+    import importlib
+    import config
+    from logging_config import setup_logging, ErrorsFilter
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch.dict(os.environ, {"LOG_OUTPUT": "file", "LOG_DIR": tmpdir, "MODE": "production"}):
+            importlib.reload(config)
+            setup_logging()
+
+        root = logging.getLogger()
+        file_handlers = [h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
+        error_handlers = [h for h in file_handlers if any(isinstance(f, ErrorsFilter) for f in h.filters)]
+        assert len(error_handlers) == 1

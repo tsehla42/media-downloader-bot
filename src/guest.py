@@ -163,6 +163,19 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
         return
 
+    # Fetch chat owner info for private chats (to show both participants)
+    chat_owner_name = None
+    chat_owner_username = None
+    if getattr(chat, "type", None) == "private":
+        try:
+            member = await context.bot.get_chat_member(chat.id, chat.id)
+            user_obj = getattr(member, "user", None)
+            if user_obj:
+                chat_owner_name = getattr(user_obj, "first_name", None)
+                chat_owner_username = getattr(user_obj, "username", None)
+        except Exception:
+            pass  # Fallback: show only caller info
+
     # Log Guest request received (only when URL is present)
     log_guest_request_received(
         request_id=request_id,
@@ -171,6 +184,8 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         caller=caller,
         chat=chat,
         reply=reply_data,
+        chat_owner_name=chat_owner_name,
+        chat_owner_username=chat_owner_username,
     )
 
     # Process first URL
@@ -188,7 +203,7 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     start_time = time.time()
 
     try:
-        result = await _download_and_build_result(url, platform)
+        result, content_type, file_size_mb = await _download_and_build_result(url, platform)
         await context.bot.answer_guest_query(guest_query_id, result=result)
 
         duration_ms = int((time.time() - start_time) * 1000)
@@ -199,8 +214,12 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             platform=platform,
             duration_ms=duration_ms,
             success=True,
+            content_type=content_type,
+            file_size_mb=file_size_mb,
             caller=caller,
             chat=chat,
+            chat_owner_name=chat_owner_name,
+            chat_owner_username=chat_owner_username,
         )
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
@@ -214,6 +233,8 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             error=str(e),
             caller=caller,
             chat=chat,
+            chat_owner_name=chat_owner_name,
+            chat_owner_username=chat_owner_username,
         )
         await context.bot.answer_guest_query(
             guest_query_id,
@@ -225,10 +246,9 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # Download pipeline
 # ---------------------------------------------------------------------------
 
-async def _download_and_build_result(url: str, platform: str | None) -> dict:
-    """Download media and return InlineQueryResult."""
+async def _download_and_build_result(url: str, platform: str | None) -> tuple[dict, str | None, float | None]:
+    """Download media and return (InlineQueryResult, content_type, file_size_mb)."""
     try:
-        # Check if it's a main platform (yt/tt/ig)
         if platform == "youtube":
             return await _download_youtube(url)
 
@@ -238,35 +258,31 @@ async def _download_and_build_result(url: str, platform: str | None) -> dict:
         if platform == "instagram":
             return await _download_media_result(url, "instagram")
 
-        # Check yt-dlp domains
         domain = extract_domain(url)
         ytdlp_domains = get_ytdlp_domains()
         if domain in ytdlp_domains:
-            # Generic yt-dlp download
             return await _ytdlp_generic_result(url)
 
-        # Check gallery-dl domains
         gallery_dl_domains = get_gallery_dl_domains()
         if domain in gallery_dl_domains:
             return await _gallery_dl_result(url)
 
-        # Unsupported
-        return _text_result("Unsupported platform")
+        return _text_result("Unsupported platform"), None, None
 
     except Exception as e:
-        return _text_result(f"Error: {e}")
+        return _text_result(f"Error: {e}"), None, None
 
 
-async def _download_youtube(url: str) -> dict:
-    """Download YouTube video and return InlineQueryResult."""
+async def _download_youtube(url: str) -> tuple[dict, str, float | None]:
+    """Download YouTube video and return (InlineQueryResult, content_type, file_size_mb)."""
     metadata = await asyncio.to_thread(get_metadata, url)
     if not metadata:
-        return _text_result("Could not fetch video metadata")
+        return _text_result("Could not fetch video metadata"), "video", None
 
     title = metadata.get("title", "video")
     estimated_size = metadata.get("filesize") or metadata.get("filesize_approx")
     if estimated_size and estimated_size > MAX_FILE_SIZE * 1024 * 1024:
-        return _text_result("This video is above Telegram's 50MB limit")
+        return _text_result("This video is above Telegram's 50MB limit"), "video", None
 
     thumbnail_url = metadata.get("thumbnail", "")
     tmp_id = uuid.uuid4().hex[:8]
@@ -277,16 +293,18 @@ async def _download_youtube(url: str) -> dict:
     try:
         success = await asyncio.to_thread(download_video, url, output_path)
         if not success:
-            return _text_result("Download failed")
+            return _text_result("Download failed"), "video", None
 
         for ext in ["mp4", "webm", "mkv"]:
             filepath = f"{base}.{ext}"
             if os.path.isfile(filepath):
+                file_size = os.path.getsize(filepath)
+                file_size_mb = round(file_size / (1024 * 1024), 2)
                 file_id = await _upload_to_telegram(filepath, "video")
                 if file_id:
-                    return _video_result(file_id, title=title, thumbnail_url=thumbnail_url)
-                return _text_result("Failed to upload video to Telegram")
-        return _text_result("Downloaded file not found")
+                    return _video_result(file_id, title=title, thumbnail_url=thumbnail_url), "video", file_size_mb
+                return _text_result("Failed to upload video to Telegram"), "video", None
+        return _text_result("Downloaded file not found"), "video", None
     finally:
         for ext in ["mp4", "webm", "mkv"]:
             fpath = f"{base}.{ext}"
@@ -294,8 +312,8 @@ async def _download_youtube(url: str) -> dict:
                 os.unlink(fpath)
 
 
-async def _download_media_result(url: str, platform: str) -> dict:
-    """Download TikTok/Instagram content."""
+async def _download_media_result(url: str, platform: str) -> tuple[dict, str, float | None]:
+    """Download TikTok/Instagram content. Returns (result, content_type, file_size_mb)."""
     output_dir = os.path.join(DOWNLOAD_DIR, f"guest_{uuid.uuid4().hex[:8]}")
     os.makedirs(output_dir, exist_ok=True)
 
@@ -304,46 +322,53 @@ async def _download_media_result(url: str, platform: str) -> dict:
         video_path = os.path.join(output_dir, f"{platform}.mp4")
         success = await asyncio.to_thread(download_video, url, video_path)
         if success:
+            file_size = os.path.getsize(video_path)
+            file_size_mb = round(file_size / (1024 * 1024), 2)
             file_id = await _upload_to_telegram(video_path, "video")
             if file_id:
-                return _video_result(file_id, title=f"{platform.title()} video")
+                return _video_result(file_id, title=f"{platform.title()} video"), "video", file_size_mb
 
         # Try image/gallery-dl fallback
         cookies = INSTAGRAM_COOKIES if platform == "instagram" else ""
         images = await asyncio.to_thread(download_gallery_dl_images, url, output_dir, cookies)
         if images:
             file_ids = []
+            total_size = 0
             for img_path in images[:10]:
+                total_size += os.path.getsize(img_path)
                 fid = await _upload_to_telegram(img_path, "photo")
                 if fid:
                     file_ids.append(fid)
             if file_ids:
+                file_size_mb = round(total_size / (1024 * 1024), 2)
                 if len(file_ids) == 1:
-                    return _photo_result(file_ids[0])
-                return _media_group_result(file_ids)
+                    return _photo_result(file_ids[0]), "image", file_size_mb
+                return _media_group_result(file_ids), "image", file_size_mb
 
         # Try gallery-dl video fallback
         video = await asyncio.to_thread(download_gallery_dl_video, url, output_dir)
         if video:
+            file_size = os.path.getsize(video)
+            file_size_mb = round(file_size / (1024 * 1024), 2)
             file_id = await _upload_to_telegram(video, "video")
             if file_id:
-                return _video_result(file_id, title=f"{platform.title()} video")
+                return _video_result(file_id, title=f"{platform.title()} video"), "video", file_size_mb
 
-        return _text_result("Could not download media from this URL")
+        return _text_result("Could not download media from this URL"), "unknown", None
     finally:
         cleanup_dir(output_dir)
 
 
-async def _ytdlp_generic_result(url: str) -> dict:
-    """Generic yt-dlp download for non-yt/tt/ig sites."""
+async def _ytdlp_generic_result(url: str) -> tuple[dict, str, float | None]:
+    """Generic yt-dlp download for non-yt/tt/ig sites. Returns (result, content_type, file_size_mb)."""
     metadata = await asyncio.to_thread(get_metadata, url)
     if not metadata:
-        return _text_result("Failed to fetch metadata")
+        return _text_result("Failed to fetch metadata"), "video", None
 
     title = metadata.get("title", "video")
     estimated_size = metadata.get("filesize") or metadata.get("filesize_approx")
     if estimated_size and estimated_size > MAX_FILE_SIZE * 1024 * 1024:
-        return _text_result("This video is above Telegram's 50MB limit")
+        return _text_result("This video is above Telegram's 50MB limit"), "video", None
 
     thumbnail_url = metadata.get("thumbnail", "")
     tmp_id = uuid.uuid4().hex[:8]
@@ -354,16 +379,18 @@ async def _ytdlp_generic_result(url: str) -> dict:
     try:
         success = await asyncio.to_thread(download_video, url, output_path)
         if not success:
-            return _text_result("Download failed")
+            return _text_result("Download failed"), "video", None
 
         for ext in ["mp4", "webm", "mkv"]:
             filepath = f"{base}.{ext}"
             if os.path.isfile(filepath):
+                file_size = os.path.getsize(filepath)
+                file_size_mb = round(file_size / (1024 * 1024), 2)
                 file_id = await _upload_to_telegram(filepath, "video")
                 if file_id:
-                    return _video_result(file_id, title=title, thumbnail_url=thumbnail_url)
-                return _text_result("Failed to upload video to Telegram")
-        return _text_result("Downloaded file not found")
+                    return _video_result(file_id, title=title, thumbnail_url=thumbnail_url), "video", file_size_mb
+                return _text_result("Failed to upload video to Telegram"), "video", None
+        return _text_result("Downloaded file not found"), "video", None
     finally:
         for ext in ["mp4", "webm", "mkv"]:
             fpath = f"{base}.{ext}"
@@ -371,8 +398,8 @@ async def _ytdlp_generic_result(url: str) -> dict:
                 os.unlink(fpath)
 
 
-async def _gallery_dl_result(url: str) -> dict:
-    """gallery-dl fallback for unsupported platforms."""
+async def _gallery_dl_result(url: str) -> tuple[dict, str, float | None]:
+    """gallery-dl fallback. Returns (result, content_type, file_size_mb)."""
     output_dir = os.path.join(DOWNLOAD_DIR, f"guest_{uuid.uuid4().hex[:8]}")
     os.makedirs(output_dir, exist_ok=True)
 
@@ -380,22 +407,27 @@ async def _gallery_dl_result(url: str) -> dict:
         images = await asyncio.to_thread(download_gallery_dl_images, url, output_dir, "")
         if images:
             file_ids = []
+            total_size = 0
             for img_path in images[:10]:
+                total_size += os.path.getsize(img_path)
                 fid = await _upload_to_telegram(img_path, "photo")
                 if fid:
                     file_ids.append(fid)
             if file_ids:
+                file_size_mb = round(total_size / (1024 * 1024), 2)
                 if len(file_ids) == 1:
-                    return _photo_result(file_ids[0])
-                return _media_group_result(file_ids)
+                    return _photo_result(file_ids[0]), "image", file_size_mb
+                return _media_group_result(file_ids), "image", file_size_mb
 
         video = await asyncio.to_thread(download_gallery_dl_video, url, output_dir)
         if video:
+            file_size = os.path.getsize(video)
+            file_size_mb = round(file_size / (1024 * 1024), 2)
             file_id = await _upload_to_telegram(video, "video")
             if file_id:
-                return _video_result(file_id, title="Video")
+                return _video_result(file_id, title="Video"), "video", file_size_mb
 
-        return _text_result("Unsupported platform or content not found")
+        return _text_result("Unsupported platform or content not found"), "unknown", None
     finally:
         cleanup_dir(output_dir)
 

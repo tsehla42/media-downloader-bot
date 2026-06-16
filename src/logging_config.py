@@ -87,9 +87,52 @@ class ServiceFilter(logging.Filter):
         return record.name.startswith("media_downloader.service")
 
 
+class ErrorsFilter(logging.Filter):
+    """Filter that only accepts records from media_downloader.errors logger."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.name.startswith("media_downloader.errors")
+
+
 requests_logger = logging.getLogger("media_downloader.requests")
 details_logger = logging.getLogger("media_downloader.details")
 service_logger = logging.getLogger("media_downloader.service")
+error_logger = logging.getLogger("media_downloader.errors")
+
+
+def _enrich_chat(
+    chat: object,
+    user: object = None,
+    chat_owner_name: str | None = None,
+    chat_owner_username: str | None = None,
+) -> dict:
+    """Build enriched chat dict with name and username.
+
+    For private chats, combines caller and chat owner as "caller | owner".
+    For all types, adds username only when non-null/non-empty.
+    """
+    chat_dict = {"id": chat.id, "type": getattr(chat, "type", None)}
+    is_private = getattr(chat, "type", None) == "private"
+
+    name = getattr(chat, "title", None)
+    username = getattr(chat, "username", None)
+
+    if is_private:
+        caller_name = getattr(user, "first_name", None) if user else None
+        caller_username = getattr(user, "username", None) if user else None
+        if not name and chat_owner_name:
+            name = f"{caller_name} | {chat_owner_name}" if caller_name else chat_owner_name
+        elif not name and caller_name:
+            name = caller_name
+        if not username and chat_owner_username:
+            username = f"{caller_username} | {chat_owner_username}" if caller_username else chat_owner_username
+        elif not username and caller_username:
+            username = caller_username
+
+    if name:
+        chat_dict["name"] = name
+    if username:
+        chat_dict["username"] = username
+    return chat_dict
 
 
 def log_request_received(
@@ -115,11 +158,7 @@ def log_request_received(
             "name": getattr(user, "first_name", None),
             "username": getattr(user, "username", None),
         },
-        "chat": {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        },
+        "chat": _enrich_chat(chat, user),
     }
     requests_logger.info(event, extra={"extra_data": log_data})
 
@@ -163,11 +202,7 @@ def log_request_completed(
             "username": getattr(user, "username", None),
         }
     if chat:
-        log_data["chat"] = {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        }
+        log_data["chat"] = _enrich_chat(chat, user)
     requests_logger.info("request_completed", extra={"extra_data": log_data})
 
 
@@ -197,11 +232,7 @@ def log_request_failed(
             "username": getattr(user, "username", None),
         }
     if chat:
-        log_data["chat"] = {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        }
+        log_data["chat"] = _enrich_chat(chat, user)
     requests_logger.error("request_failed", extra={"extra_data": log_data})
 
 
@@ -212,6 +243,8 @@ def log_guest_request_received(
     caller: object,
     chat: object,
     reply: dict | None = None,
+    chat_owner_name: str | None = None,
+    chat_owner_username: str | None = None,
 ) -> None:
     """Log when a guest request is received (only when URL is present)."""
     log_data = {
@@ -225,11 +258,7 @@ def log_guest_request_received(
             "name": getattr(caller, "first_name", None),
             "username": getattr(caller, "username", None),
         },
-        "chat": {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        },
+        "chat": _enrich_chat(chat, caller, chat_owner_name, chat_owner_username),
         "reply": reply,
     }
     requests_logger.info("guest_request_received", extra={"extra_data": log_data})
@@ -247,6 +276,8 @@ def log_guest_request_completed(
     error: str | None = None,
     caller: object = None,
     chat: object = None,
+    chat_owner_name: str | None = None,
+    chat_owner_username: str | None = None,
 ) -> None:
     """Log when a guest request completes."""
     log_data = {
@@ -270,11 +301,7 @@ def log_guest_request_completed(
             "username": getattr(caller, "username", None),
         }
     if chat:
-        log_data["chat"] = {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        }
+        log_data["chat"] = _enrich_chat(chat, caller, chat_owner_name, chat_owner_username)
     requests_logger.info("guest_request_completed", extra={"extra_data": log_data})
 
 
@@ -283,11 +310,7 @@ def log_bot_added_to_chat(chat, added_by) -> None:
     log_data = {
         "event": "bot_added_to_chat",
         "message": "Bot added to chat",
-        "chat": {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        },
+        "chat": _enrich_chat(chat),
         "added_by": {
             "id": added_by.id,
             "name": getattr(added_by, "first_name", None),
@@ -302,11 +325,7 @@ def log_bot_rejected_group_addition(chat, added_by) -> None:
     log_data = {
         "event": "bot_rejected_group_addition",
         "message": "Bot rejected group addition (non-admin)",
-        "chat": {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        },
+        "chat": _enrich_chat(chat),
         "added_by": {
             "id": added_by.id,
             "name": getattr(added_by, "first_name", None),
@@ -326,10 +345,7 @@ def log_unauthorized_access(user, chat, command: str = "") -> None:
             "name": getattr(user, "first_name", None),
             "username": getattr(user, "username", None),
         },
-        "chat": {
-            "id": chat.id,
-            "type": getattr(chat, "type", None),
-        },
+        "chat": _enrich_chat(chat),
     }
     if command:
         log_data["command"] = command
@@ -341,11 +357,7 @@ def log_bot_removed_from_chat(chat, removed_by) -> None:
     log_data = {
         "event": "bot_removed_from_chat",
         "message": "Bot removed from chat",
-        "chat": {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        },
+        "chat": _enrich_chat(chat),
         "removed_by": {
             "id": removed_by.id,
             "name": getattr(removed_by, "first_name", None),
@@ -360,11 +372,7 @@ def log_bot_status_changed(chat, user, old_status, new_status) -> None:
     log_data = {
         "event": "bot_status_changed",
         "message": f"Bot status changed from {old_status} to {new_status}",
-        "chat": {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        },
+        "chat": _enrich_chat(chat),
         "user": {
             "id": user.id,
             "name": getattr(user, "first_name", None),
@@ -429,11 +437,7 @@ def log_admin_rights_changed(chat, user, old_rights, new_rights, event) -> None:
     log_data = {
         "event": event,
         "message": event.replace("_", " "),
-        "chat": {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        },
+        "chat": _enrich_chat(chat),
         "user": {
             "id": user.id,
             "name": getattr(user, "first_name", None),
@@ -455,11 +459,7 @@ def log_custom_title_changed(chat, user, old_title, new_title) -> None:
     log_data = {
         "event": "bot_custom_title_changed",
         "message": "Bot custom title changed",
-        "chat": {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        },
+        "chat": _enrich_chat(chat),
         "user": {
             "id": user.id,
             "name": getattr(user, "first_name", None),
@@ -476,11 +476,7 @@ def log_user_blocked_bot(chat, user) -> None:
     log_data = {
         "event": "user_blocked_bot",
         "message": "User blocked bot",
-        "chat": {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        },
+        "chat": _enrich_chat(chat, user),
         "user": {
             "id": user.id,
             "name": getattr(user, "first_name", None),
@@ -495,11 +491,7 @@ def log_user_unblocked_bot(chat, user) -> None:
     log_data = {
         "event": "user_unblocked_bot",
         "message": "User unblocked bot",
-        "chat": {
-            "id": chat.id,
-            "name": getattr(chat, "title", None),
-            "type": getattr(chat, "type", None),
-        },
+        "chat": _enrich_chat(chat, user),
         "user": {
             "id": user.id,
             "name": getattr(user, "first_name", None),
@@ -610,13 +602,50 @@ def _resolve_service_log_file(mode: str) -> str:
     return "service.jsonl"
 
 
+def _resolve_error_log_file(mode: str) -> str:
+    """Map MODE to error log filename."""
+    mode = mode.lower().strip()
+    if mode in ("dev", "development"):
+        return "errors.dev.jsonl"
+    return "errors.jsonl"
+
+
+def log_error(
+    error: Exception,
+    update: object = None,
+    request_id: str | None = None,
+) -> None:
+    """Log an unhandled error to errors.jsonl with structured metadata."""
+    if request_id is None:
+        request_id = get_current_request_id()
+
+    import traceback as tb
+    log_data = {
+        "event": "unhandled_exception",
+        "error_id": uuid.uuid4().hex[:8],
+        "error_type": type(error).__name__,
+        "error_message": str(error),
+        "traceback": "".join(tb.format_exception(type(error), error, error.__traceback__)),
+    }
+    if request_id:
+        log_data["request_id"] = request_id
+    if update:
+        if hasattr(update, "effective_chat") and update.effective_chat:
+            log_data["chat_id"] = update.effective_chat.id
+        if hasattr(update, "effective_user") and update.effective_user:
+            log_data["user_id"] = update.effective_user.id
+
+    error_logger.error("unhandled_exception", extra={"extra_data": log_data})
+
+
 def setup_logging() -> None:
     """Configure logging based on MODE and LOG_OUTPUT environment variables.
 
-    Creates three file handlers:
+    Creates four file handlers:
     - requests.jsonl: request lifecycle events (via requests_logger)
     - request-details.jsonl: intermediate/download steps (via details_logger)
     - service.jsonl: bot start/stop, chat membership, new user events (via service_logger)
+    - errors.jsonl: unhandled exceptions with structured metadata (via error_logger)
 
     MODE=development|dev  → logs to *.dev.jsonl files
     MODE=production|prod  → logs to production files
@@ -645,6 +674,7 @@ def setup_logging() -> None:
     log_file = _resolve_log_file(MODE)
     detail_log_file = _resolve_detail_log_file(MODE)
     service_log_file = _resolve_service_log_file(MODE)
+    error_log_file = _resolve_error_log_file(MODE)
     want_console = output in ("console", "both")
     want_file = output in ("file", "both")
 
@@ -680,6 +710,16 @@ def setup_logging() -> None:
         service_handler.setFormatter(formatter)
         service_handler.addFilter(ServiceFilter())
         root.addHandler(service_handler)
+
+        # Error file handler — only accepts error logger
+        error_handler = RotatingFileHandler(
+            os.path.join(LOG_DIR, error_log_file),
+            maxBytes=10 * 1024 * 1024,  # 10MB
+            backupCount=5,
+        )
+        error_handler.setFormatter(formatter)
+        error_handler.addFilter(ErrorsFilter())
+        root.addHandler(error_handler)
 
     if want_console:
         stream_handler = logging.StreamHandler()

@@ -284,13 +284,14 @@ class TestHandleGuestAuth:
         update = _make_update(msg)
         context = _make_context()
 
+        fake_result = {"type": "article", "id": "1", "title": "ok",
+                       "input_message_content": {"message_text": "ok"}}
         with patch("guest.is_user_allowed", return_value=True), \
              patch("guest.extract_urls") as mock_extract, \
              patch("guest.detect_platform", return_value="tiktok"), \
              patch("guest._download_and_build_result", new_callable=AsyncMock) as mock_dl:
             mock_extract.side_effect = [[], ["https://tiktok.com/@user/video/123"]]
-            mock_dl.return_value = {"type": "article", "id": "1", "title": "ok",
-                                     "input_message_content": {"message_text": "ok"}}
+            mock_dl.return_value = (fake_result, "video", 1.5)
             await handle_guest(update, context)
             mock_dl.assert_called_once()
             assert "tiktok.com" in mock_dl.call_args[0][0]
@@ -322,7 +323,7 @@ class TestHandleGuestAuth:
         with patch("guest.is_user_allowed", return_value=True), \
              patch("guest.detect_platform", return_value=None), \
              patch("guest.get_gallery_dl_domains", return_value=frozenset({"deviantart.com"})), \
-             patch("guest._gallery_dl_result", new_callable=AsyncMock, return_value=fake_result):
+             patch("guest._gallery_dl_result", new_callable=AsyncMock, return_value=(fake_result, "image", 0.5)):
             await handle_guest(update, context)
             context.bot.answer_guest_query.assert_called_once()
             result = context.bot.answer_guest_query.call_args[1]["result"]
@@ -338,7 +339,7 @@ class TestHandleGuestAuth:
         fake_result = {"type": "video", "id": "abc", "video_file_id": "fid"}
         with patch("guest.is_user_allowed", return_value=True), \
              patch("guest.detect_platform", return_value="youtube"), \
-             patch("guest._download_and_build_result", new_callable=AsyncMock, return_value=fake_result):
+             patch("guest._download_and_build_result", new_callable=AsyncMock, return_value=(fake_result, "video", 2.5)):
             await handle_guest(update, context)
 
         context.bot.answer_guest_query.assert_called_once_with(
