@@ -250,30 +250,30 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # ---------------------------------------------------------------------------
 
 async def _download_and_build_result(url: str, platform: str | None) -> tuple[dict, str | None, float | None]:
-    """Download media and return (InlineQueryResult, content_type, file_size_mb)."""
-    try:
-        if platform == "youtube":
-            return await _download_youtube(url)
+    """Download media and return (InlineQueryResult, content_type, file_size_mb).
 
-        if platform == "tiktok":
-            return await _download_media_result(url, "tiktok")
+    Raises ValueError when all download methods fail (expected failure).
+    Other exceptions propagate as unexpected errors.
+    """
+    if platform == "youtube":
+        return await _download_youtube(url)
 
-        if platform == "instagram":
-            return await _download_media_result(url, "instagram")
+    if platform == "tiktok":
+        return await _download_media_result(url, "tiktok")
 
-        domain = extract_domain(url)
-        ytdlp_domains = get_ytdlp_domains()
-        if domain in ytdlp_domains:
-            return await _ytdlp_generic_result(url)
+    if platform == "instagram":
+        return await _download_media_result(url, "instagram")
 
-        gallery_dl_domains = get_gallery_dl_domains()
-        if domain in gallery_dl_domains:
-            return await _gallery_dl_result(url)
+    domain = extract_domain(url)
+    ytdlp_domains = get_ytdlp_domains()
+    if domain in ytdlp_domains:
+        return await _ytdlp_generic_result(url)
 
-        return _text_result("Unsupported platform"), None, None
+    gallery_dl_domains = get_gallery_dl_domains()
+    if domain in gallery_dl_domains:
+        return await _gallery_dl_result(url)
 
-    except Exception as e:
-        return _text_result(f"Error: {e}"), None, None
+    return _text_result("Unsupported platform"), None, None
 
 
 async def _download_youtube(url: str) -> tuple[dict, str, float | None]:
@@ -296,7 +296,7 @@ async def _download_youtube(url: str) -> tuple[dict, str, float | None]:
     try:
         success = await asyncio.to_thread(download_video, url, output_path)
         if not success:
-            return _text_result("Download failed"), "video", None
+            raise ValueError("Download failed")
 
         for ext in ["mp4", "webm", "mkv"]:
             filepath = f"{base}.{ext}"
@@ -306,8 +306,8 @@ async def _download_youtube(url: str) -> tuple[dict, str, float | None]:
                 file_id = await _upload_to_telegram(filepath, "video")
                 if file_id:
                     return _video_result(file_id, title=title, thumbnail_url=thumbnail_url), "video", file_size_mb
-                return _text_result("Failed to upload video to Telegram"), "video", None
-        return _text_result("Downloaded file not found"), "video", None
+                raise ValueError("Failed to upload video to Telegram")
+        raise ValueError("Downloaded file not found")
     finally:
         for ext in ["mp4", "webm", "mkv"]:
             fpath = f"{base}.{ext}"
@@ -330,6 +330,7 @@ async def _download_media_result(url: str, platform: str) -> tuple[dict, str, fl
             file_id = await _upload_to_telegram(video_path, "video")
             if file_id:
                 return _video_result(file_id, title=f"{platform.title()} video"), "video", file_size_mb
+            raise ValueError("Failed to upload video to Telegram")
 
         # Try image/gallery-dl fallback
         cookies = INSTAGRAM_COOKIES if platform == "instagram" else ""
@@ -357,7 +358,7 @@ async def _download_media_result(url: str, platform: str) -> tuple[dict, str, fl
             if file_id:
                 return _video_result(file_id, title=f"{platform.title()} video"), "video", file_size_mb
 
-        return _text_result("Could not download media from this URL"), "unknown", None
+        raise ValueError("Could not download media from this URL")
     finally:
         cleanup_dir(output_dir)
 
@@ -382,7 +383,7 @@ async def _ytdlp_generic_result(url: str) -> tuple[dict, str, float | None]:
     try:
         success = await asyncio.to_thread(download_video, url, output_path)
         if not success:
-            return _text_result("Download failed"), "video", None
+            raise ValueError("Download failed")
 
         for ext in ["mp4", "webm", "mkv"]:
             filepath = f"{base}.{ext}"
@@ -392,8 +393,8 @@ async def _ytdlp_generic_result(url: str) -> tuple[dict, str, float | None]:
                 file_id = await _upload_to_telegram(filepath, "video")
                 if file_id:
                     return _video_result(file_id, title=title, thumbnail_url=thumbnail_url), "video", file_size_mb
-                return _text_result("Failed to upload video to Telegram"), "video", None
-        return _text_result("Downloaded file not found"), "video", None
+                raise ValueError("Failed to upload video to Telegram")
+        raise ValueError("Downloaded file not found")
     finally:
         for ext in ["mp4", "webm", "mkv"]:
             fpath = f"{base}.{ext}"
@@ -430,7 +431,7 @@ async def _gallery_dl_result(url: str) -> tuple[dict, str, float | None]:
             if file_id:
                 return _video_result(file_id, title="Video"), "video", file_size_mb
 
-        return _text_result("Unsupported platform or content not found"), "unknown", None
+        raise ValueError("Unsupported platform or content not found")
     finally:
         cleanup_dir(output_dir)
 

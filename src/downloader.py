@@ -137,6 +137,8 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
         logger.info("download_video: yt-dlp ok", extra=extra)
         return True
 
+    stderr = (result.stderr or "").strip()
+    extra["yt_dlp_stderr"] = stderr
     logger.info("download_video: retrying with lower quality", extra=extra)
 
     result = subprocess.run(
@@ -153,6 +155,8 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     )
 
     if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        extra["yt_dlp_stderr"] = stderr
         logger.warning("download_video: yt-dlp failed (code %d)", result.returncode, extra=extra)
     else:
         _apply_faststart(output_path, extra)
