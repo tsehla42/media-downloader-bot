@@ -10,7 +10,7 @@ services:
     volumes:
       - bot-downloads:/tmp/bot-downloads
       - ./cookies.txt:/usr/src/app/cookies.txt:ro
-      - ./allowed-contacts.json:/usr/src/app/allowed-contacts.json:ro
+      - ./allowed-users.json:/usr/src/app/allowed-users.json:ro
       - ./logs:/usr/src/app/logs
 
 volumes:

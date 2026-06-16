@@ -41,12 +41,12 @@ Current log:
 Expected logs for non reply (1) and reply (2) messages:
 
 ```json
-{"timestamp": "2026-06-10T20:41:50.042963+03:00", "level": "INFO", "message": "Guest request received", "event": "guest_request_received", "request_id": "8e314411", "guest_query_id": "2697475888970155636", "url": "@mmebodevbot https://vt.tiktok.com/ZS9Gg6dGp/", "user": {"id": 123456789012345678, "name": "Alice", "username": "user_alice"}, "chat": {"id": -1003804964305, "name": "Test Group", "type": "supergroup"}, "reply": null}
+{"timestamp": "2026-06-10T20:41:50.042963+03:00", "level": "INFO", "message": "Guest request received", "event": "guest_request_received", "request_id": "8e314411", "guest_query_id": "2697475888970155636", "url": "@mmebodevbot https://vt.tiktok.com/ZS9Gg6dGp/", "user": {"id": 123456789012345678, "name": "Alice", "username": "user_alice"}, "chat": {"id": -1003804964305, "name": "Test Group", "type": "supergroup"}}
 
 {"timestamp": "2026-06-10T20:41:50.042963+03:00", "level": "INFO", "message": "Guest request received", "event": "guest_request_received", "request_id": "8e314411", "guest_query_id": "2697475888970155636", "url": "@mmebodevbot https://vt.tiktok.com/ZS9Gg6dGp/", "user": {"id": 123456789012345678, "name": "Alice", "username": "user_alice"}, "chat": {"id": -1003804964305, "name": "Test Group", "type": "supergroup"}, "reply": {"user_id": 87654321, "name": "Bob", "username": "user_bob", "message": "message text here"}}
 ```
 
-If the reply data is hard to get, then just use reply:true or false.
+The `reply` field is omitted entirely when there is no reply (not included as null).
 
 Note that we want Guest request received only when there is a URL, so the bot is not logging every spam message. This is possible to implement, cause in p2p messages, logs only appear if user sends an actual link
 

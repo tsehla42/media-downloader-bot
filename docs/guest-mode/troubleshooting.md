@@ -56,7 +56,7 @@
 
 ### "Not authorized"
 - User not in allowlist
-- Check `ALLOWED_USER_IDS` and `allowed-contacts.json`
+- Check `ALLOWED_USER_IDS` and `allowed-users.json`
 
 ## Debug Logging
 

@@ -20,7 +20,7 @@ BOT_ADMIN_IDS=123456789
 
 ### File-based Allowlist
 
-`allowed-contacts.json` - Array of objects with `id` field:
+`allowed-users.json` - Array of objects with `id` field:
 
 ```json
 [
@@ -33,7 +33,7 @@ Also supports legacy format (dict with `allowed_user_ids` array).
 
 ## Priority
 
-1. `allowed-contacts.json` (file-based)
+1. `allowed-users.json` (file-based)
 2. `ALLOWED_USER_IDS` (env var)
 
 Both are merged into a single allowlist at startup.
@@ -46,7 +46,7 @@ Both are merged into a single allowlist at startup.
 
 ### No Sources Configured
 - All users are authorized
-- Empty `ALLOWED_USER_IDS` and no `allowed-contacts.json` = allow all
+- Empty `ALLOWED_USER_IDS` and no `allowed-users.json` = allow all
 
 ## Unauthorized User Handling
 

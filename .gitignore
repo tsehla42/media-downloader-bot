@@ -18,7 +18,7 @@ venv/
 .env.*
 !.env.example
 cookies.txt
-allowed-contacts.json
+allowed-users.json
 src/gallery_dl_domains.py
 src/ytdlp_domains.py
 

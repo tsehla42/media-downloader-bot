@@ -67,7 +67,7 @@ media-downloader-bot/
 
 | Module | Depends on | What it does |
 |---|---|---|
-| `src/config.py` | .env file, allowed-contacts.json | Loads BOT_TOKEN, BOT_ADMIN_IDS, ALLOWED_USER_IDS (merged from JSON + env), ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, GUEST_MODE_ENABLED, STORAGE_CHANNEL_ID, MODE, LOG_OUTPUT, LOG_DIR, LOG_LEVEL |
+| `src/config.py` | .env file, allowed-users.json | Loads BOT_TOKEN, BOT_ADMIN_IDS, ALLOWED_USER_IDS (merged from JSON + env), ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, GUEST_MODE_ENABLED, STORAGE_CHANNEL_ID, MODE, LOG_OUTPUT, LOG_DIR, LOG_LEVEL |
 | `src/auth.py` | config | Authorization: `is_authorized()`, `is_bot_admin()`, `was_notified()`, `mark_notified()`, `was_notified_guest()`, `mark_notified_guest()`, `is_group_chat()`, `_is_allowed()`, `_is_allowed_group()` |
 | `src/commands.py` | auth, config, logging_config | User commands: `start_command()`, `help_command()`, `caption_command()`, `get_caption_for_user()` — all use notification tracking for unauthorized users |
 | `src/telegram_utils.py` | nothing | Telegram helpers: `typing_indicator()` context manager, `send_images()` for single/batched photo replies |
@@ -141,12 +141,12 @@ media-downloader-bot/
 - **yt-dlp as subprocess** - Not imported as Python library. Keeps yt-dlp independently upgradable.
 - **Stateless bot** - No database. Temp files cleaned after upload. Notification tracking (`_already_told_users`) resets on restart.
 - **Auto best quality** - Downloads best quality under 50MB Telegram limit, retries with worst on failure.
-- **User allowlist** - IDs merged from `allowed-contacts.json` (array of objects with `id` field) + `ALLOWED_USER_IDS` env var. If no sources configured = allow all. If sources configured but user not in list = deny.
+- **User allowlist** - IDs merged from `allowed-users.json` (array of objects with `id` field) + `ALLOWED_USER_IDS` env var. If no sources configured = allow all. If sources configured but user not in list = deny.
 - **Bot admins** - `BOT_ADMIN_IDS` env var (comma-separated). Admins can add bot to groups. Empty = anyone can add.
 - **Unauthorized user handling** - First attempt: "You are not authorized" + log `unauthorized_access` event. Subsequent attempts: silently ignored (in-memory sets, resets on restart). P2P and guest mode track separately — a user told in P2P can still use guest mode and vice versa.
 - **Group security** - Only bot admins can add bot to groups (checked in `my_chat_member_handler`). Non-admin additions rejected with message + bot leaves.
 - **Structured logging** - Four JSON log files: `requests.jsonl` (request lifecycle), `request-details.jsonl` (intermediate download steps), `service.jsonl` (bot events), `errors.jsonl` (unhandled exceptions with error_id). `_enrich_chat()` normalizes chat dicts with name/username. Filter-based routing by logger name. Zero external dependencies.
-- **Docker deployment** - Multi-stage build with yt-dlp, gallery-dl, and ffmpeg. Persistent logs via volume mount to `./logs/`. `allowed-contacts.json` mounted read-only.
+- **Docker deployment** - Multi-stage build with yt-dlp, gallery-dl, and ffmpeg. Persistent logs via volume mount to `./logs/`. `allowed-users.json` mounted read-only.
 - **Platform separation** - Each platform (YouTube, TikTok, Instagram) has its own module with isolated download logic.
 - **Guest mode (Bot API 10.0)** - Users mention `@botname` in any chat to download media. Uses `guest_message` updates + `answerGuestQuery()`. Files uploaded to a private storage channel to get `file_id`s for InlineQueryResult. Guest handler registered before text handler to prevent `filters.TEXT` from consuming guest updates.
 - **InlineQueryResult as raw dicts** - ptb's `InlineQueryResultVideo`/`Photo` constructors require placeholder URLs that Telegram tries to fetch. Using raw dicts with `video_file_id`/`photo_file_id` avoids this.
@@ -155,7 +155,7 @@ media-downloader-bot/
 
 **NEVER** `git add`, `git commit`, or `git push` files under `docs/superpowers/` (specs, plans, design docs). These are internal AI working documents and must NEVER enter git history.
 
-Never commit `allowed-contacts.json` — it contains user IDs and is generated locally by the get-contact-ids script.
+Never commit `allowed-users.json` — it contains user IDs and is generated locally by the get-user-ids script.
 
 ## Running Tests
 

@@ -17,7 +17,7 @@ def _load_allowed_user_ids() -> tuple[set[int], bool]:
     configured = False
 
     # JSON file (new structure: array of objects with "id" field)
-    json_path = os.path.join(os.path.dirname(__file__), "..", "allowed-contacts.json")
+    json_path = os.path.join(os.path.dirname(__file__), "..", "allowed-users.json")
     if os.path.isfile(json_path):
         configured = True
         try:
@@ -29,7 +29,7 @@ def _load_allowed_user_ids() -> tuple[set[int], bool]:
             elif isinstance(contacts, dict):
                 ids.update(int(uid) for uid in contacts.get("allowed_user_ids", []))
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            print(f"Warning: Failed to load allowed-contacts.json: {e}")
+            print(f"Warning: Failed to load allowed-users.json: {e}")
 
     # Env var (comma-separated)
     env_ids = os.environ.get("ALLOWED_USER_IDS", "")

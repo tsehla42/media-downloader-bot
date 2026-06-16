@@ -16,7 +16,7 @@ Users can interact with the bot directly in private chats to download media by s
 
 ## Authorization
 
-- Users must be in `ALLOWED_USER_IDS` (merged from `allowed-contacts.json` + env var)
+- Users must be in `ALLOWED_USER_IDS` (merged from `allowed-users.json` + env var)
 - Empty sources = allow all users
 - Configured sources = user must be in list
 - See [Authorization](authorization.md) for details

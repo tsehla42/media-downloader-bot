@@ -259,8 +259,9 @@ def log_guest_request_received(
             "username": getattr(caller, "username", None),
         },
         "chat": _enrich_chat(chat, caller, chat_owner_name, chat_owner_username),
-        "reply": reply,
     }
+    if reply is not None:
+        log_data["reply"] = reply
     requests_logger.info("guest_request_received", extra={"extra_data": log_data})
 
 
@@ -345,7 +346,7 @@ def log_unauthorized_access(user, chat, command: str = "") -> None:
             "name": getattr(user, "first_name", None),
             "username": getattr(user, "username", None),
         },
-        "chat": _enrich_chat(chat),
+        "chat": _enrich_chat(chat, user),
     }
     if command:
         log_data["command"] = command

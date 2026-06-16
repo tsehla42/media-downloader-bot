@@ -1033,7 +1033,7 @@ def test_log_guest_request_received_basic():
         assert log_data["chat"]["id"] == -1003804964305
         assert log_data["chat"]["name"] == "Test Group"
         assert log_data["chat"]["type"] == "supergroup"
-        assert log_data["reply"] is None
+        assert "reply" not in log_data
 
 
 def test_log_guest_request_received_with_reply():
@@ -1425,3 +1425,28 @@ def test_setup_logging_error_filter_on_handler():
         file_handlers = [h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
         error_handlers = [h for h in file_handlers if any(isinstance(f, ErrorsFilter) for f in h.filters)]
         assert len(error_handlers) == 1
+
+
+def test_log_unauthorized_access_enriches_chat_with_user():
+    """log_unauthorized_access should pass user to _enrich_chat for caller info."""
+    from logging_config import log_unauthorized_access
+
+    user = MagicMock()
+    user.id = 999
+    user.first_name = "TestCaller"
+    user.username = "testcaller"
+    chat = MagicMock()
+    chat.id = 111
+    chat.type = "private"
+    chat.title = None
+    chat.username = "chatowner"
+
+    with patch("logging_config.service_logger") as mock_logger:
+        log_unauthorized_access(user, chat, "guest")
+
+        # Check the log call includes enriched chat with caller info
+        mock_logger.info.assert_called_once()
+        call_args = mock_logger.info.call_args
+        extra_data = call_args[1]["extra"]["extra_data"]
+        assert extra_data["chat"]["name"] == "TestCaller"  # caller shown in private chat
+        assert extra_data["chat"]["username"] == "chatowner"  # chat username preserved

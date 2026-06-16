@@ -35,6 +35,15 @@ from downloader import (
 
 logger = logging.getLogger("media_downloader.guest")
 
+# Media type labels for logging replied-to message content
+MEDIA_TYPES = {
+    "photo": "[photo]",
+    "video": "[video]",
+    "animation": "[animation]",
+    "document": "[document]",
+    "sticker": "[sticker]",
+}
+
 # Telegram Bot API base URL for file uploads
 _API_BASE = "https://api.telegram.org/bot{token}/{method}"
 
@@ -136,16 +145,10 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         # Determine message content: text or media type
         message_content = replied_text[:200] if replied_text else None
         if not message_content:
-            if getattr(replied_to, "photo", None):
-                message_content = "[photo]"
-            elif getattr(replied_to, "video", None):
-                message_content = "[video]"
-            elif getattr(replied_to, "animation", None):
-                message_content = "[animation]"
-            elif getattr(replied_to, "document", None):
-                message_content = "[document]"
-            elif getattr(replied_to, "sticker", None):
-                message_content = "[sticker]"
+            message_content = next(
+                (label for attr, label in MEDIA_TYPES.items() if getattr(replied_to, attr, None)),
+                None,
+            )
 
         reply_data = {
             "user_id": replied_user.id if replied_user else None,

@@ -21,7 +21,7 @@ Modular design. Each module has one clear responsibility. yt-dlp is called as a 
 Loads settings from `.env` via python-dotenv. Exports constants:
 - `BOT_TOKEN` - Telegram bot token
 - `BOT_ADMIN_IDS` - Comma-separated admin user IDs (empty = anyone can add bot to groups)
-- `ALLOWED_USER_IDS` - Merged from `allowed-contacts.json` (array of objects with `id` field) + env var. Empty sources = allow all; configured sources = user must be in list.
+- `ALLOWED_USER_IDS` - Merged from `allowed-users.json` (array of objects with `id` field) + env var. Empty sources = allow all; configured sources = user must be in list.
 - `ALLOWED_IDS_CONFIGURED` - Boolean: True if any ID source (JSON file or env var) exists
 - `ALLOWED_GROUP_IDS` - Comma-separated group chat IDs (empty = allow all groups)
 - `DOWNLOAD_DIR` - Temp directory for downloads (default: /tmp/bot-downloads)
@@ -470,7 +470,7 @@ cat logs/service.jsonl | jq 'select(.event == "bot_rejected_group_addition")'
 **Volumes:**
 - `./logs:/usr/src/app/logs` -- persistent structured JSON logs
 - `./cookies.txt:/usr/src/app/cookies.txt:ro` -- Instagram browser cookies (read-only)
-- `./allowed-contacts.json:/usr/src/app/allowed-contacts.json:ro` -- user allowlist (read-only)
+- `./allowed-users.json:/usr/src/app/allowed-users.json:ro` -- user allowlist (read-only)
 - `bot-downloads:/tmp/bot-downloads` -- temp download directory (named volume)
 
 **Deploying updates:**

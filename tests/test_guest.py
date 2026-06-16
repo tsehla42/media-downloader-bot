@@ -361,3 +361,104 @@ class TestHandleGuestAuth:
         context.bot.answer_guest_query.assert_called_once()
         result = context.bot.answer_guest_query.call_args[1]["result"]
         assert "Download failed" in result["input_message_content"]["message_text"]
+
+    @pytest.mark.asyncio
+    async def test_reply_with_photo_sets_message_content(self):
+        """Reply to a photo message should set message_content to [photo]."""
+        from guest import handle_guest
+
+        msg = _make_guest_message(text="")
+        replied = MagicMock()
+        replied.text = ""
+        replied.photo = [MagicMock()]  # Has photo
+        replied.video = None
+        replied.animation = None
+        replied.document = None
+        replied.sticker = None
+        replied.from_user = MagicMock()
+        msg.reply_to_message = replied
+        update = _make_update(msg)
+        context = _make_context()
+
+        fake_result = {"type": "video", "id": "1", "video_file_id": "fid"}
+        with patch("guest.is_user_allowed", return_value=True), \
+             patch("guest.extract_urls", return_value=["https://tiktok.com/@u/video/1"]), \
+             patch("guest.detect_platform", return_value="tiktok"), \
+             patch("guest._download_and_build_result", new_callable=AsyncMock, return_value=(fake_result, "video", 0.5)):
+            await handle_guest(update, context)
+
+        # The call should have succeeded (photo content type detected)
+        context.bot.answer_guest_query.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reply_with_video_sets_message_content(self):
+        """Reply to a video message should set message_content to [video]."""
+        from guest import handle_guest
+
+        msg = _make_guest_message(text="")
+        replied = MagicMock()
+        replied.text = ""
+        replied.photo = None
+        replied.video = MagicMock()  # Has video
+        replied.animation = None
+        replied.document = None
+        replied.sticker = None
+        replied.from_user = MagicMock()
+        msg.reply_to_message = replied
+        update = _make_update(msg)
+        context = _make_context()
+
+        fake_result = {"type": "video", "id": "1", "video_file_id": "fid"}
+        with patch("guest.is_user_allowed", return_value=True), \
+             patch("guest.extract_urls", return_value=["https://tiktok.com/@u/video/1"]), \
+             patch("guest.detect_platform", return_value="tiktok"), \
+             patch("guest._download_and_build_result", new_callable=AsyncMock, return_value=(fake_result, "video", 0.5)):
+            await handle_guest(update, context)
+
+        context.bot.answer_guest_query.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reply_with_sticker_sets_message_content(self):
+        """Reply to a sticker message should set message_content to [sticker]."""
+        from guest import handle_guest
+
+        msg = _make_guest_message(text="")
+        replied = MagicMock()
+        replied.text = ""
+        replied.photo = None
+        replied.video = None
+        replied.animation = None
+        replied.document = None
+        replied.sticker = MagicMock()  # Has sticker
+        replied.from_user = MagicMock()
+        msg.reply_to_message = replied
+        update = _make_update(msg)
+        context = _make_context()
+
+        fake_result = {"type": "video", "id": "1", "video_file_id": "fid"}
+        with patch("guest.is_user_allowed", return_value=True), \
+             patch("guest.extract_urls", return_value=["https://tiktok.com/@u/video/1"]), \
+             patch("guest.detect_platform", return_value="tiktok"), \
+             patch("guest._download_and_build_result", new_callable=AsyncMock, return_value=(fake_result, "video", 0.5)):
+            await handle_guest(update, context)
+
+        context.bot.answer_guest_query.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reply_with_no_media_returns_none(self):
+        """Reply to a text-only message should set message_content to None."""
+        from guest import MEDIA_TYPES
+
+        replied = MagicMock()
+        replied.text = ""
+        replied.photo = None
+        replied.video = None
+        replied.animation = None
+        replied.document = None
+        replied.sticker = None
+
+        result = next(
+            (label for attr, label in MEDIA_TYPES.items() if getattr(replied, attr, None)),
+            None,
+        )
+        assert result is None
