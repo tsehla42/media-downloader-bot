@@ -17,6 +17,7 @@ For detailed documentation, see `docs/README.md` (human-readable overview) and t
 - `docs/p2p-chats/` - Private chat behavior
 - `docs/logs/` - Logging system
 - `docs/content-delivery/` - Media downloading
+- `docs/cookies.md` - Instagram cookie refresh
 
 ## Project Structure
 
@@ -31,6 +32,7 @@ media-downloader-bot/
 │   ├── auth.py         # Authorization checks (is_authorized, is_group_chat, allowlists)
 │   ├── commands.py     # User commands: /start, /help, /caption
 │   ├── telegram_utils.py # Telegram helpers: typing_indicator, send_images
+│   ├── cookies.py      # Instagram cookie refresh via instagrapi (login, session, Netscape export)
 │   ├── logging_config.py # Structured JSON logging: four-file split (requests, details, service, errors)
 │   ├── platforms/       # Platform-specific download logic
 │   │   ├── __init__.py # detect_platform(), extract_domain(), SUPPORTED_PLATFORMS dict
@@ -38,8 +40,19 @@ media-downloader-bot/
 │   │   ├── tiktok.py   # TikTok download with gallery-dl fallback
 │   │   └── instagram.py # Instagram images with gallery-dl fallback
 │   └── utils.py        # URL validation, file cleanup, get_gallery_dl_domains()
-├── scripts/            # Utility scripts
-│   └── generate_gallery_dl_domains.py # Fetches gallery-dl supported sites, writes domain whitelist
+├── bot                 # Root wrapper: menu + arg routing for all scripts
+├── scripts/
+│   ├── shell/          # Shell scripts
+│   │   ├── compose.sh
+│   │   ├── update.sh
+│   │   ├── pull-logs.sh
+│   │   ├── run-local.sh
+│   │   └── refresh-ig-cookies.sh
+│   └── python/         # Python utility scripts
+│       ├── check_cookies.py
+│       ├── generate_gallery_dl_domains.py
+│       ├── generate_ytdlp_domains.py
+│       └── ig_login_local.py
 ├── tests/              # Test suite (imports from src/ via conftest.py)
 │   ├── test_handlers.py
 │   ├── test_commands.py
@@ -49,7 +62,8 @@ media-downloader-bot/
 │   ├── test_tiktok.py
 │   ├── test_guest.py
 │   ├── test_downloader.py
-│   └── test_logging.py
+│   ├── test_logging.py
+│   └── test_cookies.py
 ├── docs/
 │   ├── README.md       # Project overview
 │   └── README.md       # Module responsibilities and data flow
@@ -59,7 +73,6 @@ media-downloader-bot/
 ├── Dockerfile          # Multi-stage build (Python 3.12-slim, yt-dlp, gallery-dl, ffmpeg)
 ├── docker-compose.yml  # Container orchestration with volume mounts
 ├── .dockerignore       # Excludes .venv, __pycache__, logs, cookies.txt from build
-├── compose.sh          # Build + deploy script
 └── conftest.py         # Adds src/ to Python path for tests
 ```
 
@@ -67,7 +80,7 @@ media-downloader-bot/
 
 | Module | Depends on | What it does |
 |---|---|---|
-| `src/config.py` | .env file, allowed-users.json | Loads BOT_TOKEN, BOT_ADMIN_IDS, ALLOWED_USER_IDS (merged from JSON + env), ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, GUEST_MODE_ENABLED, STORAGE_CHANNEL_ID, MODE, LOG_OUTPUT, LOG_DIR, LOG_LEVEL |
+| `src/config.py` | .env file, allowed-users.json | Loads BOT_TOKEN, BOT_ADMIN_IDS, ALLOWED_USER_IDS (merged from JSON + env), ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, MAX_CONCURRENT_DOWNLOADS, IG_USERNAME, IG_PASSWORD, IG_COOKIES_PATH, IG_SESSION_PATH, GUEST_MODE_ENABLED, STORAGE_CHANNEL_ID, MODE, LOG_OUTPUT, LOG_DIR, LOG_LEVEL |
 | `src/auth.py` | config | Authorization: `is_authorized()`, `is_bot_admin()`, `was_notified()`, `mark_notified()`, `was_notified_guest()`, `mark_notified_guest()`, `is_group_chat()`, `_is_allowed()`, `_is_allowed_group()` |
 | `src/commands.py` | auth, config, logging_config | User commands: `start_command()`, `help_command()`, `caption_command()`, `get_caption_for_user()` — all use notification tracking for unauthorized users |
 | `src/telegram_utils.py` | nothing | Telegram helpers: `typing_indicator()` context manager, `send_images()` for single/batched photo replies |
@@ -76,6 +89,7 @@ media-downloader-bot/
 | `src/platforms/tiktok.py` | downloader, telegram_utils | TikTok: `handle_tiktok()` with gallery-dl fallback for photo posts |
 | `src/platforms/instagram.py` | downloader, telegram_utils | Instagram: `handle_instagram()` with gallery-dl fallback and cookies |
 | `src/utils.py` | nothing | URL validation, file cleanup, `get_gallery_dl_domains()` (imports/auto-generates gallery-dl domain whitelist) |
+| `src/cookies.py` | instagrapi | Instagram cookie refresh: `check_cookies_staleness()`, `refresh_instagram_cookies()` (login via session or fresh, exports sessionid/ds_user_id to Netscape format), `_login_with_session()`, `_export_cookies_to_netscape()` |
 | `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()`, `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()` |
 | `src/logging_config.py` | config | Structured JSON logging: four-file split (requests/details/service/errors), JSONFormatter, `_enrich_chat()` for enriched chat dicts, `log_error()` for unhandled exceptions, filter-based routing, with_request_logging decorator, contextvars for request_id, request lifecycle functions (log_request_received/completed/failed), guest request functions (log_guest_request_received/completed), service log functions (log_new_user, log_bot_added_to_chat, log_bot_rejected_group_addition, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot, log_unauthorized_access) |
 | `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader, logging_config | Thin orchestrator: `handle_url()` (includes reply-to-retry, gallery-dl fallback, and unauthorized reply-to-bot check in groups), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` (handles bot added/removed/promoted/demoted/blocked, admin check for group additions) |
@@ -150,6 +164,7 @@ media-downloader-bot/
 - **Platform separation** - Each platform (YouTube, TikTok, Instagram) has its own module with isolated download logic.
 - **Guest mode (Bot API 10.0)** - Users mention `@botname` in any chat to download media. Uses `guest_message` updates + `answerGuestQuery()`. Files uploaded to a private storage channel to get `file_id`s for InlineQueryResult. Guest handler registered before text handler to prevent `filters.TEXT` from consuming guest updates.
 - **InlineQueryResult as raw dicts** - ptb's `InlineQueryResultVideo`/`Photo` constructors require placeholder URLs that Telegram tries to fetch. Using raw dicts with `video_file_id`/`photo_file_id` avoids this.
+- **Instagram cookie refresh** - Cookies managed via instagrapi (not browser export). `cookies.py` handles login, session persistence, and Netscape export. Must run on host (Docker blocked by Instagram). `./bot.sh refresh-ig` refreshes cookies.
 
 ## Security Rules
 
@@ -163,7 +178,7 @@ Never commit `allowed-users.json` — it contains user IDs and is generated loca
 python -m pytest tests/ -v
 ```
 
-All 291 tests use mocked subprocess calls - no real downloads needed.
+All 340 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 
@@ -193,4 +208,5 @@ When asked to "update bot" or "deploy", always read `docs/deploy.md` first.
 
 - [Project Overview](docs/README.md) - Quick summary of what/why, architecture, and links to detailed docs
 - [Guest Mode](docs/guest-mode/README.md) - Bot API 10.0 guest mode overview and technical reference
+- [Cookies](docs/cookies.md) - Instagram cookie refresh setup and troubleshooting
 - [Deployment](docs/deploy.md) - Production server deployment flow

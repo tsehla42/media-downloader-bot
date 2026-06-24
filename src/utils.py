@@ -46,7 +46,7 @@ def get_gallery_dl_domains() -> frozenset[str]:
             import subprocess
             import sys
             from pathlib import Path
-            script = str(Path(__file__).resolve().parent.parent / "scripts" / "generate_gallery_dl_domains.py")
+            script = str(Path(__file__).resolve().parent.parent / "scripts" / "python" / "generate_gallery_dl_domains.py")
             subprocess.run(
                 [sys.executable, script],
                 timeout=30,
@@ -70,7 +70,7 @@ def get_ytdlp_domains() -> frozenset[str]:
             import subprocess
             import sys
             from pathlib import Path
-            script = str(Path(__file__).resolve().parent.parent / "scripts" / "generate_ytdlp_domains.py")
+            script = str(Path(__file__).resolve().parent.parent / "scripts" / "python" / "generate_ytdlp_domains.py")
             subprocess.run(
                 [sys.executable, script],
                 timeout=30,

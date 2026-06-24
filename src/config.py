@@ -61,7 +61,11 @@ DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", "/tmp/bot-downloads")
 MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", "50"))
 MAX_CONCURRENT_DOWNLOADS = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "3"))
 
-INSTAGRAM_COOKIES = os.environ.get("INSTAGRAM_COOKIES", "")
+# Instagram cookie refresh
+IG_USERNAME = os.environ.get("IG_USERNAME", "")
+IG_PASSWORD = os.environ.get("IG_PASSWORD", "")
+IG_COOKIES_PATH = os.environ.get("IG_COOKIES_PATH", "ig-cookies.txt")
+IG_SESSION_PATH = os.environ.get("IG_SESSION_PATH", "ig-session.json")
 
 MODE = os.environ.get("MODE", "development")
 LOG_OUTPUT = os.environ.get("LOG_OUTPUT", "both")

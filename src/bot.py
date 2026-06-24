@@ -88,7 +88,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     app.add_handler(ChatMemberHandler(my_chat_member_handler, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    service_logger.info("Bot started (guest_mode=%s)", GUEST_MODE_ENABLED)
+    service_logger.info("Bot started")
 
     app.run_polling(
         allowed_updates=allowed_updates,

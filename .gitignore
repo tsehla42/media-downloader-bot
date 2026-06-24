@@ -18,6 +18,8 @@ venv/
 .env.*
 !.env.example
 cookies.txt
+ig-cookies.txt
+ig-session.json
 allowed-users.json
 src/gallery_dl_domains.py
 src/ytdlp_domains.py
@@ -45,9 +47,7 @@ docs/*
 !docs/p2p-chats/
 !docs/logs/
 !docs/content-delivery/
-
-# Gitignore internal/ephemeral docs
-# (superpowers/, todo.md, deploy.md stay gitignored by default)
+!docs/cookies.md
 
 CLAUDE.md
 
@@ -55,4 +55,6 @@ CLAUDE.md
 /logs/
 *.jsonl
 !docs/logs/**/*.jsonl
+
+deploy.sh
 pull-logs.sh

@@ -9,7 +9,7 @@ gallery-dl supports 100+ platforms. The bot maintains a whitelist of known-worki
 ## Generating the List
 
 ```bash
-python scripts/generate_gallery_dl_domains.py
+python scripts/python/generate_gallery_dl_domains.py
 ```
 
 This script:
@@ -69,14 +69,14 @@ else:
 ## Adding New Platforms
 
 1. Check gallery-dl documentation for support
-2. Run `python scripts/generate_gallery_dl_domains.py` to update list
+2. Run `python scripts/python/generate_gallery_dl_domains.py` to update list
 3. Test with a URL from the new platform
 4. If works, domain is automatically included
 
 ## Troubleshooting
 
 ### Domain Not in Whitelist
-- Run `python scripts/generate_gallery_dl_domains.py`
+- Run `python scripts/python/generate_gallery_dl_domains.py`
 - Check if gallery-dl supports the platform
 - If not, request support upstream
 

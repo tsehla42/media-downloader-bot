@@ -19,14 +19,18 @@ Instagram image and video download handling.
 
 Instagram often requires authentication for downloads.
 
-### Cookies File
+### Cookie Refresh
+
+Cookies are managed via instagrapi (see [Cookies](../../cookies.md)):
 
 ```bash
-INSTAGRAM_COOKIES=/path/to/cookies.txt
+IG_USERNAME=your-ig-account
+IG_PASSWORD=your-password
+IG_COOKIES_PATH=ig-cookies.txt
+IG_SESSION_PATH=ig-session.json
 ```
 
-- Use `instaloader` or browser extension to export cookies
-- Place in project root or mounted volume
+Run `./bot.sh refresh-ig` to refresh cookies. Must run on the host machine (Instagram blocks Docker logins).
 
 ### gallery-dl with Cookies
 
@@ -43,8 +47,8 @@ async def handle_instagram(update, context, url: str) -> bool:
         # ...
         return True
 
-    # Fallback: try images with gallery-dl (uses INSTAGRAM_COOKIES)
-    images = download_gallery_dl_images(url, out_dir, INSTAGRAM_COOKIES)
+    # Fallback: try images with gallery-dl (uses IG_COOKIES_PATH)
+    images = download_gallery_dl_images(url, out_dir, IG_COOKIES_PATH)
     if images:
         await send_images(update.message, images, reply_params)
         return True
@@ -124,8 +128,8 @@ async def send_images(message, images: list[str], reply_params: dict) -> int:
 ## Error Handling
 
 ### Authentication Required
-- Check if `INSTAGRAM_COOKIES` is set
-- If not, send error message
+- Check if `IG_COOKIES_PATH` points to a valid cookies file
+- If not, run `./bot.sh refresh-ig` to refresh cookies
 
 ### Download Failed
 - Try alternative method (yt-dlp → gallery-dl or vice versa)

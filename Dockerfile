@@ -33,6 +33,7 @@ COPY --from=build /install /usr/local
 
 # Copy application code
 COPY src/ ./src/
+COPY scripts/ ./scripts/
 
 # Run as non-root
 RUN useradd --create-home appuser

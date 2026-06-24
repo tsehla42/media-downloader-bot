@@ -3,7 +3,7 @@
 import os
 import uuid
 
-from config import DOWNLOAD_DIR, INSTAGRAM_COOKIES, MAX_FILE_SIZE
+from config import DOWNLOAD_DIR, IG_COOKIES_PATH, MAX_FILE_SIZE
 from downloader import download_video, download_gallery_dl_images
 from telegram_utils import send_images
 from utils import cleanup_file, cleanup_dir
@@ -55,7 +55,9 @@ async def handle_instagram(update, context, url: str) -> bool:
         out_dir = os.path.join(DOWNLOAD_DIR, tmp_id)
         os.makedirs(DOWNLOAD_DIR, exist_ok=True)
         try:
-            images = download_gallery_dl_images(url, out_dir, INSTAGRAM_COOKIES)
+            _log.info("instagram: trying gallery-dl fallback, cookies=%s", IG_COOKIES_PATH)
+            images = download_gallery_dl_images(url, out_dir, IG_COOKIES_PATH)
+            _log.info("instagram: gallery-dl returned %d images", len(images))
             if images:
                 total_size = await send_images(update.message, images, reply_params)
                 context.user_data["_content_type"] = "image"

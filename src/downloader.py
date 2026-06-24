@@ -211,8 +211,8 @@ def download_images(url: str, output_dir: str) -> list[str]:
     Returns list of file paths.
     """
     # Try gallery-dl first (handles carousels well with cookies)
-    from config import INSTAGRAM_COOKIES
-    images = download_gallery_dl_images(url, output_dir, INSTAGRAM_COOKIES)
+    from config import IG_COOKIES_PATH
+    images = download_gallery_dl_images(url, output_dir, IG_COOKIES_PATH)
     if images:
         return images
 

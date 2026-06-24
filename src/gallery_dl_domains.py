@@ -1,6 +1,6 @@
 """Auto-generated gallery-dl supported domains. Do not edit manually.
 
-Regenerate: python scripts/generate_gallery_dl_domains.py
+Regenerate: python scripts/python/generate_gallery_dl_domains.py
 
 # Count: 367
 """

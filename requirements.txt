@@ -2,5 +2,6 @@ python-telegram-bot @ git+https://github.com/python-telegram-bot/python-telegram
 python-dotenv>=1.0.0
 httpx
 gallery-dl
+instagrapi
 pytest
 pytest-asyncio

@@ -56,7 +56,7 @@ def get_gallery_dl_domains() -> frozenset[str]:
         from gallery_dl_domains import GALLERY_DL_DOMAINS
         return GALLERY_DL_DOMAINS
     except ImportError:
-        # Try to generate the file via scripts/generate_gallery_dl_domains.py
+        # Try to generate the file via scripts/python/generate_gallery_dl_domains.py
         # Falls back to empty frozenset on failure
         ...
 ```
@@ -64,7 +64,7 @@ def get_gallery_dl_domains() -> frozenset[str]:
 ### Generating Domain List
 
 ```bash
-python scripts/generate_gallery_dl_domains.py
+python scripts/python/generate_gallery_dl_domains.py
 ```
 
 This fetches the list from gallery-dl and writes to `src/gallery_dl_domains.py`.

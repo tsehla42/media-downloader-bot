@@ -16,7 +16,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from auth import is_user_allowed, was_notified_guest, mark_notified_guest
-from config import DOWNLOAD_DIR, MAX_FILE_SIZE, INSTAGRAM_COOKIES, STORAGE_CHANNEL_ID
+from config import DOWNLOAD_DIR, MAX_FILE_SIZE, IG_COOKIES_PATH, STORAGE_CHANNEL_ID
 from logging_config import (
     details_logger,
     log_guest_request_received,
@@ -333,7 +333,7 @@ async def _download_media_result(url: str, platform: str) -> tuple[dict, str, fl
             raise ValueError("Failed to upload video to Telegram")
 
         # Try image/gallery-dl fallback
-        cookies = INSTAGRAM_COOKIES if platform == "instagram" else ""
+        cookies = IG_COOKIES_PATH if platform == "instagram" else ""
         images = await asyncio.to_thread(download_gallery_dl_images, url, output_dir, cookies)
         if images:
             file_ids = []

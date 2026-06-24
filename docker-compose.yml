@@ -9,7 +9,8 @@ services:
       - .env
     volumes:
       - bot-downloads:/tmp/bot-downloads
-      - ./cookies.txt:/usr/src/app/cookies.txt:ro
+      - ./ig-cookies.txt:/usr/src/app/ig-cookies.txt:ro
+      - ./ig-session.json:/usr/src/app/ig-session.json
       - ./allowed-users.json:/usr/src/app/allowed-users.json:ro
       - ./logs:/usr/src/app/logs
 
