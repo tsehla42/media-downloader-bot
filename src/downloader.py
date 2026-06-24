@@ -198,6 +198,8 @@ def download_audio(url: str, output_path: str) -> bool:
         timeout=300,
     )
     if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        extra["yt_dlp_stderr"] = stderr
         logger.warning("download_audio: yt-dlp failed (code %d)", result.returncode, extra=extra)
     else:
         logger.info("download_audio: yt-dlp ok", extra=extra)
@@ -267,6 +269,8 @@ def download_gallery_dl_images(url: str, output_dir: str, cookies: str = "") -> 
     )
 
     if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        extra["gallery_dl_stderr"] = stderr
         logger.warning("gallery-dl: failed (code %d)", result.returncode, extra=extra)
         return []
 
@@ -311,6 +315,8 @@ def download_gallery_dl_video(url: str, output_dir: str) -> str | None:
         return None
 
     if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        extra["gallery_dl_stderr"] = stderr
         logger.warning("gallery-dl video: failed (code %d)", result.returncode, extra=extra)
         return None
 

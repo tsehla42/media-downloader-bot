@@ -19,10 +19,12 @@ from auth import is_user_allowed, was_notified_guest, mark_notified_guest
 from config import DOWNLOAD_DIR, MAX_FILE_SIZE, IG_COOKIES_PATH, STORAGE_CHANNEL_ID
 from logging_config import (
     details_logger,
+    error_logger,
     log_guest_request_received,
     log_guest_request_completed,
     log_unauthorized_access,
     set_current_request_id,
+    _build_forwarded_dict,
 )
 from platforms import detect_platform, extract_domain
 from utils import extract_urls, cleanup_file, cleanup_dir, get_gallery_dl_domains, get_ytdlp_domains
@@ -116,6 +118,7 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     guest_query_id = guest_msg.guest_query_id
     text = guest_msg.text or ""
     chat = guest_msg.chat
+    forwarded = _build_forwarded_dict(guest_msg)
 
     request_id = uuid.uuid4().hex[:8]
     set_current_request_id(request_id)
@@ -189,6 +192,7 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         reply=reply_data,
         chat_owner_name=chat_owner_name,
         chat_owner_username=chat_owner_username,
+        forwarded=forwarded,
     )
 
     # Process first URL
@@ -223,6 +227,7 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             chat=chat,
             chat_owner_name=chat_owner_name,
             chat_owner_username=chat_owner_username,
+            forwarded=forwarded,
         )
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
@@ -238,6 +243,7 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             chat=chat,
             chat_owner_name=chat_owner_name,
             chat_owner_username=chat_owner_username,
+            forwarded=forwarded,
         )
         await context.bot.answer_guest_query(
             guest_query_id,
@@ -469,7 +475,7 @@ async def _upload_to_telegram(file_path: str, media_type: str) -> str | None:
                 result = response.json()
 
                 if not result.get("ok"):
-                    details_logger.warning(
+                    error_logger.error(
                         "upload_to_telegram failed",
                         extra={"extra_data": {"error": result.get("description"), "file_path": file_path}},
                     )
@@ -488,7 +494,7 @@ async def _upload_to_telegram(file_path: str, media_type: str) -> str | None:
                     return msg.get("document", {}).get("file_id")
 
     except Exception:
-        details_logger.exception(
+        error_logger.exception(
             "upload_to_telegram exception",
             extra={"extra_data": {"file_path": file_path, "media_type": media_type}},
         )

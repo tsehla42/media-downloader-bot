@@ -351,7 +351,7 @@ Guest request with reply:
   "url": "@mmebodevbot https://vt.tiktok.com/ZS9Gg6dGp/",
   "user": {"id": 12345678, "name": "Alice", "username": "user_alice"},
   "chat": {"id": -1003804964305, "name": "Test Group", "type": "supergroup"},
-  "reply": {"user_id": 87654321, "name": "deploy_user", "username": "user_bob", "message": "check this"}
+  "reply": {"user_id": 87654321, "name": "Bob", "username": "user_bob", "message": "check this"}
 }
 ```
 

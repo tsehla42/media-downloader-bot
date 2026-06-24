@@ -9,6 +9,48 @@ All requirements below have been implemented. This document is kept for referenc
 - Structured `user`, `chat`, `reply` fields added
 - `reply_to_retry` events split into `reply_to_retry_received` / `reply_to_retry_completed`
 - Only logged when URL is present (no spam logging)
+- `forwarded` field added for forwarded messages (see below)
+
+## Forwarded Messages
+
+When a message is forwarded, a `forwarded` field is included in `request_received` and `guest_request_received` entries. The structure depends on the forward origin type:
+
+### Forwarded from user
+```json
+{
+  "forwarded": {
+    "id": 9876543210,
+    "name": "Carol",
+    "username": "user_carol",
+    "date": "2026-06-24T17:00:00+03:00"
+  }
+}
+```
+
+### Forwarded from hidden user
+```json
+{
+  "forwarded": {
+    "name": "Some User",
+    "date": "2026-06-24T17:00:00+03:00"
+  }
+}
+```
+
+### Forwarded from channel
+```json
+{
+  "forwarded": {
+    "chat_id": -1001234567890,
+    "name": "Channel Name",
+    "username": "channelname",
+    "author_signature": "Admin",
+    "date": "2026-06-24T17:00:00+03:00"
+  }
+}
+```
+
+The field is omitted entirely when the message is not forwarded.
 
 ---
 

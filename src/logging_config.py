@@ -99,6 +99,52 @@ service_logger = logging.getLogger("media_downloader.service")
 error_logger = logging.getLogger("media_downloader.errors")
 
 
+def _build_forwarded_dict(message: object) -> dict | None:
+    """Build forwarded info dict from message.forward_origin, or None if not forwarded."""
+    origin = getattr(message, "forward_origin", None)
+    if origin is None:
+        return None
+
+    origin_type = getattr(origin, "type", None)
+    date = getattr(origin, "date", None)
+    date_str = date.isoformat() if date else None
+
+    if origin_type == "user":
+        sender = getattr(origin, "sender_user", None)
+        if sender:
+            return {
+                "id": sender.id,
+                "name": getattr(sender, "first_name", None),
+                "username": getattr(sender, "username", None),
+                "date": date_str,
+            }
+    elif origin_type == "hidden_user":
+        return {
+            "name": getattr(origin, "sender_user_name", None),
+            "date": date_str,
+        }
+    elif origin_type == "channel":
+        chat = getattr(origin, "chat", None)
+        return {
+            "chat_id": getattr(chat, "id", None) if chat else None,
+            "name": getattr(chat, "title", None) if chat else None,
+            "username": getattr(chat, "username", None) if chat else None,
+            "author_signature": getattr(origin, "author_signature", None),
+            "date": date_str,
+        }
+    elif origin_type == "chat":
+        sender_chat = getattr(origin, "sender_chat", None)
+        return {
+            "chat_id": getattr(sender_chat, "id", None) if sender_chat else None,
+            "name": getattr(sender_chat, "title", None) if sender_chat else None,
+            "username": getattr(sender_chat, "username", None) if sender_chat else None,
+            "author_signature": getattr(origin, "author_signature", None),
+            "date": date_str,
+        }
+
+    return None
+
+
 def _enrich_chat(
     chat: object,
     user: object = None,
@@ -141,6 +187,7 @@ def log_request_received(
     user: object,
     chat: object,
     event: str = "request_received",
+    forwarded: dict | None = None,
 ) -> None:
     """Log when a request is received."""
     messages = {
@@ -160,6 +207,8 @@ def log_request_received(
         },
         "chat": _enrich_chat(chat, user),
     }
+    if forwarded:
+        log_data["forwarded"] = forwarded
     requests_logger.info(event, extra={"extra_data": log_data})
 
 
@@ -175,6 +224,7 @@ def log_request_completed(
     user: object = None,
     chat: object = None,
     event: str = "request_completed",
+    forwarded: dict | None = None,
 ) -> None:
     """Log when a request completes (success or expected failure)."""
     messages = {
@@ -203,6 +253,8 @@ def log_request_completed(
         }
     if chat:
         log_data["chat"] = _enrich_chat(chat, user)
+    if forwarded:
+        log_data["forwarded"] = forwarded
     requests_logger.info("request_completed", extra={"extra_data": log_data})
 
 
@@ -245,6 +297,7 @@ def log_guest_request_received(
     reply: dict | None = None,
     chat_owner_name: str | None = None,
     chat_owner_username: str | None = None,
+    forwarded: dict | None = None,
 ) -> None:
     """Log when a guest request is received (only when URL is present)."""
     log_data = {
@@ -262,6 +315,8 @@ def log_guest_request_received(
     }
     if reply is not None:
         log_data["reply"] = reply
+    if forwarded:
+        log_data["forwarded"] = forwarded
     requests_logger.info("guest_request_received", extra={"extra_data": log_data})
 
 
@@ -279,6 +334,7 @@ def log_guest_request_completed(
     chat: object = None,
     chat_owner_name: str | None = None,
     chat_owner_username: str | None = None,
+    forwarded: dict | None = None,
 ) -> None:
     """Log when a guest request completes."""
     log_data = {
@@ -303,6 +359,8 @@ def log_guest_request_completed(
         }
     if chat:
         log_data["chat"] = _enrich_chat(chat, caller, chat_owner_name, chat_owner_username)
+    if forwarded:
+        log_data["forwarded"] = forwarded
     requests_logger.info("guest_request_completed", extra={"extra_data": log_data})
 
 
@@ -526,6 +584,7 @@ def with_request_logging(handler):
         # Extract user/chat from update
         user = update.message.from_user if update.message else update.callback_query.from_user
         chat = update.message.chat if update.message else update.callback_query.message.chat
+        forwarded = _build_forwarded_dict(update.message) if update.message else None
         url = text  # Already validated above
         platform = ""  # Platform unknown at handler start
 
@@ -534,6 +593,7 @@ def with_request_logging(handler):
             url=url,
             user=user,
             chat=chat,
+            forwarded=forwarded,
         )
 
         start_time = time.time()
@@ -556,6 +616,7 @@ def with_request_logging(handler):
                 file_size_mb=file_size_mb,
                 user=user,
                 chat=chat,
+                forwarded=forwarded,
             )
             return result
         except Exception as e:

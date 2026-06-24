@@ -172,6 +172,8 @@ media-downloader-bot/
 
 Never commit `allowed-users.json` — it contains user IDs and is generated locally by the get-user-ids script.
 
+**NEVER commit real PII in documentation.** Do not use real usernames, user IDs, chat IDs, display names, or IP addresses in any tracked markdown files. Use fake placeholders (`user_alice`, `12345678`, `Test Group`, etc.).
+
 ## Running Tests
 
 ```bash
