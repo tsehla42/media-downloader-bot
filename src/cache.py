@@ -1,9 +1,7 @@
 """Media cache using SQLite for guest mode downloads."""
 
-import hashlib
 import logging
 import os
-import re
 import sqlite3
 
 logger = logging.getLogger("media_downloader.cache")

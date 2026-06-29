@@ -1,6 +1,5 @@
 import os
-import pytest
-from cache import get_cached, store, _get_db
+from cache import get_cached, store
 
 
 def test_cache_creates_database_file(tmp_path, monkeypatch):
