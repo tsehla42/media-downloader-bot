@@ -2,11 +2,48 @@
 
 import logging
 import os
+import re
 import sqlite3
 
 logger = logging.getLogger("media_downloader.cache")
 
 _db_path = None
+
+
+def _extract_tiktok_id(url: str) -> str | None:
+    """Extract video ID from TikTok URL.
+
+    Returns ID for full URLs (tiktok.com/@user/video/ID), None for short URLs (vt.tiktok.com).
+    """
+    match = re.search(r'tiktok\.com/@[^/]+/video/(\d+)', url)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _extract_youtube_id(url: str) -> str | None:
+    """Extract video ID from YouTube URL.
+
+    Supports: youtube.com/watch?v=ID, youtu.be/ID
+    """
+    match = re.search(r'[?&]v=([a-zA-Z0-9_-]{11})', url)
+    if match:
+        return match.group(1)
+    match = re.search(r'youtu\.be/([a-zA-Z0-9_-]{11})', url)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _extract_instagram_shortcode(url: str) -> str | None:
+    """Extract shortcode from Instagram URL.
+
+    Supports: instagram.com/p/SHORTCODE, instagram.com/reel/SHORTCODE
+    """
+    match = re.search(r'instagram\.com/(?:p|reel)/([a-zA-Z0-9_-]+)', url)
+    if match:
+        return match.group(1)
+    return None
 
 
 def _get_db_path() -> str:
