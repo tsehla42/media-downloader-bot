@@ -192,3 +192,25 @@ def test_cache_increments_use_count(monkeypatch, tmp_path):
     row = conn.execute("SELECT use_count FROM media_cache WHERE cache_key = ?",
                        ("tiktok:1234567890",)).fetchone()
     assert row[0] == 3  # 1 from store + 2 from get_cached
+
+
+def test_cache_preserves_use_count_on_overwrite(monkeypatch, tmp_path):
+    """Storing same key preserves use_count."""
+    monkeypatch.setenv("CACHE_DIR", str(tmp_path))
+    import cache
+    cache._db_path = None
+
+    url = "https://www.tiktok.com/@user/video/1234567890"
+    store(url, "tiktok", "old_id", "video", "Old", 5.0)
+    get_cached(url, "tiktok")  # Increment use_count to 2
+    get_cached(url, "tiktok")  # Increment use_count to 3
+
+    store(url, "tiktok", "new_id", "video", "New", 6.0)  # Overwrite
+
+    result = get_cached(url, "tiktok")
+    assert result[0] == "new_id"  # New file_id
+
+    conn = cache._get_db()
+    row = conn.execute("SELECT use_count FROM media_cache WHERE cache_key = ?",
+                       ("tiktok:1234567890",)).fetchone()
+    assert row[0] == 4  # 3 from before + 1 from this get_cached

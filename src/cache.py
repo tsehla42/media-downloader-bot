@@ -161,9 +161,15 @@ def store(url: str, platform: str | None, file_id: str, media_type: str,
     try:
         conn = _get_db()
         conn.execute("""
-            INSERT OR REPLACE INTO media_cache
+            INSERT INTO media_cache
             (cache_key, file_id, media_type, platform, title, file_size_mb)
             VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                file_id = excluded.file_id,
+                media_type = excluded.media_type,
+                platform = excluded.platform,
+                title = excluded.title,
+                file_size_mb = excluded.file_size_mb
         """, (cache_key, file_id, media_type, platform, title, file_size_mb))
         conn.commit()
         logger.info("Cached: %s -> %s", cache_key, file_id[:20] + "...")
