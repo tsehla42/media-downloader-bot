@@ -199,8 +199,8 @@ def cleanup_older_than(days: int = 30) -> int:
     try:
         conn = _get_db()
         cursor = conn.execute(
-            "DELETE FROM media_cache WHERE created_at < datetime('now', ?)",
-            (f"-{days} days",)
+            "DELETE FROM media_cache WHERE created_at < datetime('now', '-' || ? || ' days')",
+            (days,)
         )
         conn.commit()
         removed = cursor.rowcount
