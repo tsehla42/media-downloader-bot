@@ -462,3 +462,128 @@ class TestHandleGuestAuth:
             None,
         )
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Cache integration in _download_and_build_result
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadAndBuildResultCache:
+    """Tests for cache integration in _download_and_build_result."""
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_video_returns_cached(self):
+        """Cache hit for video skips download and returns cached result."""
+        from guest import _download_and_build_result
+
+        with patch("guest.get_cached", return_value=("cached_video_id", "video")), \
+             patch("guest._download_youtube", new_callable=AsyncMock) as mock_yt:
+            result, content_type, file_size_mb = await _download_and_build_result(
+                "https://youtube.com/watch?v=abc123", "youtube"
+            )
+            mock_yt.assert_not_called()
+            assert result["video_file_id"] == "cached_video_id"
+            assert content_type == "video"
+            assert file_size_mb is None
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_photo_returns_cached(self):
+        """Cache hit for photo skips download and returns cached result."""
+        from guest import _download_and_build_result
+
+        with patch("guest.get_cached", return_value=("cached_photo_id", "photo")), \
+             patch("guest._download_media_result", new_callable=AsyncMock) as mock_tt:
+            result, content_type, file_size_mb = await _download_and_build_result(
+                "https://tiktok.com/@user/video/123", "tiktok"
+            )
+            mock_tt.assert_not_called()
+            assert result["photo_file_id"] == "cached_photo_id"
+            assert content_type == "image"
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_image_returns_cached(self):
+        """Cache hit for image type returns photo result."""
+        from guest import _download_and_build_result
+
+        with patch("guest.get_cached", return_value=("cached_img_id", "image")), \
+             patch("guest._gallery_dl_result", new_callable=AsyncMock) as mock_gdl:
+            result, content_type, file_size_mb = await _download_and_build_result(
+                "https://deviantart.com/art/123", "deviantart.com"
+            )
+            mock_gdl.assert_not_called()
+            assert result["photo_file_id"] == "cached_img_id"
+            assert content_type == "image"
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_proceeds_with_download(self):
+        """Cache miss triggers normal download flow."""
+        from guest import _download_and_build_result
+
+        fake_result = {"type": "video", "id": "abc", "video_file_id": "new_id", "title": "Test"}
+        with patch("guest.get_cached", return_value=None), \
+             patch("guest._download_youtube", new_callable=AsyncMock, return_value=(fake_result, "video", 5.0)), \
+             patch("guest.store") as mock_store:
+            result, content_type, file_size_mb = await _download_and_build_result(
+                "https://youtube.com/watch?v=abc123", "youtube"
+            )
+            assert result["video_file_id"] == "new_id"
+            assert content_type == "video"
+            assert file_size_mb == 5.0
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_stores_video_result(self):
+        """After successful video download, result is stored in cache."""
+        from guest import _download_and_build_result
+
+        fake_result = {"type": "video", "id": "abc", "video_file_id": "new_id", "title": "Test Video"}
+        with patch("guest.get_cached", return_value=None), \
+             patch("guest._download_youtube", new_callable=AsyncMock, return_value=(fake_result, "video", 5.0)), \
+             patch("guest.store") as mock_store:
+            await _download_and_build_result("https://youtube.com/watch?v=abc123", "youtube")
+            mock_store.assert_called_once_with(
+                "https://youtube.com/watch?v=abc123", "youtube", "new_id", "video", "Test Video", 5.0
+            )
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_stores_photo_result(self):
+        """After successful photo download, result is stored in cache."""
+        from guest import _download_and_build_result
+
+        fake_result = {"type": "photo", "id": "abc", "photo_file_id": "new_photo_id", "title": ""}
+        with patch("guest.get_cached", return_value=None), \
+             patch("guest._download_media_result", new_callable=AsyncMock, return_value=(fake_result, "image", 0.5)), \
+             patch("guest.store") as mock_store:
+            await _download_and_build_result("https://tiktok.com/@user/video/123", "tiktok")
+            mock_store.assert_called_once_with(
+                "https://tiktok.com/@user/video/123", "tiktok", "new_photo_id", "photo", "", 0.5
+            )
+
+    @pytest.mark.asyncio
+    async def test_no_cache_for_unsupported_platform(self):
+        """Unsupported platform returns text result without cache interaction."""
+        from guest import _download_and_build_result
+
+        with patch("guest.get_cached", return_value=None), \
+             patch("guest.extract_domain", return_value="example.com"), \
+             patch("guest.get_ytdlp_domains", return_value=frozenset()), \
+             patch("guest.get_gallery_dl_domains", return_value=frozenset()), \
+             patch("guest.store") as mock_store:
+            result, content_type, file_size_mb = await _download_and_build_result(
+                "https://example.com/page", "example.com"
+            )
+            assert result["type"] == "article"
+            assert "Unsupported" in result["input_message_content"]["message_text"]
+            mock_store.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_download_failure_does_not_cache(self):
+        """If download raises, nothing is stored in cache."""
+        from guest import _download_and_build_result
+
+        with patch("guest.get_cached", return_value=None), \
+             patch("guest._download_youtube", new_callable=AsyncMock, side_effect=ValueError("boom")), \
+             patch("guest.store") as mock_store:
+            with pytest.raises(ValueError, match="boom"):
+                await _download_and_build_result("https://youtube.com/watch?v=abc123", "youtube")
+            mock_store.assert_not_called()

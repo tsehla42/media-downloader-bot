@@ -28,6 +28,7 @@ from logging_config import (
 )
 from platforms import detect_platform, extract_domain
 from utils import extract_urls, cleanup_file, cleanup_dir, get_gallery_dl_domains, get_ytdlp_domains
+from cache import get_cached, store
 from downloader import (
     get_metadata,
     download_video,
@@ -258,28 +259,47 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def _download_and_build_result(url: str, platform: str | None) -> tuple[dict, str | None, float | None]:
     """Download media and return (InlineQueryResult, content_type, file_size_mb).
 
+    Checks cache first. On miss, downloads and caches the result.
     Raises ValueError when all download methods fail (expected failure).
     Other exceptions propagate as unexpected errors.
     """
+    # Check cache first
+    cached = get_cached(url, platform)
+    if cached:
+        file_id, media_type = cached
+        if media_type == "video":
+            return _video_result(file_id, title="Cached video"), "video", None
+        elif media_type in ("photo", "image"):
+            return _photo_result(file_id), "image", None
+
+    # Cache miss - proceed with download
     if platform == "youtube":
-        return await _download_youtube(url)
+        result, content_type, file_size_mb = await _download_youtube(url)
+    elif platform == "tiktok":
+        result, content_type, file_size_mb = await _download_media_result(url, "tiktok")
+    elif platform == "instagram":
+        result, content_type, file_size_mb = await _download_media_result(url, "instagram")
+    else:
+        domain = extract_domain(url)
+        ytdlp_domains = get_ytdlp_domains()
+        if domain in ytdlp_domains:
+            result, content_type, file_size_mb = await _ytdlp_generic_result(url)
+        else:
+            gallery_dl_domains = get_gallery_dl_domains()
+            if domain in gallery_dl_domains:
+                result, content_type, file_size_mb = await _gallery_dl_result(url)
+            else:
+                return _text_result("Unsupported platform"), None, None
 
-    if platform == "tiktok":
-        return await _download_media_result(url, "tiktok")
+    # Cache successful result
+    if result and result.get("video_file_id"):
+        store(url, platform, result["video_file_id"], "video",
+              result.get("title", ""), file_size_mb or 0.0)
+    elif result and result.get("photo_file_id"):
+        store(url, platform, result["photo_file_id"], "photo",
+              result.get("title", ""), file_size_mb or 0.0)
 
-    if platform == "instagram":
-        return await _download_media_result(url, "instagram")
-
-    domain = extract_domain(url)
-    ytdlp_domains = get_ytdlp_domains()
-    if domain in ytdlp_domains:
-        return await _ytdlp_generic_result(url)
-
-    gallery_dl_domains = get_gallery_dl_domains()
-    if domain in gallery_dl_domains:
-        return await _gallery_dl_result(url)
-
-    return _text_result("Unsupported platform"), None, None
+    return result, content_type, file_size_mb
 
 
 async def _download_youtube(url: str) -> tuple[dict, str, float | None]:
