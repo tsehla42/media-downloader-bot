@@ -9,6 +9,7 @@ import sqlite3
 logger = logging.getLogger("media_downloader.cache")
 
 _db_path = None
+_conn = None
 
 
 def _extract_tiktok_id(url: str) -> str | None:
@@ -104,22 +105,24 @@ def _get_db_path() -> str:
 
 def _get_db() -> sqlite3.Connection:
     """Get database connection with schema creation."""
-    db_path = _get_db_path()
-    conn = sqlite3.connect(db_path)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS media_cache (
-            cache_key TEXT PRIMARY KEY,
-            file_id TEXT NOT NULL,
-            media_type TEXT NOT NULL,
-            platform TEXT,
-            title TEXT,
-            file_size_mb REAL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            use_count INTEGER DEFAULT 1
-        )
-    """)
-    conn.commit()
-    return conn
+    global _conn
+    if _conn is None:
+        db_path = _get_db_path()
+        _conn = sqlite3.connect(db_path, check_same_thread=False)
+        _conn.execute("""
+            CREATE TABLE IF NOT EXISTS media_cache (
+                cache_key TEXT PRIMARY KEY,
+                file_id TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                platform TEXT,
+                title TEXT,
+                file_size_mb REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                use_count INTEGER DEFAULT 1
+            )
+        """)
+        _conn.commit()
+    return _conn
 
 
 def get_cached(url: str, platform: str | None, metadata: dict | None = None) -> tuple[str, str] | None:

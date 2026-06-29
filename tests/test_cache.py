@@ -18,6 +18,7 @@ def test_cache_creates_database_file(tmp_path, monkeypatch):
     # Force re-initialization
     import cache
     cache._db_path = None
+    cache._conn = None
 
     # Trigger DB creation by calling store (generates a valid cache key)
     store("https://www.tiktok.com/@user/video/1234567890", "tiktok", "id", "video")
@@ -128,6 +129,7 @@ def test_store_and_retrieve(monkeypatch, tmp_path):
     monkeypatch.setenv("CACHE_DIR", str(tmp_path))
     import cache
     cache._db_path = None
+    cache._conn = None
 
     url = "https://www.tiktok.com/@user/video/1234567890"
     store(url, "tiktok", "test_file_id_123", "video", "Test Video", 5.0)
@@ -144,6 +146,7 @@ def test_cache_miss(monkeypatch, tmp_path):
     monkeypatch.setenv("CACHE_DIR", str(tmp_path))
     import cache
     cache._db_path = None
+    cache._conn = None
 
     result = get_cached("https://www.tiktok.com/@user/video/9999999999", "tiktok")
     assert result is None
@@ -154,6 +157,7 @@ def test_cache_overwrite(monkeypatch, tmp_path):
     monkeypatch.setenv("CACHE_DIR", str(tmp_path))
     import cache
     cache._db_path = None
+    cache._conn = None
 
     url = "https://www.tiktok.com/@user/video/1234567890"
     store(url, "tiktok", "old_file_id", "video", "Old", 5.0)
@@ -168,6 +172,7 @@ def test_cache_with_metadata_key(monkeypatch, tmp_path):
     monkeypatch.setenv("CACHE_DIR", str(tmp_path))
     import cache
     cache._db_path = None
+    cache._conn = None
 
     url = "https://vt.tiktok.com/ZSQqy1R4y/"
     metadata = {"id": "7650818360782884114", "title": "test"}
@@ -183,6 +188,7 @@ def test_cache_increments_use_count(monkeypatch, tmp_path):
     monkeypatch.setenv("CACHE_DIR", str(tmp_path))
     import cache
     cache._db_path = None
+    cache._conn = None
 
     url = "https://www.tiktok.com/@user/video/1234567890"
     store(url, "tiktok", "test_id", "video", "Test", 5.0)
@@ -201,6 +207,7 @@ def test_cache_preserves_use_count_on_overwrite(monkeypatch, tmp_path):
     monkeypatch.setenv("CACHE_DIR", str(tmp_path))
     import cache
     cache._db_path = None
+    cache._conn = None
 
     url = "https://www.tiktok.com/@user/video/1234567890"
     store(url, "tiktok", "old_id", "video", "Old", 5.0)
@@ -223,6 +230,7 @@ def test_get_stats(monkeypatch, tmp_path):
     monkeypatch.setenv("CACHE_DIR", str(tmp_path))
     import cache
     cache._db_path = None
+    cache._conn = None
 
     store("https://www.tiktok.com/@user/video/1", "tiktok", "id1", "video", "V1", 1.0)
     store("https://www.tiktok.com/@user/video/2", "tiktok", "id2", "video", "V2", 2.0)
@@ -237,6 +245,7 @@ def test_get_stats_empty_cache(monkeypatch, tmp_path):
     monkeypatch.setenv("CACHE_DIR", str(tmp_path))
     import cache
     cache._db_path = None
+    cache._conn = None
 
     stats = get_stats()
     assert stats["total_entries"] == 0
@@ -248,6 +257,7 @@ def test_cleanup_older_than(monkeypatch, tmp_path):
     monkeypatch.setenv("CACHE_DIR", str(tmp_path))
     import cache
     cache._db_path = None
+    cache._conn = None
 
     conn = cache._get_db()
     conn.execute("""
@@ -272,6 +282,7 @@ def test_cleanup_older_than_removes_nothing(monkeypatch, tmp_path):
     monkeypatch.setenv("CACHE_DIR", str(tmp_path))
     import cache
     cache._db_path = None
+    cache._conn = None
 
     store("https://www.tiktok.com/@user/video/1", "tiktok", "id1", "video", "V1", 1.0)
 
