@@ -481,8 +481,16 @@ async def test_ytmusic_with_video_sends_inline_keyboard():
     context = MagicMock()
     context.user_data = {}
 
+    metadata = {
+        "title": "Test Song",
+        "ext": "mp4",
+        "formats": [
+            {"format_id": "140", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2"},
+            {"format_id": "137", "ext": "mp4", "vcodec": "avc1.640020", "acodec": "none"},
+        ],
+    }
     with patch("handlers.detect_platform", return_value="youtube"), \
-         patch("handlers.get_metadata", return_value={"title": "Test Song", "ext": "mp4"}):
+         patch("handlers.get_metadata", return_value=metadata):
         await _download_and_send(update, context, "https://music.youtube.com/watch?v=abc")
 
     # Should NOT send audio or video directly

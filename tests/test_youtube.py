@@ -30,29 +30,50 @@ def _make_typing_indicator_mock():
 
 # --- _has_video_available tests ---
 
-def test_has_video_available_with_mp4():
-    """_has_video_available returns True for mp4 metadata."""
-    assert _has_video_available({"ext": "mp4"}) is True
+def test_has_video_available_with_video_formats():
+    """_has_video_available returns True when formats have video codecs."""
+    metadata = {
+        "ext": "mp4",
+        "formats": [
+            {"format_id": "140", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2"},
+            {"format_id": "137", "ext": "mp4", "vcodec": "avc1.640020", "acodec": "none"},
+        ],
+    }
+    assert _has_video_available(metadata) is True
 
 
-def test_has_video_available_with_webm():
-    """_has_video_available returns True for webm metadata."""
-    assert _has_video_available({"ext": "webm"}) is True
+def test_has_video_available_with_audio_only_formats():
+    """_has_video_available returns False when all formats have vcodec=none."""
+    metadata = {
+        "ext": "m4a",
+        "formats": [
+            {"format_id": "139", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.5"},
+            {"format_id": "140", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2"},
+            {"format_id": "251", "ext": "webm", "vcodec": "none", "acodec": "opus"},
+        ],
+    }
+    assert _has_video_available(metadata) is False
 
 
-def test_has_video_available_with_m4a():
-    """_has_video_available returns False for m4a (audio-only) metadata."""
-    assert _has_video_available({"ext": "m4a"}) is False
+def test_has_video_available_with_no_formats():
+    """_has_video_available returns False when formats list is empty."""
+    assert _has_video_available({"ext": "mp4", "formats": []}) is False
 
 
-def test_has_video_available_with_mp3():
-    """_has_video_available returns False for mp3 (audio-only) metadata."""
-    assert _has_video_available({"ext": "mp3"}) is False
+def test_has_video_available_with_missing_formats():
+    """_has_video_available returns False when formats key is missing."""
+    assert _has_video_available({"ext": "mp4"}) is False
 
 
-def test_has_video_available_missing_ext():
-    """_has_video_available returns False when ext key is missing."""
-    assert _has_video_available({}) is False
+def test_has_video_available_with_missing_vcodec():
+    """_has_video_available returns False when vcodec key is missing from formats."""
+    metadata = {
+        "ext": "mp4",
+        "formats": [
+            {"format_id": "140", "ext": "m4a", "acodec": "mp4a.40.2"},
+        ],
+    }
+    assert _has_video_available(metadata) is False
 
 
 # --- ytmusic_callback tests ---

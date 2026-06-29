@@ -16,7 +16,6 @@ from utils import cleanup_file
 
 from logging_config import details_logger as _log
 
-AUDIO_ONLY_EXTS = {"m4a", "mp3", "opus", "wav", "aac"}
 AUDIO_TITLE_MAX = 64  # Telegram Bot API limit for reply_audio title
 
 # Pending YouTube Music requests: shared across all users
@@ -26,10 +25,17 @@ YTMUSIC_REQUEST_TTL = 300  # 5 minutes
 
 
 def _has_video_available(metadata: dict) -> bool:
-    ext = metadata.get("ext")
-    if not ext:
-        return False
-    return ext not in AUDIO_ONLY_EXTS
+    """Check if real video streams exist by scanning format codecs.
+
+    Each format has vcodec (video codec). Audio-only formats have vcodec='none'.
+    If ALL formats have vcodec='none', no music video exists on YouTube.
+    """
+    formats = metadata.get("formats", [])
+    for f in formats:
+        vcodec = f.get("vcodec")
+        if vcodec and vcodec != "none":
+            return True
+    return False
 
 
 async def _download_and_send_video(
