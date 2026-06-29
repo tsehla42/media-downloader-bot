@@ -175,3 +175,38 @@ def store(url: str, platform: str | None, file_id: str, media_type: str,
         logger.info("Cached: %s -> %s", cache_key, file_id[:20] + "...")
     except Exception as e:
         logger.error("Cache write error: %s", e)
+
+
+def get_stats() -> dict:
+    """Return cache statistics."""
+    try:
+        conn = _get_db()
+        row = conn.execute("""
+            SELECT COUNT(*), COALESCE(SUM(file_size_mb), 0)
+            FROM media_cache
+        """).fetchone()
+        return {
+            "total_entries": row[0],
+            "total_size_mb": round(row[1], 2),
+        }
+    except Exception as e:
+        logger.error("Cache stats error: %s", e)
+        return {"total_entries": 0, "total_size_mb": 0}
+
+
+def cleanup_older_than(days: int = 30) -> int:
+    """Remove cache entries older than specified days. Returns count removed."""
+    try:
+        conn = _get_db()
+        cursor = conn.execute(
+            "DELETE FROM media_cache WHERE created_at < datetime('now', ?)",
+            (f"-{days} days",)
+        )
+        conn.commit()
+        removed = cursor.rowcount
+        if removed:
+            logger.info("Cache cleanup: removed %d entries older than %d days", removed, days)
+        return removed
+    except Exception as e:
+        logger.error("Cache cleanup error: %s", e)
+        return 0

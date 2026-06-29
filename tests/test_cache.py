@@ -2,6 +2,8 @@ import os
 from cache import (
     get_cached,
     store,
+    get_stats,
+    cleanup_older_than,
     _extract_tiktok_id,
     _extract_youtube_id,
     _extract_instagram_shortcode,
@@ -214,3 +216,67 @@ def test_cache_preserves_use_count_on_overwrite(monkeypatch, tmp_path):
     row = conn.execute("SELECT use_count FROM media_cache WHERE cache_key = ?",
                        ("tiktok:1234567890",)).fetchone()
     assert row[0] == 4  # 3 from before + 1 from this get_cached
+
+
+def test_get_stats(monkeypatch, tmp_path):
+    """Stats returns correct counts."""
+    monkeypatch.setenv("CACHE_DIR", str(tmp_path))
+    import cache
+    cache._db_path = None
+
+    store("https://www.tiktok.com/@user/video/1", "tiktok", "id1", "video", "V1", 1.0)
+    store("https://www.tiktok.com/@user/video/2", "tiktok", "id2", "video", "V2", 2.0)
+
+    stats = get_stats()
+    assert stats["total_entries"] == 2
+    assert stats["total_size_mb"] == 3.0
+
+
+def test_get_stats_empty_cache(monkeypatch, tmp_path):
+    """Stats on empty cache returns zeros."""
+    monkeypatch.setenv("CACHE_DIR", str(tmp_path))
+    import cache
+    cache._db_path = None
+
+    stats = get_stats()
+    assert stats["total_entries"] == 0
+    assert stats["total_size_mb"] == 0
+
+
+def test_cleanup_older_than(monkeypatch, tmp_path):
+    """Cleanup removes entries older than specified days."""
+    monkeypatch.setenv("CACHE_DIR", str(tmp_path))
+    import cache
+    cache._db_path = None
+
+    conn = cache._get_db()
+    conn.execute("""
+        INSERT INTO media_cache (cache_key, file_id, media_type, created_at)
+        VALUES ('old:key', 'old_id', 'video', datetime('now', '-31 days'))
+    """)
+    conn.execute("""
+        INSERT INTO media_cache (cache_key, file_id, media_type, created_at)
+        VALUES ('new:key', 'new_id', 'video', datetime('now'))
+    """)
+    conn.commit()
+
+    removed = cleanup_older_than(30)
+    assert removed == 1
+
+    stats = get_stats()
+    assert stats["total_entries"] == 1
+
+
+def test_cleanup_older_than_removes_nothing(monkeypatch, tmp_path):
+    """Cleanup with no old entries removes nothing."""
+    monkeypatch.setenv("CACHE_DIR", str(tmp_path))
+    import cache
+    cache._db_path = None
+
+    store("https://www.tiktok.com/@user/video/1", "tiktok", "id1", "video", "V1", 1.0)
+
+    removed = cleanup_older_than(30)
+    assert removed == 0
+
+    stats = get_stats()
+    assert stats["total_entries"] == 1
