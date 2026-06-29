@@ -24,7 +24,7 @@ FROM python:${PYTHON_VERSION}-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir yt-dlp gallery-dl
+    && pip install --no-cache-dir "yt-dlp[default,curl-cffi] @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz" gallery-dl
 
 WORKDIR /usr/src/app
 

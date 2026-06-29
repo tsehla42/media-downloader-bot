@@ -69,42 +69,59 @@ def get_metadata(url: str) -> dict | None:
         return None
 
 
-def _ensure_faststart(filepath: str) -> bool:
-    """Move moov atom to front of MP4 for Telegram streaming.
+def _ensure_faststart(filepath: str) -> str | None:
+    """Ensure video file is MP4 with moov atom at front for Telegram streaming.
 
-    Uses ffmpeg to reposition the moov atom without re-encoding.
-    Non-MP4 files are remuxed to MP4. Returns True on success or if
-    the file is not an MP4 (nothing to do).
+    For .mp4 files: moves moov atom to front (faststart) without re-encoding.
+    For non-MP4 files (webm, mkv, mov): remuxes to .mp4 with faststart.
+    Returns the path to the streamable file, or None on failure.
     """
-    if not filepath.endswith(".mp4"):
-        return True
-
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        return True  # ffmpeg not available, skip
+        return filepath  # ffmpeg not available, return original
 
+    is_mp4 = filepath.endswith(".mp4")
     tmp = filepath + ".faststart.mp4"
+
     try:
-        result = subprocess.run(
-            [
-                ffmpeg, "-y", "-i", filepath,
-                "-c", "copy", "-movflags", "+faststart",
-                tmp,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        if is_mp4:
+            result = subprocess.run(
+                [
+                    ffmpeg, "-y", "-i", filepath,
+                    "-c", "copy", "-movflags", "+faststart",
+                    tmp,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        else:
+            result = subprocess.run(
+                [
+                    ffmpeg, "-y", "-i", filepath,
+                    "-c", "copy", "-movflags", "+faststart",
+                    "-f", "mp4",
+                    tmp,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+
         if result.returncode == 0 and os.path.isfile(tmp):
-            os.replace(tmp, filepath)
-            return True
-        # Cleanup on failure
+            if not is_mp4:
+                new_path = os.path.splitext(filepath)[0] + ".mp4"
+                os.replace(tmp, new_path)
+                return new_path
+            else:
+                os.replace(tmp, filepath)
+                return filepath
         if os.path.isfile(tmp):
             os.unlink(tmp)
     except (subprocess.TimeoutExpired, OSError):
         if os.path.isfile(tmp):
             os.unlink(tmp)
-    return False
+    return None
 
 
 def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_MB, platform: str = "") -> bool:
@@ -121,7 +138,8 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     result = subprocess.run(
         [
             ytdlp,
-            "-f", f"best[filesize<{max_bytes}]/best",
+            "-f", f"best[ext=mp4][filesize<{max_bytes}]/best[ext=mp4]/best[filesize<{max_bytes}]/best",
+            "--merge-output-format", "mp4",
             "-o", output_path,
             "--no-playlist",
             *extra_args,
@@ -144,7 +162,8 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     result = subprocess.run(
         [
             ytdlp,
-            "-f", f"worst[filesize<{max_bytes}]/worst",
+            "-f", f"worst[ext=mp4][filesize<{max_bytes}]/worst[ext=mp4]/worst[filesize<{max_bytes}]/worst",
+            "--merge-output-format", "mp4",
             "-o", output_path,
             "--no-playlist",
             url,
@@ -165,14 +184,17 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
 
 
 def _apply_faststart(output_path: str, extra: dict) -> None:
-    """Apply faststart to downloaded file. Best-effort, logs on failure."""
-    # output_path may contain %(ext)s — resolve actual file
-    import glob as _glob
+    """Apply faststart to downloaded file. Best-effort, logs on failure.
+
+    For MP4 files: moves moov atom to front.
+    For non-MP4 (webm, mkv): remuxes to MP4 with faststart.
+    """
     base = output_path.replace("%(ext)s", "")
     for ext in ["mp4", "webm", "mkv"]:
         candidate = f"{base}.{ext}"
-        if os.path.isfile(candidate) and candidate.endswith(".mp4"):
-            if _ensure_faststart(candidate):
+        if os.path.isfile(candidate):
+            result = _ensure_faststart(candidate)
+            if result:
                 details_logger.info("faststart applied", extra=extra)
             else:
                 details_logger.info("faststart skipped (ffmpeg unavailable or failed)", extra=extra)
@@ -330,5 +352,6 @@ def download_gallery_dl_video(url: str, output_dir: str) -> str | None:
         logger.warning("gallery-dl video: no video files found in %s", output_dir, extra=extra)
         return None
 
-    # Return the largest video found
-    return max(videos, key=os.path.getsize)
+    # Return the largest video found, apply faststart
+    video_path = max(videos, key=os.path.getsize)
+    return _ensure_faststart(video_path)

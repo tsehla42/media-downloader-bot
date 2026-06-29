@@ -197,7 +197,8 @@ def test_download_gallery_dl_video_calls_gallery_dl():
              [],  # *.mkv
              [],  # *.mov
          ]), \
-         patch("downloader.os.path.getsize", return_value=1024*1024):
+         patch("downloader.os.path.getsize", return_value=1024*1024), \
+         patch("downloader._ensure_faststart", return_value="/tmp/test_output/video.webm"):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout="",
