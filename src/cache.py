@@ -122,14 +122,50 @@ def _get_db() -> sqlite3.Connection:
     return conn
 
 
-def get_cached(url: str, platform: str | None) -> tuple[str, str] | None:
+def get_cached(url: str, platform: str | None, metadata: dict | None = None) -> tuple[str, str] | None:
     """Check cache for URL. Returns (file_id, media_type) or None."""
-    _get_db()
-    return None  # Stub for test
+    cache_key = _get_cache_key(url, platform, metadata)
+    if not cache_key:
+        return None
+
+    try:
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT file_id, media_type FROM media_cache WHERE cache_key = ?",
+            (cache_key,)
+        ).fetchone()
+
+        if row:
+            conn.execute(
+                "UPDATE media_cache SET use_count = use_count + 1 WHERE cache_key = ?",
+                (cache_key,)
+            )
+            conn.commit()
+            logger.info("Cache hit: %s", cache_key)
+            return (row[0], row[1])
+
+        return None
+    except Exception as e:
+        logger.error("Cache read error: %s", e)
+        return None
 
 
 def store(url: str, platform: str | None, file_id: str, media_type: str,
-          title: str = "", file_size_mb: float = 0.0) -> None:
+          title: str = "", file_size_mb: float = 0.0, metadata: dict | None = None) -> None:
     """Store download result in cache."""
-    _get_db()
-    pass  # Stub for test
+    cache_key = _get_cache_key(url, platform, metadata)
+    if not cache_key:
+        logger.debug("Cannot generate cache key for %s", url)
+        return
+
+    try:
+        conn = _get_db()
+        conn.execute("""
+            INSERT OR REPLACE INTO media_cache
+            (cache_key, file_id, media_type, platform, title, file_size_mb)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (cache_key, file_id, media_type, platform, title, file_size_mb))
+        conn.commit()
+        logger.info("Cached: %s -> %s", cache_key, file_id[:20] + "...")
+    except Exception as e:
+        logger.error("Cache write error: %s", e)

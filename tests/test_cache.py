@@ -17,8 +17,8 @@ def test_cache_creates_database_file(tmp_path, monkeypatch):
     import cache
     cache._db_path = None
 
-    # Trigger DB creation by calling any function
-    get_cached("https://example.com", "test")
+    # Trigger DB creation by calling store (generates a valid cache key)
+    store("https://www.tiktok.com/@user/video/1234567890", "tiktok", "id", "video")
 
     db_file = tmp_path / "media_cache.db"
     assert db_file.exists()
@@ -119,3 +119,76 @@ def test_metadata_hash_different_for_different_content():
     meta1 = {"title": "Video A", "duration": 60, "uploader": "user1"}
     meta2 = {"title": "Video B", "duration": 120, "uploader": "user2"}
     assert _metadata_hash(meta1) != _metadata_hash(meta2)
+
+
+def test_store_and_retrieve(monkeypatch, tmp_path):
+    """Store a value and retrieve it."""
+    monkeypatch.setenv("CACHE_DIR", str(tmp_path))
+    import cache
+    cache._db_path = None
+
+    url = "https://www.tiktok.com/@user/video/1234567890"
+    store(url, "tiktok", "test_file_id_123", "video", "Test Video", 5.0)
+
+    result = get_cached(url, "tiktok")
+    assert result is not None
+    file_id, media_type = result
+    assert file_id == "test_file_id_123"
+    assert media_type == "video"
+
+
+def test_cache_miss(monkeypatch, tmp_path):
+    """Cache miss returns None."""
+    monkeypatch.setenv("CACHE_DIR", str(tmp_path))
+    import cache
+    cache._db_path = None
+
+    result = get_cached("https://www.tiktok.com/@user/video/9999999999", "tiktok")
+    assert result is None
+
+
+def test_cache_overwrite(monkeypatch, tmp_path):
+    """Storing same key twice overwrites previous value."""
+    monkeypatch.setenv("CACHE_DIR", str(tmp_path))
+    import cache
+    cache._db_path = None
+
+    url = "https://www.tiktok.com/@user/video/1234567890"
+    store(url, "tiktok", "old_file_id", "video", "Old", 5.0)
+    store(url, "tiktok", "new_file_id", "video", "New", 6.0)
+
+    result = get_cached(url, "tiktok")
+    assert result[0] == "new_file_id"
+
+
+def test_cache_with_metadata_key(monkeypatch, tmp_path):
+    """Cache works with metadata-based keys."""
+    monkeypatch.setenv("CACHE_DIR", str(tmp_path))
+    import cache
+    cache._db_path = None
+
+    url = "https://vt.tiktok.com/ZSQqy1R4y/"
+    metadata = {"id": "7650818360782884114", "title": "test"}
+    store(url, "tiktok", "file_id_456", "video", "Test", 5.0, metadata)
+
+    result = get_cached(url, "tiktok", metadata)
+    assert result is not None
+    assert result[0] == "file_id_456"
+
+
+def test_cache_increments_use_count(monkeypatch, tmp_path):
+    """Cache increments use_count on each retrieval."""
+    monkeypatch.setenv("CACHE_DIR", str(tmp_path))
+    import cache
+    cache._db_path = None
+
+    url = "https://www.tiktok.com/@user/video/1234567890"
+    store(url, "tiktok", "test_id", "video", "Test", 5.0)
+
+    get_cached(url, "tiktok")
+    get_cached(url, "tiktok")
+
+    conn = cache._get_db()
+    row = conn.execute("SELECT use_count FROM media_cache WHERE cache_key = ?",
+                       ("tiktok:1234567890",)).fetchone()
+    assert row[0] == 3  # 1 from store + 2 from get_cached
