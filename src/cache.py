@@ -1,5 +1,6 @@
 """Media cache using SQLite for guest mode downloads."""
 
+import hashlib
 import logging
 import os
 import re
@@ -43,6 +44,51 @@ def _extract_instagram_shortcode(url: str) -> str | None:
     match = re.search(r'instagram\.com/(?:p|reel)/([a-zA-Z0-9_-]+)', url)
     if match:
         return match.group(1)
+    return None
+
+
+def _metadata_hash(metadata: dict) -> str:
+    """Hash title + duration + uploader for fallback key."""
+    title = metadata.get("title", "")
+    duration = metadata.get("duration", 0)
+    uploader = metadata.get("uploader", "")
+    content = f"{title}:{duration}:{uploader}"
+    return hashlib.md5(content.encode()).hexdigest()[:8]
+
+
+def _get_cache_key(url: str, platform: str | None, metadata: dict | None = None) -> str | None:
+    """Generate cache key from URL and optional metadata.
+
+    Returns key in format "platform:id" or None if cannot generate.
+    """
+    # TikTok
+    if platform == "tiktok":
+        video_id = _extract_tiktok_id(url)
+        if video_id:
+            return f"tiktok:{video_id}"
+        # Try metadata for short URLs
+        if metadata and metadata.get("id"):
+            return f"tiktok:{metadata['id']}"
+        return None
+
+    # YouTube
+    if platform == "youtube":
+        video_id = _extract_youtube_id(url)
+        if video_id:
+            return f"youtube:{video_id}"
+        return None
+
+    # Instagram
+    if platform == "instagram":
+        shortcode = _extract_instagram_shortcode(url)
+        if shortcode:
+            return f"instagram:{shortcode}"
+        return None
+
+    # Unknown platform: use metadata hash
+    if metadata:
+        return f"meta:{_metadata_hash(metadata)}"
+
     return None
 
 
