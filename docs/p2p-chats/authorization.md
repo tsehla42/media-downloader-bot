@@ -60,7 +60,9 @@ Both are merged into a single allowlist at startup.
 
 ### Guest Mode
 - Separate notification tracking via `was_notified_guest()` / `mark_notified_guest()`
-- Same behavior: first attempt gets message, subsequent ignored
+- Auth check only runs when URL is present (user trying to download)
+- Without URL: unauthorized users silently ignored (no message, no logging)
+- With URL: first attempt gets "You are not authorized", subsequent ignored
 
 ## Implementation
 

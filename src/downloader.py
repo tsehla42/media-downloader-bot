@@ -12,6 +12,10 @@ from logging_config import details_logger as logger, get_current_request_id
 MAX_FILE_SIZE_MB = 50
 
 
+class DownloadAuthRequired(Exception):
+    """Raised when content requires platform login/cookies to access."""
+
+
 def _log_extra(url: str, platform: str = "") -> dict:
     """Build extra fields for structured detail logging."""
     extra = {"url": url}
@@ -176,6 +180,8 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
         extra["yt_dlp_stderr"] = stderr
+        if "Log in for access" in stderr:
+            raise DownloadAuthRequired(stderr)
         logger.warning("download_video: yt-dlp failed (code %d)", result.returncode, extra=extra)
     else:
         _apply_faststart(output_path, extra)

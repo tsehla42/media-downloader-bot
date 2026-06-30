@@ -7,6 +7,10 @@ from telegram.ext import ContextTypes
 from config import MAX_FILE_SIZE
 from auth import is_authorized, was_notified, mark_notified
 from logging_config import log_unauthorized_access
+from messages import (
+    MSG_UNAUTHORIZED, MSG_CAPTION_ENABLED, MSG_CAPTION_DISABLED,
+    MSG_CAPTION_STATUS, MSG_START, MSG_HELP,
+)
 
 
 # Per-user caption preferences: user_id -> bool (True = remove caption)
@@ -25,20 +29,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not is_authorized(update):
         user_id = update.message.from_user.id
         if not was_notified(user_id):
-            await update.message.reply_text("You are not authorized to use this bot")
+            await update.message.reply_text(MSG_UNAUTHORIZED)
             mark_notified(user_id)
             log_unauthorized_access(update.message.from_user, update.message.chat, "/start")
         return
 
     await update.message.reply_text(
-        "Media Downloader Bot\n\n"
-        "Send me a YouTube, TikTok, or Instagram URL and I'll download it for you\n"
-        "You can send multiple URLs in one message or send them one by one.\n"
-        f"Max file size: {MAX_FILE_SIZE}MB\n\n"
-        "Commands:\n"
-        "/help - Show supported platforms and commands\n"
-        "/audio <url> - Download as audio (MP3)\n"
-        "/caption on|off - Toggle video captions"
+        MSG_START.format(max_file_size=MAX_FILE_SIZE)
     )
 
 
@@ -47,22 +44,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not is_authorized(update):
         user_id = update.message.from_user.id
         if not was_notified(user_id):
-            await update.message.reply_text("You are not authorized to use this bot")
+            await update.message.reply_text(MSG_UNAUTHORIZED)
             mark_notified(user_id)
             log_unauthorized_access(update.message.from_user, update.message.chat, "/help")
         return
 
     await update.message.reply_text(
-        "Supported platforms:\n"
-        "- YouTube (videos, shorts)\n"
-        "- TikTok (videos, no watermark)\n"
-        "- Instagram (reels, posts, carousels)\n\n"
-        "Commands:\n"
-        "/audio <url> - Download as audio (MP3)\n"
-        "/caption on - Show video captions\n"
-        "/caption off - Remove video captions (default)\n\n"
-        f"Max file size: {MAX_FILE_SIZE}MB\n"
-        "You can send multiple URLs in one message."
+        MSG_HELP.format(max_file_size=MAX_FILE_SIZE)
     )
 
 
@@ -72,7 +60,7 @@ async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         user_id = update.message.from_user.id
         if not was_notified(user_id):
             await update.message.reply_text(
-                "You are not authorized to use this bot",
+                MSG_UNAUTHORIZED,
                 reply_parameters={"message_id": update.message.message_id},
             )
             mark_notified(user_id)
@@ -85,22 +73,19 @@ async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if text in ("on", "1", "true", "yes"):
         _user_caption_prefs[user_id] = False
         await update.message.reply_text(
-            "Captions enabled. Videos will include the title",
+            MSG_CAPTION_ENABLED,
             reply_parameters={"message_id": update.message.message_id},
         )
     elif text in ("off", "0", "false", "no"):
         _user_caption_prefs[user_id] = True
         await update.message.reply_text(
-            "Captions removed. Videos will be sent without description",
+            MSG_CAPTION_DISABLED,
             reply_parameters={"message_id": update.message.message_id},
         )
     else:
         current = _user_caption_prefs.get(user_id, True)
         state = "OFF (no captions)" if current else "ON (captions shown)"
         await update.message.reply_text(
-            f"Current caption setting: {state}\n\n"
-            "Usage:\n"
-            "/caption on - Show video captions\n"
-            "/caption off - Remove video captions (default)",
+            MSG_CAPTION_STATUS.format(state=state),
             reply_parameters={"message_id": update.message.message_id},
         )

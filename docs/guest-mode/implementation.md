@@ -66,6 +66,11 @@ ptb's `InlineQueryResultVideo`/`InlineQueryResultPhoto` constructors require `vi
 ### Authorization
 Same `ALLOWED_USER_IDS` check via `is_user_allowed()` (public wrapper in auth.py).
 
+Auth check runs AFTER URL extraction — only when the user is actually trying to download:
+- **With URL**: unauthorized user gets "This video has restricted access that requires login" (first attempt), then silently ignored
+- **Without URL**: unauthorized user is silently ignored (no auth message, no hint)
+- **Authorized user without URL**: gets "Please include a URL to download" hint
+
 ### Reply Behavior
 - Always reply to the tag message (not the URL message)
 - URL extraction checks both tag message AND replied-to message

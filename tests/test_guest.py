@@ -219,6 +219,23 @@ class TestHandleGuestAuth:
             context.bot.answer_guest_query.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_unauthorized_without_url_silent(self):
+        """Unauthorized user without URL is silently ignored."""
+        from guest import handle_guest
+        msg = _make_guest_message(text="hello bot", caller_id=99999)
+        msg.reply_to_message = None
+        update = _make_update(msg)
+        context = _make_context()
+
+        with patch("guest.is_user_allowed", return_value=False), \
+             patch("guest.extract_urls", return_value=[]), \
+             patch("guest.log_unauthorized_access") as mock_log:
+            await handle_guest(update, context)
+            # Should be completely silent — no hint, no auth message
+            context.bot.answer_guest_query.assert_not_called()
+            mock_log.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_unauthorized_calls_log_unauthorized_access(self):
         """Unauthorized guest calls log to service.jsonl via log_unauthorized_access."""
         from guest import handle_guest
@@ -587,3 +604,29 @@ class TestDownloadAndBuildResultCache:
             with pytest.raises(ValueError, match="boom"):
                 await _download_and_build_result("https://youtube.com/watch?v=abc123", "youtube")
             mock_store.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# DownloadAuthRequired in _download_media_result
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadMediaResultAuth:
+    """Tests for DownloadAuthRequired handling in _download_media_result."""
+
+    @pytest.mark.asyncio
+    async def test_download_media_result_tiktok_login_required(self):
+        """DownloadAuthRequired in guest mode returns login-required text result."""
+        from guest import _download_media_result
+        from downloader import DownloadAuthRequired
+
+        with patch("guest.download_video", side_effect=DownloadAuthRequired("Log in for access")), \
+             patch("guest.download_gallery_dl_images", return_value=[]), \
+             patch("guest.download_gallery_dl_video", return_value=None), \
+             patch("guest.cleanup_dir"):
+            result, content_type, file_size_mb = await _download_media_result(
+                "https://tiktok.com/@user/video/123", "tiktok"
+            )
+
+        assert result["type"] == "article"
+        assert "restricted access" in result["input_message_content"]["message_text"]

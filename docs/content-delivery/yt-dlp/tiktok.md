@@ -96,6 +96,14 @@ TikTok serves two types of video formats: `play_addr` (clean, no watermark) and 
 
 ## Error Handling
 
+### Age-Restricted / Login-Required Content
+Some TikTok videos are gated behind "This post may not be comfortable for some audiences. Log in for access." When yt-dlp reports this error, `download_video()` raises `DownloadAuthRequired` (custom exception). The orchestrator (`_download_and_send` for P2P/groups, `_download_media_result` for guest mode) catches it and shows: "This video has restricted access that requires login".
+
+- **P2P chat**: message shown
+- **Group chat (normal URL)**: silently ignored
+- **Group chat (reply-to-retry)**: message shown
+- **Guest mode**: message shown via `answer_guest_query()`
+
 ### Download Failed
 - Try gallery-dl fallback
 - If fallback fails, send error

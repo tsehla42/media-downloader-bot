@@ -21,7 +21,13 @@ from utils import get_gallery_dl_domains, get_ytdlp_domains
 from platforms.youtube import handle_youtube, handle_ytmusic, AUDIO_TITLE_MAX, _store_download_metadata
 from platforms.instagram import handle_instagram
 from platforms.tiktok import handle_tiktok
-from downloader import get_metadata, download_audio, download_video, download_gallery_dl_images, download_gallery_dl_video
+from downloader import get_metadata, download_audio, download_video, download_gallery_dl_images, download_gallery_dl_video, DownloadAuthRequired
+from messages import (
+    MSG_UNAUTHORIZED, MSG_UNSUPPORTED_PLATFORM, MSG_NO_URL, MSG_INVALID_URL,
+    MSG_TIKTOK_LOGIN_REQUIRED, MSG_FETCH_FAILED, MSG_SIZE_LIMIT,
+    MSG_METADATA_FAILED, MSG_DOWNLOAD_FAILED, MSG_AUDIO_USAGE, MSG_AUDIO_FAILED,
+    MSG_ONLY_ADMINS_CAN_ADD,
+)
 from commands import get_caption_for_user
 from auth import is_authorized, is_group_chat, was_notified, mark_notified, is_bot_admin, _is_allowed
 from logging_config import (
@@ -120,7 +126,7 @@ async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_T
             log_bot_rejected_group_addition(chat, from_user)
             await context.bot.send_message(
                 chat.id,
-                "Only bot admins can add me to groups",
+                MSG_ONLY_ADMINS_CAN_ADD,
             )
             await context.bot.leave_chat(chat.id)
             return
@@ -137,7 +143,7 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             user_id = update.message.from_user.id
             if not was_notified(user_id):
                 await update.message.reply_text(
-                    "You are not authorized to use this bot",
+                    MSG_UNAUTHORIZED,
                     reply_parameters=reply_params,
                 )
                 mark_notified(user_id)
@@ -149,7 +155,7 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not text:
         context.user_data["_request_success"] = False
         await update.message.reply_text(
-            "Usage: /audio <url>",
+            MSG_AUDIO_USAGE,
             reply_parameters=reply_params,
         )
         return
@@ -158,7 +164,7 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not urls:
         context.user_data["_request_success"] = False
         await update.message.reply_text(
-            "Please provide a valid URL",
+            MSG_INVALID_URL,
             reply_parameters=reply_params,
         )
         return
@@ -169,7 +175,7 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not platform:
         context.user_data["_request_success"] = False
         await update.message.reply_text(
-            "Unsupported platform. Use /help to see supported sites",
+            MSG_UNSUPPORTED_PLATFORM,
             reply_parameters=reply_params,
         )
         return
@@ -207,7 +213,7 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 details_logger.warning("audio: download failed", extra=extra)
                 context.user_data["_request_success"] = False
                 await update.message.reply_text(
-                    "Failed to download audio. Check the URL and try again",
+                    MSG_AUDIO_FAILED,
                     reply_parameters=reply_params,
                 )
         except Exception as e:
@@ -259,7 +265,7 @@ async def _download_and_send(
                 details_logger.info("ytdlp_metadata_failed", extra=extra)
                 if not (is_group_chat(update) and silent):
                     await update.message.reply_text(
-                        "Failed to fetch metadata",
+                        MSG_METADATA_FAILED,
                         reply_parameters=reply_params,
                     )
                 return False
@@ -270,7 +276,7 @@ async def _download_and_send(
                 context.user_data["_request_success"] = False
                 if not (is_group_chat(update) and silent):
                     await update.message.reply_text(
-                        "This video is above Telegram's 50MB limit",
+                        MSG_SIZE_LIMIT,
                         reply_parameters=reply_params,
                     )
                 return False
@@ -286,7 +292,7 @@ async def _download_and_send(
                     context.user_data["_request_success"] = False
                     if not (is_group_chat(update) and silent):
                         await update.message.reply_text(
-                            "Download failed",
+                            MSG_DOWNLOAD_FAILED,
                             reply_parameters=reply_params,
                         )
                     return False
@@ -311,7 +317,7 @@ async def _download_and_send(
         context.user_data["_request_success"] = False
         if not (is_group_chat(update) and silent):
             await update.message.reply_text(
-                "Unsupported platform",
+                MSG_UNSUPPORTED_PLATFORM,
                 reply_parameters=reply_params,
             )
         return False
@@ -323,18 +329,27 @@ async def _download_and_send(
             context.user_data["_request_success"] = False
             if not (is_group_chat(update) and silent):
                 await update.message.reply_text(
-                    "Could not fetch post. The content may be private or the URL is invalid",
+                    MSG_FETCH_FAILED,
                     reply_parameters=reply_params,
                 )
         return handled
 
     if platform == "tiktok":
-        handled = await handle_tiktok(update, context, url)
+        try:
+            handled = await handle_tiktok(update, context, url)
+        except DownloadAuthRequired:
+            context.user_data["_request_success"] = False
+            if not (is_group_chat(update) and silent):
+                await update.message.reply_text(
+                    MSG_TIKTOK_LOGIN_REQUIRED,
+                    reply_parameters=reply_params,
+                )
+            return False
         if not handled:
             context.user_data["_request_success"] = False
             if not (is_group_chat(update) and silent):
                 await update.message.reply_text(
-                    "Could not fetch post. The content may be private or the URL is invalid",
+                    MSG_FETCH_FAILED,
                     reply_parameters=reply_params,
                 )
         return handled
@@ -347,7 +362,7 @@ async def _download_and_send(
         details_logger.info("youtube_metadata_failed", extra=extra)
         if not (is_group_chat(update) and silent):
             await update.message.reply_text(
-                "Could not fetch post. The content may be private or the URL is invalid",
+                MSG_FETCH_FAILED,
                 reply_parameters=reply_params,
             )
         return False
@@ -380,7 +395,7 @@ async def _download_and_send(
                     context.user_data["_request_success"] = False
                     if not (is_group_chat(update) and silent):
                         await update.message.reply_text(
-                            "This video is above Telegram's 50MB limit",
+                            MSG_SIZE_LIMIT,
                             reply_parameters=reply_params,
                         )
                     return False
@@ -404,7 +419,7 @@ async def _download_and_send(
                 context.user_data["_request_success"] = False
                 if not (is_group_chat(update) and silent):
                     await update.message.reply_text(
-                        "Download failed",
+                        MSG_DOWNLOAD_FAILED,
                         reply_parameters=reply_params,
                     )
             return video_ok
@@ -412,7 +427,7 @@ async def _download_and_send(
         context.user_data["_request_success"] = False
         if not (is_group_chat(update) and silent):
             await update.message.reply_text(
-                "Download failed",
+                MSG_DOWNLOAD_FAILED,
                 reply_parameters=reply_params,
             )
         return False
@@ -511,7 +526,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             user_id = update.message.from_user.id
             if not was_notified(user_id):
                 await update.message.reply_text(
-                    "You are not authorized to use this bot",
+                    MSG_UNAUTHORIZED,
                     reply_parameters={"message_id": update.message.message_id},
                 )
                 mark_notified(user_id)
@@ -589,7 +604,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         # In P2P: show error. In groups: silently ignore.
         if not is_group_chat(update):
             await update.message.reply_text(
-                "Please send a valid URL",
+                MSG_INVALID_URL,
                 reply_parameters={"message_id": update.message.message_id},
             )
         return
@@ -642,12 +657,12 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 any_handled = True
         if not any_handled and not is_group_chat(update) and not youtube_urls and not other_ytdlp_urls:
             await update.message.reply_text(
-                "Unsupported platform",
+                MSG_UNSUPPORTED_PLATFORM,
                 reply_parameters={"message_id": update.message.message_id},
             )
     elif unsupported_urls and not is_group_chat(update) and not youtube_urls and not other_ytdlp_urls and not gallery_dl_urls:
         # All URLs are unsupported
         await update.message.reply_text(
-            "Unsupported platform",
+            MSG_UNSUPPORTED_PLATFORM,
             reply_parameters={"message_id": update.message.message_id},
         )

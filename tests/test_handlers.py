@@ -845,6 +845,86 @@ async def test_download_and_send_tiktok_delegates_immediately():
 
 
 @pytest.mark.asyncio
+async def test_download_and_send_tiktok_login_required_p2p():
+    """DownloadAuthRequired in P2P shows login-required message."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.chat.type = "private"
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    from downloader import DownloadAuthRequired
+    with patch("handlers.detect_platform", return_value="tiktok"), \
+         patch("platforms.tiktok.download_video", side_effect=DownloadAuthRequired("Log in for access")), \
+         patch("platforms.tiktok.get_metadata", return_value=None), \
+         patch("platforms.tiktok.cleanup_file"), \
+         patch("platforms.tiktok.cleanup_dir"):
+        await _download_and_send(update, context, "https://tiktok.com/@user/video/123")
+
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "restricted access" in text
+    assert "login" in text
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_tiktok_login_required_group_silent():
+    """DownloadAuthRequired in group (normal URL) is silent."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.chat.type = "group"
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    from downloader import DownloadAuthRequired
+    with patch("handlers.detect_platform", return_value="tiktok"), \
+         patch("handlers.is_group_chat", return_value=True), \
+         patch("platforms.tiktok.download_video", side_effect=DownloadAuthRequired("Log in for access")), \
+         patch("platforms.tiktok.get_metadata", return_value=None), \
+         patch("platforms.tiktok.cleanup_file"), \
+         patch("platforms.tiktok.cleanup_dir"):
+        await _download_and_send(update, context, "https://tiktok.com/@user/video/123")
+
+    update.message.reply_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_tiktok_login_required_reply_to_retry():
+    """DownloadAuthRequired via reply-to-retry shows login-required message."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.chat.type = "group"
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    from downloader import DownloadAuthRequired
+    with patch("handlers.detect_platform", return_value="tiktok"), \
+         patch("platforms.tiktok.download_video", side_effect=DownloadAuthRequired("Log in for access")), \
+         patch("platforms.tiktok.get_metadata", return_value=None), \
+         patch("platforms.tiktok.cleanup_file"), \
+         patch("platforms.tiktok.cleanup_dir"):
+        await _download_and_send(
+            update, context, "https://tiktok.com/@user/video/123",
+            silent=False, reply_to_message_id=100,
+        )
+
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "restricted access" in text
+    kwargs = update.message.reply_text.call_args[1]
+    assert kwargs["reply_parameters"] == {"message_id": 100}
+
+
+@pytest.mark.asyncio
 async def test_download_and_send_instagram_delegates_immediately():
     """Instagram is delegated to handle_instagram without fetching metadata first."""
     update = MagicMock()

@@ -13,6 +13,7 @@ from downloader import download_video, download_audio
 from commands import get_caption_for_user
 from telegram_utils import typing_indicator
 from utils import cleanup_file
+from messages import MSG_DOWNLOAD_FAILED, MSG_YTMUSIC_AUDIO_FAILED, MSG_YTMUSIC_VIDEO_FAILED, MSG_YTMUSIC_UNKNOWN_CHOICE, MSG_YTMUSIC_REQUEST_EXPIRED
 
 from logging_config import details_logger as _log
 
@@ -112,7 +113,7 @@ async def handle_ytmusic(
         else:
             context.user_data["_request_success"] = False
             await update.message.reply_text(
-                "Download failed",
+                MSG_DOWNLOAD_FAILED,
                 reply_parameters=reply_params,
             )
 
@@ -144,13 +145,13 @@ async def ytmusic_callback(update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     pending = _ytmusic_pending.pop(msg_id, None)
     if not pending:
-        await query.answer("Request expired. Send the link again")
+        await query.answer(MSG_YTMUSIC_REQUEST_EXPIRED)
         return
 
     # Check TTL -- reject stale requests
     request_time = pending.get("timestamp")
     if request_time is not None and time.time() - request_time > YTMUSIC_REQUEST_TTL:
-        await query.answer("Request expired. Send the link again")
+        await query.answer(MSG_YTMUSIC_REQUEST_EXPIRED)
         return
 
     await query.answer()
@@ -189,7 +190,7 @@ async def ytmusic_callback(update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 else:
                     _log.warning("ytmusic_callback: audio download failed for %s", url)
                     await update.effective_message.reply_text(
-                        "Audio download failed",
+                        MSG_YTMUSIC_AUDIO_FAILED,
                         reply_parameters=reply_params,
                     )
 
@@ -204,7 +205,7 @@ async def ytmusic_callback(update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 else:
                     _log.warning("ytmusic_callback: video download failed for %s", url)
                     await update.effective_message.reply_text(
-                        "Video download failed",
+                        MSG_YTMUSIC_VIDEO_FAILED,
                         reply_parameters=reply_params,
                     )
 
@@ -243,12 +244,12 @@ async def ytmusic_callback(update, context: ContextTypes.DEFAULT_TYPE) -> None:
                         _log.info("ytmusic_callback: video sent for %s", url)
                     else:
                         await update.effective_message.reply_text(
-                            "Video download failed",
+                            MSG_YTMUSIC_VIDEO_FAILED,
                             reply_parameters=reply_params,
                         )
                 else:
                     await update.effective_message.reply_text(
-                        "Video download failed",
+                        MSG_YTMUSIC_VIDEO_FAILED,
                         reply_parameters=reply_params,
                     )
 
@@ -265,7 +266,7 @@ async def ytmusic_callback(update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     _log.info("ytmusic_callback: audio sent for %s", url)
                 else:
                     await update.effective_message.reply_text(
-                        "Audio download failed",
+                        MSG_YTMUSIC_AUDIO_FAILED,
                         reply_parameters=reply_params,
                     )
 
@@ -273,7 +274,7 @@ async def ytmusic_callback(update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
             else:
                 await update.effective_message.reply_text(
-                    "Unknown format choice",
+                    MSG_YTMUSIC_UNKNOWN_CHOICE,
                     reply_parameters=reply_params,
                 )
 

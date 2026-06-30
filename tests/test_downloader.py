@@ -1,5 +1,6 @@
 import json
 import sys
+import pytest
 from unittest.mock import patch, MagicMock
 from downloader import get_metadata, download_video, download_audio, download_gallery_dl_images, download_gallery_dl_video, _find_gallery_dl
 
@@ -255,3 +256,32 @@ def test_download_gallery_dl_video_returns_none_when_no_videos_found():
                 "/tmp/test_output",
             )
             assert result is None
+
+
+def test_download_video_raises_auth_required_on_login_error():
+    """download_video raises DownloadAuthRequired when yt-dlp says login needed."""
+    from downloader import DownloadAuthRequired
+
+    login_error = (
+        "ERROR: [TikTok] 7653539007543921940: This post may not be comfortable "
+        "for some audiences. Log in for access. Use --cookies-from-browser or "
+        "--cookies for the authentication."
+    )
+    with patch("downloader.subprocess.run") as mock_run:
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr=login_error),
+            MagicMock(returncode=1, stdout="", stderr=login_error),
+        ]
+        with pytest.raises(DownloadAuthRequired):
+            download_video("https://tiktok.com/@user/video/123", "/tmp/test.mp4")
+
+
+def test_download_video_does_not_raise_on_generic_failure():
+    """download_video returns False for non-auth failures."""
+    with patch("downloader.subprocess.run") as mock_run:
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="ERROR: File not found"),
+            MagicMock(returncode=1, stdout="", stderr="ERROR: File not found"),
+        ]
+        result = download_video("https://youtube.com/watch?v=abc", "/tmp/test.mp4")
+        assert result is False

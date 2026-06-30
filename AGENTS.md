@@ -34,6 +34,7 @@ media-downloader-bot/
 │   ├── commands.py     # User commands: /start, /help, /caption
 │   ├── telegram_utils.py # Telegram helpers: typing_indicator, send_images
 │   ├── cookies.py      # Instagram cookie refresh via instagrapi (login, session, Netscape export)
+│   ├── messages.py     # User-facing message constants (MSG_*) used across all handlers
 │   ├── logging_config.py # Structured JSON logging: four-file split (requests, details, service, errors)
 │   ├── cache.py          # SQLite media cache for guest mode (URL extraction, key generation, store/retrieve)
 │   ├── platforms/       # Platform-specific download logic
@@ -85,7 +86,8 @@ media-downloader-bot/
 |---|---|---|
 | `src/config.py` | .env file, allowed-users.json | Loads BOT_TOKEN, BOT_ADMIN_IDS, ALLOWED_USER_IDS (merged from JSON + env), ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, MAX_CONCURRENT_DOWNLOADS, IG_USERNAME, IG_PASSWORD, IG_COOKIES_PATH, IG_SESSION_PATH, GUEST_MODE_ENABLED, STORAGE_CHANNEL_ID, MODE, LOG_OUTPUT, LOG_DIR, LOG_LEVEL |
 | `src/auth.py` | config | Authorization: `is_authorized()`, `is_bot_admin()`, `was_notified()`, `mark_notified()`, `was_notified_guest()`, `mark_notified_guest()`, `is_group_chat()`, `_is_allowed()`, `_is_allowed_group()` |
-| `src/commands.py` | auth, config, logging_config | User commands: `start_command()`, `help_command()`, `caption_command()`, `get_caption_for_user()` — all use notification tracking for unauthorized users |
+| `src/messages.py` | nothing | User-facing message constants: `MSG_UNAUTHORIZED`, `MSG_TIKTOK_LOGIN_REQUIRED`, `MSG_FETCH_FAILED`, `MSG_SIZE_LIMIT`, `MSG_CAPTION_ENABLED/DISABLED`, `MSG_START`, `MSG_HELP`, etc. All `reply_text()` and `_text_result()` strings import from here. |
+| `src/commands.py` | auth, config, messages, logging_config | User commands: `start_command()`, `help_command()`, `caption_command()`, `get_caption_for_user()` — all use notification tracking for unauthorized users |
 | `src/telegram_utils.py` | nothing | Telegram helpers: `typing_indicator()` context manager, `send_images()` for single/batched photo replies |
 | `src/platforms/__init__.py` | nothing | Platform detection: `detect_platform()`, `extract_domain()`, `SUPPORTED_PLATFORMS` dict |
 | `src/platforms/youtube.py` | downloader, commands, telegram_utils | YouTube/YT Music: `handle_youtube()`, `handle_ytmusic()`, `ytmusic_callback()`, format picker |
@@ -93,11 +95,11 @@ media-downloader-bot/
 | `src/platforms/instagram.py` | downloader, telegram_utils | Instagram: `handle_instagram()` with gallery-dl fallback and cookies |
 | `src/utils.py` | nothing | URL validation, file cleanup, `get_gallery_dl_domains()` (imports/auto-generates gallery-dl domain whitelist) |
 | `src/cookies.py` | instagrapi | Instagram cookie refresh: `check_cookies_staleness()`, `refresh_instagram_cookies()` (login via session or fresh, exports sessionid/ds_user_id to Netscape format), `_login_with_session()`, `_export_cookies_to_netscape()` |
-| `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()`, `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()` |
+| `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()`, `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()`. Raises `DownloadAuthRequired` when TikTok content requires login (age-restricted). |
 | `src/logging_config.py` | config | Structured JSON logging: four-file split (requests/details/service/errors), JSONFormatter, `_enrich_chat()` for enriched chat dicts, `log_error()` for unhandled exceptions, filter-based routing, with_request_logging decorator, contextvars for request_id, request lifecycle functions (log_request_received/completed/failed), guest request functions (log_guest_request_received/completed), service log functions (log_new_user, log_bot_added_to_chat, log_bot_rejected_group_addition, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot, log_unauthorized_access) |
 | `src/cache.py` | logging_config | SQLite media cache: `get_cached()` returns (file_id, media_type) by URL/platform, `store()` saves download result, URL-based ID extraction for TikTok/YouTube/Instagram, metadata hash fallback, `get_stats()`, `cleanup_older_than()` |
 | `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader, logging_config | Thin orchestrator: `handle_url()` (includes reply-to-retry, gallery-dl fallback, and unauthorized reply-to-bot check in groups), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` (handles bot added/removed/promoted/demoted/blocked, admin check for group additions) |
-| `src/guest.py` | auth, config, downloader, platforms, utils, logging_config, httpx, cache | Bot API 10.0 guest mode: `handle_guest()` receives guest_message updates, extracts URLs (from tag text or replied-to message), downloads via platform handlers, uploads to storage channel for file_id, replies via `answer_guest_query()`. Uses raw dicts for InlineQueryResult to avoid ptb placeholder URL issues. Caches file_ids via `cache.get_cached()`/`cache.store()` — cache hit skips download+upload entirely. Fetches TikTok metadata for short URL deduplication. Unauthorized users get "You are not authorized" once via `answer_guest_query`, then silently ignored. Uses `was_notified_guest()`/`mark_notified_guest()` (separate from P2P tracking). Reply to bot message without URL is silently ignored. Logs unauthorized access to service.jsonl via `log_unauthorized_access()`. For gallery-dl supported domains (e.g. deviantart, pinterest), falls back to `_gallery_dl_result()` when platform is not in SUPPORTED_PLATFORMS. Platform logged from `extract_domain(url)` for non-primary platforms. Photo upload handles Telegram's list-of-PhotoSize response. |
+| `src/guest.py` | auth, config, downloader, platforms, utils, logging_config, httpx, cache | Bot API 10.0 guest mode: `handle_guest()` receives guest_message updates, extracts URLs (from tag text or replied-to message), downloads via platform handlers, uploads to storage channel for file_id, replies via `answer_guest_query()`. Uses raw dicts for InlineQueryResult to avoid ptb placeholder URL issues. Caches file_ids via `cache.get_cached()`/`cache.store()` — cache hit skips download+upload entirely. Fetches TikTok metadata for short URL deduplication. Unauthorized users without URL are silently ignored; unauthorized users with URL get "You are not authorized" once via `answer_guest_query`, then silently ignored. Uses `was_notified_guest()`/`mark_notified_guest()` (separate from P2P tracking). Reply to bot message without URL is silently ignored. Logs unauthorized access to service.jsonl via `log_unauthorized_access()`. For gallery-dl supported domains (e.g. deviantart, pinterest), falls back to `_gallery_dl_result()` when platform is not in SUPPORTED_PLATFORMS. Platform logged from `extract_domain(url)` for non-primary platforms. Photo upload handles Telegram's list-of-PhotoSize response. |
 | `src/bot.py` | config, handlers, commands, platforms.youtube, logging_config, guest | Entry point, wires everything together, initializes logging, global error handler. Guest handler registered BEFORE text handler (filters.TEXT matches guest messages via effective_message). |
 
 ## Data Flow
@@ -136,9 +138,10 @@ media-downloader-bot/
     - User blocks bot (private chat): logged as `user_blocked_bot`
 14. **Guest mode** (`GUEST_MODE_ENABLED=true`): User mentions `@botname` in any chat → Telegram sends `guest_message` update → `guest.handle_guest()`:
     - Caller identified via `guest_msg.from_user` (Telegram sends `from`, ptb maps to `from_user`)
-    - Auth check via `is_user_allowed(caller_id)` (same allowlist as regular messages)
-    - **Unauthorized guest**: first attempt → "You are not authorized" via `answer_guest_query` + `log_unauthorized_access` to service.jsonl; subsequent → silently ignored. Uses `was_notified_guest()`/`mark_notified_guest()` (separate from P2P tracking)
-    - URL extracted from tag text OR replied-to message
+    - URL extracted from tag text OR replied-to message (before auth check)
+    - If no URL: authorized users get "Please include a URL" hint; unauthorized users silently ignored
+    - Auth check via `is_user_allowed(caller_id)` (same allowlist as regular messages) — only when URL present
+    - **Unauthorized guest with URL**: first attempt → "You are not authorized" via `answer_guest_query` + `log_unauthorized_access` to service.jsonl; subsequent → silently ignored. Uses `was_notified_guest()`/`mark_notified_guest()` (separate from P2P tracking)
     - Reply to bot message without URL → silently ignored (no error message)
     - Reply to bot message with no text → shows media type (e.g. `[photo]`, `[video]`) in logs
     - `log_guest_request_received()` logs to `requests.jsonl` with user, chat, reply context
@@ -163,9 +166,11 @@ media-downloader-bot/
 - **Auto best quality** - Downloads best quality under 50MB Telegram limit, retries with worst on failure.
 - **User allowlist** - IDs merged from `allowed-users.json` (array of objects with `id` field) + `ALLOWED_USER_IDS` env var. If no sources configured = allow all. If sources configured but user not in list = deny.
 - **Bot admins** - `BOT_ADMIN_IDS` env var (comma-separated). Admins can add bot to groups. Empty = anyone can add.
-- **Unauthorized user handling** - First attempt: "You are not authorized" + log `unauthorized_access` event. Subsequent attempts: silently ignored (in-memory sets, resets on restart). P2P and guest mode track separately — a user told in P2P can still use guest mode and vice versa.
+- **Unauthorized user handling** - First attempt: "You are not authorized" + log `unauthorized_access` event. Subsequent attempts: silently ignored (in-memory sets, resets on restart). P2P and guest mode track separately — a user told in P2P can still use guest mode and vice versa. Guest mode only shows auth message when URL is present; without URL, unauthorized users are silently ignored.
 - **Group security** - Only bot admins can add bot to groups (checked in `my_chat_member_handler`). Non-admin additions rejected with message + bot leaves.
 - **Structured logging** - Four JSON log files: `requests.jsonl` (request lifecycle), `request-details.jsonl` (intermediate download steps), `service.jsonl` (bot events), `errors.jsonl` (unhandled exceptions with error_id). `_enrich_chat()` normalizes chat dicts with name/username. Filter-based routing by logger name. Zero external dependencies.
+- **User-facing messages** - All `reply_text()` and `_text_result()` strings centralized in `src/messages.py` as `MSG_*` constants. No inline string literals in handlers.
+- **DownloadAuthRequired** - Custom exception raised by `download_video()` when yt-dlp reports content requires login (e.g. TikTok age-restricted). Caught at orchestrator level (`_download_and_send`, `_download_media_result`), not inside platform handlers. Shows "This video has restricted access that requires login" to user.
 - **Docker deployment** - Multi-stage build with yt-dlp, gallery-dl, and ffmpeg. Persistent logs via volume mount to `./logs/`. `allowed-users.json` mounted read-only.
 - **Platform separation** - Each platform (YouTube, TikTok, Instagram) has its own module with isolated download logic.
 - **Guest mode (Bot API 10.0)** - Users mention `@botname` in any chat to download media. Uses `guest_message` updates + `answerGuestQuery()`. Files uploaded to a private storage channel to get `file_id`s for InlineQueryResult. Guest handler registered before text handler to prevent `filters.TEXT` from consuming guest updates.
@@ -187,7 +192,7 @@ Never commit `allowed-users.json` — it contains user IDs and is generated loca
 python -m pytest tests/ -v
 ```
 
-All 340 tests use mocked subprocess calls - no real downloads needed.
+All 364 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 
