@@ -330,6 +330,7 @@ def log_guest_request_completed(
     content_type: str | None = None,
     file_size_mb: float | None = None,
     error: str | None = None,
+    cache_hit: bool = False,
     caller: object = None,
     chat: object = None,
     chat_owner_name: str | None = None,
@@ -346,6 +347,7 @@ def log_guest_request_completed(
         "platform": platform,
         "duration_ms": duration_ms,
         "success": success,
+        "cache": cache_hit,
         "content_type": content_type,
         "file_size_mb": file_size_mb,
     }

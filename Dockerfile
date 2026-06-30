@@ -38,9 +38,9 @@ COPY scripts/ ./scripts/
 # Run as non-root
 RUN useradd --create-home appuser
 
-# Create download and log directories with correct ownership
-RUN mkdir -p /tmp/bot-downloads /usr/src/app/logs \
-    && chown -R appuser:appuser /tmp/bot-downloads /usr/src/app/logs
+# Create download, log, and cache directories with correct ownership
+RUN mkdir -p /tmp/bot-downloads /usr/src/app/logs /usr/src/app/data \
+    && chown -R appuser:appuser /tmp/bot-downloads /usr/src/app/logs /usr/src/app/data
 
 # Ensure appuser can write to working directory
 RUN chown appuser:appuser /usr/src/app

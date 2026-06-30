@@ -17,6 +17,7 @@ For detailed documentation, see `docs/README.md` (human-readable overview) and t
 - `docs/p2p-chats/` - Private chat behavior
 - `docs/logs/` - Logging system
 - `docs/content-delivery/` - Media downloading
+- `docs/cache/` - Media cache for guest mode
 - `docs/cookies.md` - Instagram cookie refresh
 
 ## Project Structure
@@ -34,6 +35,7 @@ media-downloader-bot/
 │   ├── telegram_utils.py # Telegram helpers: typing_indicator, send_images
 │   ├── cookies.py      # Instagram cookie refresh via instagrapi (login, session, Netscape export)
 │   ├── logging_config.py # Structured JSON logging: four-file split (requests, details, service, errors)
+│   ├── cache.py          # SQLite media cache for guest mode (URL extraction, key generation, store/retrieve)
 │   ├── platforms/       # Platform-specific download logic
 │   │   ├── __init__.py # detect_platform(), extract_domain(), SUPPORTED_PLATFORMS dict
 │   │   ├── youtube.py  # YouTube/YT Music download + format picker callback
@@ -62,6 +64,7 @@ media-downloader-bot/
 │   ├── test_tiktok.py
 │   ├── test_guest.py
 │   ├── test_downloader.py
+│   ├── test_cache.py
 │   ├── test_logging.py
 │   └── test_cookies.py
 ├── docs/
@@ -92,8 +95,9 @@ media-downloader-bot/
 | `src/cookies.py` | instagrapi | Instagram cookie refresh: `check_cookies_staleness()`, `refresh_instagram_cookies()` (login via session or fresh, exports sessionid/ds_user_id to Netscape format), `_login_with_session()`, `_export_cookies_to_netscape()` |
 | `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()`, `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()` |
 | `src/logging_config.py` | config | Structured JSON logging: four-file split (requests/details/service/errors), JSONFormatter, `_enrich_chat()` for enriched chat dicts, `log_error()` for unhandled exceptions, filter-based routing, with_request_logging decorator, contextvars for request_id, request lifecycle functions (log_request_received/completed/failed), guest request functions (log_guest_request_received/completed), service log functions (log_new_user, log_bot_added_to_chat, log_bot_rejected_group_addition, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot, log_unauthorized_access) |
+| `src/cache.py` | logging_config | SQLite media cache: `get_cached()` returns (file_id, media_type) by URL/platform, `store()` saves download result, URL-based ID extraction for TikTok/YouTube/Instagram, metadata hash fallback, `get_stats()`, `cleanup_older_than()` |
 | `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader, logging_config | Thin orchestrator: `handle_url()` (includes reply-to-retry, gallery-dl fallback, and unauthorized reply-to-bot check in groups), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` (handles bot added/removed/promoted/demoted/blocked, admin check for group additions) |
-| `src/guest.py` | auth, config, downloader, platforms, utils, logging_config, httpx | Bot API 10.0 guest mode: `handle_guest()` receives guest_message updates, extracts URLs (from tag text or replied-to message), downloads via platform handlers, uploads to storage channel for file_id, replies via `answer_guest_query()`. Uses raw dicts for InlineQueryResult to avoid ptb placeholder URL issues. Unauthorized users get "You are not authorized" once via `answer_guest_query`, then silently ignored. Uses `was_notified_guest()`/`mark_notified_guest()` (separate from P2P tracking). Reply to bot message without URL is silently ignored. Logs unauthorized access to service.jsonl via `log_unauthorized_access()`. For gallery-dl supported domains (e.g. deviantart, pinterest), falls back to `_gallery_dl_result()` when platform is not in SUPPORTED_PLATFORMS. Platform logged from `extract_domain(url)` for non-primary platforms. Photo upload handles Telegram's list-of-PhotoSize response. |
+| `src/guest.py` | auth, config, downloader, platforms, utils, logging_config, httpx, cache | Bot API 10.0 guest mode: `handle_guest()` receives guest_message updates, extracts URLs (from tag text or replied-to message), downloads via platform handlers, uploads to storage channel for file_id, replies via `answer_guest_query()`. Uses raw dicts for InlineQueryResult to avoid ptb placeholder URL issues. Caches file_ids via `cache.get_cached()`/`cache.store()` — cache hit skips download+upload entirely. Fetches TikTok metadata for short URL deduplication. Unauthorized users get "You are not authorized" once via `answer_guest_query`, then silently ignored. Uses `was_notified_guest()`/`mark_notified_guest()` (separate from P2P tracking). Reply to bot message without URL is silently ignored. Logs unauthorized access to service.jsonl via `log_unauthorized_access()`. For gallery-dl supported domains (e.g. deviantart, pinterest), falls back to `_gallery_dl_result()` when platform is not in SUPPORTED_PLATFORMS. Platform logged from `extract_domain(url)` for non-primary platforms. Photo upload handles Telegram's list-of-PhotoSize response. |
 | `src/bot.py` | config, handlers, commands, platforms.youtube, logging_config, guest | Entry point, wires everything together, initializes logging, global error handler. Guest handler registered BEFORE text handler (filters.TEXT matches guest messages via effective_message). |
 
 ## Data Flow
@@ -140,13 +144,15 @@ media-downloader-bot/
     - `log_guest_request_received()` logs to `requests.jsonl` with user, chat, reply context
     - Platform detected via `detect_platform()`. If None, falls back to `extract_domain(url)` for logging (e.g. "deviantart.com")
     - Download routed via `_download_and_build_result()`:
+      - **Cache check first** via `cache.get_cached()` — hit returns cached `file_id` instantly
       - YouTube → `_download_youtube()`
-      - TikTok/Instagram → `_download_media_result()`
+      - TikTok/Instagram → `_download_media_result()` (TikTok fetches metadata for short URL dedup)
       - Gallery-dl supported domain → `_gallery_dl_result()` (checks `get_gallery_dl_domains()` whitelist)
       - Unsupported domain → "Unsupported platform"
+    - After successful download, result cached via `cache.store()`
     - File uploaded to storage channel (`STORAGE_CHANNEL_ID`) to get `file_id`. Photo responses handled as list (Telegram sends PhotoSize array).
     - Reply via `answer_guest_query()` with InlineQueryResult (raw dict with `video_file_id`/`photo_file_id`). Single photo only — inline results don't support media groups.
-    - `log_guest_request_completed()` logs success/failure, platform, duration to `requests.jsonl`
+    - `log_guest_request_completed()` logs success/failure, platform, duration, cache hit/miss to `requests.jsonl`
     - **Handler order**: guest handler registered BEFORE text handler because `filters.TEXT` matches guest messages via `effective_message`
 15. **Unauthorized reply to bot in groups**: In `handle_url()`, if a user replies to a bot message in a group and is not in the allowlist (`_is_allowed()`), the message is silently ignored. This prevents unauthorized users from triggering downloads by replying to bot messages in groups.
 
@@ -164,6 +170,7 @@ media-downloader-bot/
 - **Platform separation** - Each platform (YouTube, TikTok, Instagram) has its own module with isolated download logic.
 - **Guest mode (Bot API 10.0)** - Users mention `@botname` in any chat to download media. Uses `guest_message` updates + `answerGuestQuery()`. Files uploaded to a private storage channel to get `file_id`s for InlineQueryResult. Guest handler registered before text handler to prevent `filters.TEXT` from consuming guest updates.
 - **InlineQueryResult as raw dicts** - ptb's `InlineQueryResultVideo`/`Photo` constructors require placeholder URLs that Telegram tries to fetch. Using raw dicts with `video_file_id`/`photo_file_id` avoids this.
+- **Media cache** - SQLite cache stores Telegram `file_id`s by platform-specific content ID. Cache hit skips download+upload entirely. TikTok metadata fetched for short URL deduplication. Cache persists in Docker volume.
 - **Instagram cookie refresh** - Cookies managed via instagrapi (not browser export). `cookies.py` handles login, session persistence, and Netscape export. Must run on host (Docker blocked by Instagram). `./bot.sh refresh-ig` refreshes cookies.
 
 ## Security Rules

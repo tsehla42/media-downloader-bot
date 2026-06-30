@@ -33,6 +33,9 @@ htmlcov/
 /tmp/
 bot-downloads/
 
+# Cache database
+data/
+
 # IDE
 .idea/
 *.swp
