@@ -13,9 +13,9 @@ services:
       - ./ig-session.json:/usr/src/app/ig-session.json
       - ./allowed-users.json:/usr/src/app/allowed-users.json:ro
       - ./logs:/usr/src/app/logs
-      - ./data:/app/data
+      - ./data:/usr/src/app/data
     environment:
-      - CACHE_DIR=/app/data
+      - CACHE_DIR=/usr/src/app/data
 
 volumes:
   bot-downloads:
