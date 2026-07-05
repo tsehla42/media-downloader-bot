@@ -37,7 +37,7 @@ from downloader import (
     DownloadAuthRequired,
 )
 from messages import (
-    MSG_UNAUTHORIZED, MSG_NO_URL, MSG_TIKTOK_LOGIN_REQUIRED, MSG_SIZE_LIMIT,
+    MSG_UNAUTHORIZED, MSG_NO_URL, MSG_LOGIN_REQUIRED, MSG_SIZE_LIMIT,
     MSG_UNSUPPORTED_PLATFORM, MSG_METADATA_FAILED, MSG_DOWNLOAD_FAILED,
     MSG_GUEST_DOWNLOAD_FAILED, MSG_GUEST_NO_IMAGES,
     MSG_GUEST_METADATA_FAILED, MSG_GUEST_UPLOAD_FAILED,
@@ -371,7 +371,7 @@ async def _download_media_result(url: str, platform: str) -> tuple[dict, str, fl
         try:
             success = await asyncio.to_thread(download_video, url, video_path)
         except DownloadAuthRequired:
-            return _text_result(MSG_TIKTOK_LOGIN_REQUIRED), None, None
+            return _text_result(MSG_LOGIN_REQUIRED), None, None
         if success:
             file_size = os.path.getsize(video_path)
             file_size_mb = round(file_size / (1024 * 1024), 2)

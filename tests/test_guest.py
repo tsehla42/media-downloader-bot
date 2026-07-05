@@ -629,4 +629,4 @@ class TestDownloadMediaResultAuth:
             )
 
         assert result["type"] == "article"
-        assert "restricted access" in result["input_message_content"]["message_text"]
+        assert "restricted" in result["input_message_content"]["message_text"]

@@ -276,6 +276,23 @@ def test_download_video_raises_auth_required_on_login_error():
             download_video("https://tiktok.com/@user/video/123", "/tmp/test.mp4")
 
 
+def test_download_video_raises_auth_required_on_instagram_content_restriction():
+    """download_video raises DownloadAuthRequired for restricted Instagram content."""
+    from downloader import DownloadAuthRequired
+
+    restriction_error = (
+        "ERROR: [Instagram] DUruRXWChNQ: This content isn't available to everyone: "
+        "It can't be seen by certain audiences."
+    )
+    with patch("downloader.subprocess.run") as mock_run:
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr=restriction_error),
+            MagicMock(returncode=1, stdout="", stderr=restriction_error),
+        ]
+        with pytest.raises(DownloadAuthRequired):
+            download_video("https://www.instagram.com/reel/DUruRXWChNQ", "/tmp/test.mp4")
+
+
 def test_download_video_does_not_raise_on_generic_failure():
     """download_video returns False for non-auth failures."""
     with patch("downloader.subprocess.run") as mock_run:

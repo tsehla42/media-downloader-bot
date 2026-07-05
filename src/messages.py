@@ -1,7 +1,7 @@
 """User-facing message constants.
 
 All reply_text() and _text_result() strings used across the bot.
-Import as: from messages import MSG_UNAUTHORIZED, MSG_TIKTOK_LOGIN_REQUIRED, etc.
+Import as: from messages import MSG_UNAUTHORIZED, MSG_LOGIN_REQUIRED, etc.
 """
 
 # Auth
@@ -13,7 +13,7 @@ MSG_NO_URL = "Please include a URL to download"
 MSG_INVALID_URL = "Please send a valid URL"
 
 # Download failures
-MSG_TIKTOK_LOGIN_REQUIRED = "This video has restricted access that requires login"
+MSG_LOGIN_REQUIRED = "This content is restricted. Login required to access"
 MSG_FETCH_FAILED = "Could not fetch post. The content may be private or the URL is invalid"
 MSG_SIZE_LIMIT = "This video is above Telegram's 50MB limit"
 MSG_METADATA_FAILED = "Failed to fetch metadata"

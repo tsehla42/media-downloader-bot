@@ -215,8 +215,11 @@ docker logs -f media-downloader-bot  # Watch logs
 
 **View persistent logs:** Logs are written to `./logs/` on the host (mounted as volume). Files: `requests.jsonl` (request lifecycle), `request-details.jsonl` (download steps), `service.jsonl` (bot events). Append `.dev.jsonl` for MODE=development.
 
-**Deploy to production:** Read `docs/deploy.md` for the full deployment flow.
-When asked to "update bot" or "deploy", always read `docs/deploy.md` first.
+**Deploy to production:**
+```bash
+./bot.sh deploy
+```
+Run this from the project root on the current host. It handles git pull, Docker rebuild, and container restart on the Orange Pi via SSH internally. **Do NOT run raw SSH commands or `docker compose` manually** — `./bot.sh deploy` is the only correct deploy command.
 
 ## Docs Index
 

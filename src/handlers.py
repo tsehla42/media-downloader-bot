@@ -24,7 +24,7 @@ from platforms.tiktok import handle_tiktok
 from downloader import get_metadata, download_audio, download_video, download_gallery_dl_images, download_gallery_dl_video, DownloadAuthRequired
 from messages import (
     MSG_UNAUTHORIZED, MSG_UNSUPPORTED_PLATFORM, MSG_NO_URL, MSG_INVALID_URL,
-    MSG_TIKTOK_LOGIN_REQUIRED, MSG_FETCH_FAILED, MSG_SIZE_LIMIT,
+    MSG_LOGIN_REQUIRED, MSG_FETCH_FAILED, MSG_SIZE_LIMIT,
     MSG_METADATA_FAILED, MSG_DOWNLOAD_FAILED, MSG_AUDIO_USAGE, MSG_AUDIO_FAILED,
     MSG_ONLY_ADMINS_CAN_ADD,
 )
@@ -324,7 +324,16 @@ async def _download_and_send(
 
     # Instagram and TikTok handle their own metadata and content fetching
     if platform == "instagram":
-        handled = await handle_instagram(update, context, url)
+        try:
+            handled = await handle_instagram(update, context, url)
+        except DownloadAuthRequired:
+            context.user_data["_request_success"] = False
+            if not (is_group_chat(update) and silent):
+                await update.message.reply_text(
+                    MSG_LOGIN_REQUIRED,
+                    reply_parameters=reply_params,
+                )
+            return False
         if not handled:
             context.user_data["_request_success"] = False
             if not (is_group_chat(update) and silent):
@@ -341,7 +350,7 @@ async def _download_and_send(
             context.user_data["_request_success"] = False
             if not (is_group_chat(update) and silent):
                 await update.message.reply_text(
-                    MSG_TIKTOK_LOGIN_REQUIRED,
+                    MSG_LOGIN_REQUIRED,
                     reply_parameters=reply_params,
                 )
             return False

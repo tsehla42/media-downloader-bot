@@ -1,6 +1,7 @@
 """Instagram download logic."""
 
 import os
+import re
 import uuid
 
 from config import DOWNLOAD_DIR, IG_COOKIES_PATH, MAX_FILE_SIZE
@@ -16,6 +17,11 @@ async def handle_instagram(update, context, url: str) -> bool:
 
     Returns True if content was sent successfully, False otherwise.
     """
+    # Stories always require cookies — skip early if cookies file not available
+    if re.search(r"/stories/", url) and not os.path.isfile(IG_COOKIES_PATH):
+        _log.info("instagram: stories URL without cookies, skipping", extra={"url": url})
+        return False
+
     reply_params = {"message_id": update.message.message_id}
     base = None
 
