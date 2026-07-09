@@ -49,7 +49,6 @@ media-downloader-bot/
 │   │   ├── compose.sh
 │   │   ├── update.sh
 │   │   ├── pull-logs.sh
-│   │   ├── run-local.sh
 │   │   └── refresh-ig-cookies.sh
 │   └── python/         # Python utility scripts
 │       ├── check_cookies.py

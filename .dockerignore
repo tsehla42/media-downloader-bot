@@ -20,5 +20,5 @@ ig-session.json
 allowed-contacts.json
 *.md
 compose.sh
-run-local.sh
+
 conftest.py
