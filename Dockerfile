@@ -26,6 +26,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir "yt-dlp[default,curl-cffi] @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz" gallery-dl
 
+# Deno JS runtime for yt-dlp YouTube extraction
+COPY --from=denoland/deno:latest --chmod=755 /usr/bin/deno /usr/bin/deno
+
 WORKDIR /usr/src/app
 
 # Copy installed deps from build stage

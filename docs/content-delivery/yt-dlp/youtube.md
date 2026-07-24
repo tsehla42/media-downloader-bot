@@ -9,14 +9,21 @@ YouTube and YouTube Music download handling.
 - `m.youtube.com/watch?v=...`
 - `music.youtube.com/watch?v=...`
 
+## Playlist Handling
+
+- **Pure playlists** (`list=` without `v=`): silently skipped, logged with `skip_reason: "playlist"`
+- **Single video in playlist** (`v=...&list=...`): `list=` parameter stripped, video downloaded normally
+
 ## Download Flow
 
 1. Detect platform as `youtube` or `ytmusic`
-2. Fetch metadata (title, duration, file size)
-3. Check if file size > 50MB limit
-4. If too large: show format picker (video/audio/both)
-5. If under limit: download best quality
-6. Send to user
+2. Skip pure playlist URLs silently
+3. Fetch metadata with `--no-playlist` (60s timeout)
+4. If age-restricted: raise `DownloadAuthRequired` → user sees "This content is restricted"
+5. Check if file size > 50MB limit
+6. If too large: skip with `skip_reason: "size_limit"`
+7. If under limit: download best quality
+8. Send to user
 
 ## Metadata Fetching
 
@@ -24,20 +31,30 @@ YouTube and YouTube Music download handling.
 # src/downloader.py
 def get_metadata(url: str) -> dict | None:
     """Get video metadata via yt-dlp --dump-json."""
+    ytdlp = _find_ytdlp()
     try:
-        ytdlp = _find_ytdlp()
         result = subprocess.run(
-            [ytdlp, "--dump-json", "--no-download", url],
-            capture_output=True,
-            text=True,
-            timeout=30,
+            [ytdlp, "--dump-json", "--no-download", "--no-playlist", url],
+            capture_output=True, text=True, timeout=60,
         )
         if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            if "Sign in to confirm your age" in stderr:
+                raise DownloadAuthRequired(stderr)
+            # Logs stderr to request-details.jsonl
+            logger.warning("get_metadata: yt-dlp failed (code %d)", result.returncode, extra=extra)
             return None
         return json.loads(result.stdout)
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+    except subprocess.TimeoutExpired:
+        logger.warning("get_metadata: timed out after 60s", extra=extra)
         return None
 ```
+
+Key behaviors:
+- **60s timeout** (up from 30s) — gives playlists and slow extractions more time
+- **`--no-playlist`** — fetches metadata for single video only, ignores playlist context
+- **Stderr logging** — failure reason logged to `request-details.jsonl` for debugging
+- **Age-restriction detection** — raises `DownloadAuthRequired` for login-gated content
 
 ## Format Picker
 
@@ -110,9 +127,20 @@ def download_audio(url: str, output_path: str) -> bool:
 
 ## Error Handling
 
+### Age-Restricted Content
+- `get_metadata()` detects "Sign in to confirm your age" in stderr
+- Raises `DownloadAuthRequired` → caught by `_download_and_send()`
+- User sees: "This content is restricted. Login required to access"
+- Logged with `skip_reason: "auth_required"`
+
 ### Metadata Fetch Failed
-- Bot tries download anyway
-- If download fails, sends error
+- Stderr logged to `request-details.jsonl` for debugging
+- Logged with `skip_reason: "metadata_failed"`
+- User sees: "Could not fetch post"
+
+### Video Too Large (>50MB)
+- Logged with `skip_reason: "size_limit"`
+- User sees: "This video is above Telegram's 50MB limit"
 
 ### Format Not Available
 - Bot tries best available format

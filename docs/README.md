@@ -108,7 +108,7 @@ Instagram cookie refresh via instagrapi:
 ### downloader.py
 Wraps yt-dlp and gallery-dl binary calls via subprocess:
 - `_find_ytdlp()` / `_find_gallery_dl()` - Locate binaries
-- `get_metadata(url)` - Runs `yt-dlp --dump-json`, returns dict with title/thumbnail/duration
+- `get_metadata(url)` - Runs `yt-dlp --dump-json --no-playlist` (60s timeout). Logs stderr on failure. Raises `DownloadAuthRequired` for age-restricted content.
 - `download_video(url, path, max_size, platform)` - Downloads video, retries with lower quality on failure
 - `download_audio(url, path)` - Extracts audio as MP3
 - `download_images(url, dir)` - Downloads carousel/gallery images via gallery-dl
@@ -119,9 +119,9 @@ Wraps yt-dlp and gallery-dl binary calls via subprocess:
 Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloader, logging_config:
 - `my_chat_member_handler(update, context)` - Handles bot membership changes. When bot added to group: checks `is_bot_admin(from_user.id)` -> admin: log + allow; non-admin: `log_bot_rejected_group_addition` + reject message + leave. Also handles removed/promoted/demoted/blocked events.
 - `audio_command(update, context)` - Download as MP3 (uses notification tracking for unauthorized users)
-- `_download_and_send(update, context, url, silent, reply_to_message_id)` - Orchestrates download with YouTube size check and error suppression
+- `_download_and_send(update, context, url, silent, reply_to_message_id)` - Orchestrates download with YouTube size check, error suppression, and `skip_reason` tracking (`unsupported`, `size_limit`, `auth_required`, `metadata_failed`, `fetch_failed`, `download_failed`)
 - `handle_gallery_dl_fallback(update, context, url)` - Tries gallery-dl for unsupported platforms (images then video), silent on failure
-- `handle_url(update, context)` - Main handler: authorization check, detects group/P2P, unauthorized reply-to-bot check in groups (silently ignores), splits supported/unsupported URLs, filters unsupported against gallery-dl domain whitelist, handles reply-to-retry, routes remaining unsupported URLs to gallery-dl fallback
+- `handle_url(update, context)` - Main handler: clears stale `_platform`, filters pure playlist URLs, authorization check, detects group/P2P, unauthorized reply-to-bot check in groups (silently ignores), splits supported/unsupported URLs, filters unsupported against gallery-dl domain whitelist, handles reply-to-retry, routes remaining unsupported URLs to gallery-dl fallback
 
 ### guest.py
 Bot API 10.0 guest mode handler, depends on auth, config, downloader, platforms, utils, logging_config, httpx, cache:
@@ -173,6 +173,8 @@ handlers.handle_url()
     |
     +-- Split URLs into supported (YT/TT/IG) and unsupported
     |
+    +-- Filter: skip pure playlist URLs (list= without v=) -> skip_reason: "playlist"
+    |
     +-- Filter unsupported URLs against gallery-dl domain whitelist
     |   +-- Domains not in list -> skip (log as success=false, platform=domain)
     |   +-- Domains in list -> keep for gallery-dl fallback
@@ -180,9 +182,10 @@ handlers.handle_url()
     +-- [Group] Ignore if both lists empty (return)
     |
     +-- YouTube URLs -> _download_and_send() (no typing wrapper)
-    |   +-- Fetch metadata silently (no typing indicator)
+    |   +-- Fetch metadata with --no-playlist (60s timeout)
+    |   +-- Age-restricted? -> skip_reason: "auth_required"
     |   +-- Check filesize/filesize_approx vs MAX_FILE_SIZE
-    |   +-- If >50MB -> skip silently (log youtube_skipped_large)
+    |   +-- If >50MB -> skip (skip_reason: "size_limit")
     |   +-- If <=50MB -> download_video() -> reply_video()
     |
     +-- Non-YouTube supported URLs -> typing_indicator wraps:
@@ -270,6 +273,7 @@ Guest mode (GUEST_MODE_ENABLED=true):
 - **yt-dlp** - Installed as system binary. Called via subprocess.
 - **gallery-dl** - Installed as system binary. Called via subprocess for: Instagram image downloads (with cookies), TikTok photo posts (no cookies), and unsupported platform fallback (best-effort for 100+ services).
 - **ffmpeg** - Required for audio extraction (MP3 conversion). Installed in Docker image.
+- **deno** - JavaScript runtime for yt-dlp YouTube extraction (n-challenge solver). Installed in Docker image via multi-stage copy from `denoland/deno`.
 - **python-telegram-bot** - Telegram Bot API wrapper. Installed via pip.
 - **python-dotenv** - .env file loading.
 
@@ -321,6 +325,28 @@ Request completed (in `requests.jsonl`):
   "chat": {"id": -100, "name": "Group", "type": "group"}
 }
 ```
+
+Skipped request (in `requests.jsonl`):
+```json
+{
+  "timestamp": "2026-06-01T16:16:39.195279+03:00",
+  "level": "INFO",
+  "message": "Request completed",
+  "event": "request_completed",
+  "request_id": "3df4888f",
+  "url": "https://youtu.be/abc",
+  "platform": "youtube",
+  "duration_ms": 17351,
+  "success": false,
+  "skip_reason": "size_limit",
+  "content_type": null,
+  "file_size_mb": null,
+  "user": {"id": 123, "name": "John", "username": "john"},
+  "chat": {"id": -100, "name": "Group", "type": "group"}
+}
+```
+
+Possible `skip_reason` values: `playlist`, `unsupported`, `size_limit`, `auth_required`, `metadata_failed`, `fetch_failed`, `download_failed`.
 
 Reply-to-retry uses `"event": "reply_to_retry_received"` / `"reply_to_retry_completed"` and `"message": "Reply to retry received/completed"`.
 
@@ -449,6 +475,15 @@ cat logs/requests.jsonl | jq 'select(.platform == "youtube")'
 # Failed requests
 cat logs/requests.jsonl | jq 'select(.event == "request_failed")'
 
+# Skipped requests (by reason)
+cat logs/requests.jsonl | jq 'select(.skip_reason == "size_limit")'
+cat logs/requests.jsonl | jq 'select(.skip_reason == "auth_required")'
+cat logs/requests.jsonl | jq 'select(.skip_reason == "playlist")'
+cat logs/requests.jsonl | jq 'select(.skip_reason == "unsupported")'
+
+# All skipped requests
+cat logs/requests.jsonl | jq 'select(.skip_reason != null)'
+
 # Slow downloads (>5 seconds)
 cat logs/requests.jsonl | jq 'select(.event == "request_completed" and .duration_ms > 5000)'
 
@@ -496,7 +531,7 @@ cat logs/service.jsonl | jq 'select(.event == "bot_rejected_group_addition")'
 
 ## Deployment
 
-**Image:** Multi-stage build -- build stage compiles Python deps, runtime stage is Python 3.12-slim with yt-dlp, gallery-dl, and ffmpeg.
+**Image:** Multi-stage build -- build stage compiles Python deps, runtime stage is Python 3.12-slim with yt-dlp, gallery-dl, ffmpeg, and deno (JS runtime).
 
 **Container:**
 - Runs as non-root `appuser`

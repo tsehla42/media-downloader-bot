@@ -73,7 +73,7 @@ media-downloader-bot/
 ├── logs/               # Persistent log files (gitignored, mounted as volume)
 ├── requirements.txt    # Dependencies
 ├── .env.example        # Config template
-├── Dockerfile          # Multi-stage build (Python 3.12-slim, yt-dlp, gallery-dl, ffmpeg)
+├── Dockerfile          # Multi-stage build (Python 3.12-slim, yt-dlp, gallery-dl, ffmpeg, deno JS runtime)
 ├── docker-compose.yml  # Container orchestration with volume mounts
 ├── .dockerignore       # Excludes .venv, __pycache__, logs, cookies.txt from build
 └── conftest.py         # Adds src/ to Python path for tests
@@ -94,10 +94,10 @@ media-downloader-bot/
 | `src/platforms/instagram.py` | downloader, telegram_utils | Instagram: `handle_instagram()` with gallery-dl fallback and cookies |
 | `src/utils.py` | nothing | URL validation, file cleanup, `get_gallery_dl_domains()` (imports/auto-generates gallery-dl domain whitelist) |
 | `src/cookies.py` | instagrapi | Instagram cookie refresh: `check_cookies_staleness()`, `refresh_instagram_cookies()` (login via session or fresh, exports sessionid/ds_user_id to Netscape format), `_login_with_session()`, `_export_cookies_to_netscape()` |
-| `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()`, `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()`. Raises `DownloadAuthRequired` when TikTok content requires login (age-restricted). |
-| `src/logging_config.py` | config | Structured JSON logging: four-file split (requests/details/service/errors), JSONFormatter, `_enrich_chat()` for enriched chat dicts, `log_error()` for unhandled exceptions, filter-based routing, with_request_logging decorator, contextvars for request_id, request lifecycle functions (log_request_received/completed/failed), guest request functions (log_guest_request_received/completed), service log functions (log_new_user, log_bot_added_to_chat, log_bot_rejected_group_addition, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot, log_unauthorized_access) |
+| `src/downloader.py` | yt-dlp, gallery-dl | yt-dlp subprocess calls: `get_metadata()` (60s timeout, `--no-playlist`, logs stderr on failure, raises `DownloadAuthRequired` for age-restricted), `download_video()`, `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()`. Raises `DownloadAuthRequired` when content requires login (age-restricted YouTube, TikTok login-gated). |
+- `src/logging_config.py` | config | Structured JSON logging: four-file split (requests/details/service/errors), JSONFormatter, `_enrich_chat()` for enriched chat dicts, `log_error()` for unhandled exceptions, filter-based routing, with_request_logging decorator (reads `_skip_reason` from user_data), contextvars for request_id, request lifecycle functions (log_request_received/completed/failed — completed accepts `skip_reason`), guest request functions (log_guest_request_received/completed), service log functions (log_new_user, log_bot_added_to_chat, log_bot_rejected_group_addition, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot, log_unauthorized_access) |
 | `src/cache.py` | logging_config | SQLite media cache: `get_cached()` returns (file_id, media_type) by URL/platform, `store()` saves download result, URL-based ID extraction for TikTok/YouTube/Instagram, metadata hash fallback, `get_stats()`, `cleanup_older_than()` |
-| `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader, logging_config | Thin orchestrator: `handle_url()` (includes reply-to-retry, gallery-dl fallback, and unauthorized reply-to-bot check in groups), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()`, `my_chat_member_handler()` (handles bot added/removed/promoted/demoted/blocked, admin check for group additions) |
+| `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader, logging_config | Thin orchestrator: `handle_url()` (clears stale `_platform`, filters pure playlist URLs, reply-to-retry, gallery-dl fallback, unauthorized reply-to-bot check in groups), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()` (sets `skip_reason` on failure: `unsupported`, `size_limit`, `auth_required`, `metadata_failed`, `fetch_failed`, `download_failed`), `my_chat_member_handler()` (handles bot added/removed/promoted/demoted/blocked, admin check for group additions) |
 | `src/guest.py` | auth, config, downloader, platforms, utils, logging_config, httpx, cache | Bot API 10.0 guest mode: `handle_guest()` receives guest_message updates, extracts URLs (from tag text or replied-to message), downloads via platform handlers, uploads to storage channel for file_id, replies via `answer_guest_query()`. Uses raw dicts for InlineQueryResult to avoid ptb placeholder URL issues. Caches file_ids via `cache.get_cached()`/`cache.store()` — cache hit skips download+upload entirely. Fetches TikTok metadata for short URL deduplication. Unauthorized users without URL are silently ignored; unauthorized users with URL get "You are not authorized" once via `answer_guest_query`, then silently ignored. Uses `was_notified_guest()`/`mark_notified_guest()` (separate from P2P tracking). Reply to bot message without URL is silently ignored. Logs unauthorized access to service.jsonl via `log_unauthorized_access()`. For gallery-dl supported domains (e.g. deviantart, pinterest), falls back to `_gallery_dl_result()` when platform is not in SUPPORTED_PLATFORMS. Platform logged from `extract_domain(url)` for non-primary platforms. Photo upload handles Telegram's list-of-PhotoSize response. |
 | `src/bot.py` | config, handlers, commands, platforms.youtube, logging_config, guest | Entry point, wires everything together, initializes logging, global error handler. Guest handler registered BEFORE text handler (filters.TEXT matches guest messages via effective_message). |
 
@@ -111,8 +111,8 @@ media-downloader-bot/
 3. `/audio` → `audio_command()` → `download_audio()` → `reply_audio()` (logged via `@with_request_logging`)
 3. Regular URL → `handle_url()` detects group or P2P chat via `is_group_chat()`
 4. URLs split into `supported_urls` (YT/TT/IG) and `unsupported_urls` (everything else)
-5. Unsupported URLs filtered against gallery-dl domain whitelist (`get_gallery_dl_domains()`). Domains not in the list are skipped instantly (logged as `success: false` with platform set to domain)
-6. YouTube URLs: metadata fetched silently (no typing indicator), size checked against 50MB limit
+5. Unsupported URLs filtered against gallery-dl domain whitelist (`get_gallery_dl_domains()`). Domains not in the list are skipped instantly (logged with `skip_reason: "unsupported"`)
+6. YouTube URLs: pure playlists (`list=` without `v=`) silently skipped. Single videos in playlists: `list=` stripped, metadata fetched with `--no-playlist`. Metadata fetched silently (no typing indicator), size checked against 50MB limit. Age-restricted videos raise `DownloadAuthRequired` → `skip_reason: "auth_required"`
 6. Reply-to-retry: user replies to message with URL and mentions bot → handled inside `handle_url()` (extracts URL from replied message, retries download)
 7. `handlers.py` detects platform via `platforms.detect_platform()`
 8. Delegates to platform-specific handler:
@@ -169,8 +169,8 @@ media-downloader-bot/
 - **Group security** - Only bot admins can add bot to groups (checked in `my_chat_member_handler`). Non-admin additions rejected with message + bot leaves.
 - **Structured logging** - Four JSON log files: `requests.jsonl` (request lifecycle), `request-details.jsonl` (intermediate download steps), `service.jsonl` (bot events), `errors.jsonl` (unhandled exceptions with error_id). `_enrich_chat()` normalizes chat dicts with name/username. Filter-based routing by logger name. Zero external dependencies.
 - **User-facing messages** - All `reply_text()` and `_text_result()` strings centralized in `src/messages.py` as `MSG_*` constants. No inline string literals in handlers.
-- **DownloadAuthRequired** - Custom exception raised by `download_video()` when yt-dlp reports content requires login (e.g. TikTok age-restricted). Caught at orchestrator level (`_download_and_send`, `_download_media_result`), not inside platform handlers. Shows "This video has restricted access that requires login" to user.
-- **Docker deployment** - Multi-stage build with yt-dlp, gallery-dl, and ffmpeg. Persistent logs via volume mount to `./logs/`. `allowed-users.json` mounted read-only.
+- **DownloadAuthRequired** - Custom exception raised by `download_video()` or `get_metadata()` when yt-dlp reports content requires login (e.g. age-restricted YouTube, TikTok login-gated). Caught at orchestrator level (`_download_and_send`, `_download_media_result`), not inside platform handlers. Sets `skip_reason: "auth_required"` in logs. Shows "This content is restricted. Login required to access" to user.
+- **Docker deployment** - Multi-stage build with yt-dlp, gallery-dl, ffmpeg, and deno (JS runtime for yt-dlp YouTube extraction). Persistent logs via volume mount to `./logs/`. `allowed-users.json` mounted read-only.
 - **Platform separation** - Each platform (YouTube, TikTok, Instagram) has its own module with isolated download logic.
 - **Guest mode (Bot API 10.0)** - Users mention `@botname` in any chat to download media. Uses `guest_message` updates + `answerGuestQuery()`. Files uploaded to a private storage channel to get `file_id`s for InlineQueryResult. Guest handler registered before text handler to prevent `filters.TEXT` from consuming guest updates.
 - **InlineQueryResult as raw dicts** - ptb's `InlineQueryResultVideo`/`Photo` constructors require placeholder URLs that Telegram tries to fetch. Using raw dicts with `video_file_id`/`photo_file_id` avoids this.
@@ -191,7 +191,7 @@ Never commit `allowed-users.json` — it contains user IDs and is generated loca
 python -m pytest tests/ -v
 ```
 
-All 364 tests use mocked subprocess calls - no real downloads needed.
+All 374 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 

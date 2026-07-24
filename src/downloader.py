@@ -58,18 +58,32 @@ def _find_gallery_dl() -> str | None:
 
 def get_metadata(url: str) -> dict | None:
     """Get video metadata via yt-dlp --dump-json."""
+    ytdlp = _find_ytdlp()
     try:
-        ytdlp = _find_ytdlp()
         result = subprocess.run(
-            [ytdlp, "--dump-json", "--no-download", url],
+            [ytdlp, "--dump-json", "--no-download", "--no-playlist", url],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=60,
         )
         if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            if "Sign in to confirm your age" in stderr:
+                raise DownloadAuthRequired(stderr)
+            extra = _log_extra(url)
+            extra["yt_dlp_stderr"] = stderr
+            logger.warning("get_metadata: yt-dlp failed (code %d)", result.returncode, extra=extra)
             return None
         return json.loads(result.stdout)
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+    except subprocess.TimeoutExpired:
+        extra = _log_extra(url)
+        logger.warning("get_metadata: timed out after 60s", extra=extra)
+        return None
+    except json.JSONDecodeError:
+        extra = _log_extra(url)
+        logger.warning("get_metadata: invalid JSON output", extra=extra)
+        return None
+    except FileNotFoundError:
         return None
 
 

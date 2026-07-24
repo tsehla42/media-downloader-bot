@@ -225,6 +225,7 @@ def log_request_completed(
     chat: object = None,
     event: str = "request_completed",
     forwarded: dict | None = None,
+    skip_reason: str | None = None,
 ) -> None:
     """Log when a request completes (success or expected failure)."""
     messages = {
@@ -245,6 +246,8 @@ def log_request_completed(
     }
     if error:
         log_data["error"] = error
+    if skip_reason:
+        log_data["skip_reason"] = skip_reason
     if user:
         log_data["user"] = {
             "id": user.id,
@@ -608,6 +611,7 @@ def with_request_logging(handler):
             platform = context.user_data.get("_platform", platform)
             content_type = context.user_data.get("_content_type")
             file_size_mb = context.user_data.get("_file_size_mb")
+            skip_reason = context.user_data.get("_skip_reason")
             log_request_completed(
                 request_id=request_id,
                 url=url,
@@ -619,6 +623,7 @@ def with_request_logging(handler):
                 user=user,
                 chat=chat,
                 forwarded=forwarded,
+                skip_reason=skip_reason,
             )
             return result
         except Exception as e:
