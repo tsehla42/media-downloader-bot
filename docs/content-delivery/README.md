@@ -19,8 +19,9 @@ The bot uses two main tools for downloading media:
    - Other → `handle_gallery_dl_fallback()`
 4. Handler calls downloader functions in `src/downloader.py`
 5. Downloader executes yt-dlp or gallery-dl as subprocess
-6. Bot uploads file to Telegram
-7. Bot cleans up temp files
+6. On failure, raises `DownloadError` with user-facing message and raw error for logging
+7. Bot uploads file to Telegram
+8. Bot cleans up temp files
 
 ## Platform Detection
 

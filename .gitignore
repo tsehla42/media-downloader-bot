@@ -50,6 +50,7 @@ docs/*
 !docs/p2p-chats/
 !docs/logs/
 !docs/content-delivery/
+!docs/cache/
 !docs/cookies.md
 
 CLAUDE.md

@@ -35,6 +35,7 @@ from downloader import (
     download_gallery_dl_images,
     download_gallery_dl_video,
     DownloadAuthRequired,
+    DownloadError,
 )
 from messages import (
     MSG_UNAUTHORIZED, MSG_NO_URL, MSG_LOGIN_REQUIRED, MSG_SIZE_LIMIT,
@@ -140,11 +141,14 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     reply_data = None
     if guest_msg.reply_to_message:
         replied_to = guest_msg.reply_to_message
-        replied_text = replied_to.text or ""
-        urls = extract_urls(replied_text) if not urls else urls
         replied_user = getattr(replied_to, "from_user", None)
+        # Don't extract URLs from bot's own messages (error messages contain help links)
+        if not (replied_user and replied_user.is_bot):
+            replied_text = replied_to.text or ""
+            urls = extract_urls(replied_text) if not urls else urls
 
         # Determine message content: text or media type
+        replied_text = replied_to.text or ""
         message_content = replied_text[:200] if replied_text else None
         if not message_content:
             message_content = next(
@@ -242,6 +246,27 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             chat_owner_username=chat_owner_username,
             forwarded=forwarded,
         )
+    except DownloadError as e:
+        duration_ms = int((time.time() - start_time) * 1000)
+        details_logger.warning("guest: download error: %s", e.raw_error, extra={"request_id": request_id, "url": url})
+        log_guest_request_completed(
+            request_id=request_id,
+            guest_query_id=guest_query_id,
+            url=url,
+            platform=platform,
+            duration_ms=duration_ms,
+            success=False,
+            error=e.user_message,
+            caller=caller,
+            chat=chat,
+            chat_owner_name=chat_owner_name,
+            chat_owner_username=chat_owner_username,
+            forwarded=forwarded,
+        )
+        await context.bot.answer_guest_query(
+            guest_query_id,
+            result=_text_result(e.user_message),
+        )
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
         log_guest_request_completed(
@@ -260,7 +285,7 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         await context.bot.answer_guest_query(
             guest_query_id,
-            result=_text_result(MSG_GUEST_DOWNLOAD_FAILED.format(error=e)),
+            result=_text_result(MSG_DOWNLOAD_FAILED),
         )
 
 
@@ -323,7 +348,10 @@ async def _download_and_build_result(url: str, platform: str | None) -> tuple[di
 
 async def _download_youtube(url: str) -> tuple[dict, str, float | None]:
     """Download YouTube video and return (InlineQueryResult, content_type, file_size_mb)."""
-    metadata = await asyncio.to_thread(get_metadata, url)
+    try:
+        metadata = await asyncio.to_thread(get_metadata, url)
+    except DownloadAuthRequired:
+        return _text_result(MSG_LOGIN_REQUIRED), "video", None
     if not metadata:
         return _text_result(MSG_GUEST_METADATA_FAILED), "video", None
 
@@ -413,7 +441,10 @@ async def _download_media_result(url: str, platform: str) -> tuple[dict, str, fl
 
 async def _ytdlp_generic_result(url: str) -> tuple[dict, str, float | None]:
     """Generic yt-dlp download for non-yt/tt/ig sites. Returns (result, content_type, file_size_mb)."""
-    metadata = await asyncio.to_thread(get_metadata, url)
+    try:
+        metadata = await asyncio.to_thread(get_metadata, url)
+    except DownloadAuthRequired:
+        return _text_result(MSG_LOGIN_REQUIRED), "video", None
     if not metadata:
         return _text_result(MSG_METADATA_FAILED), "video", None
 

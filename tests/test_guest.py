@@ -297,6 +297,7 @@ class TestHandleGuestAuth:
         from guest import handle_guest
         reply_msg = MagicMock()
         reply_msg.text = "https://tiktok.com/@user/video/123"
+        reply_msg.from_user.is_bot = False
         msg = _make_guest_message(text="@botname get this", reply_to=reply_msg)
         update = _make_update(msg)
         context = _make_context()
@@ -480,6 +481,34 @@ class TestHandleGuestAuth:
         )
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_reply_to_bot_error_message_no_url_extraction(self):
+        """Reply to bot error message should not extract URLs from it."""
+        from guest import handle_guest
+
+        bot_error_text = (
+            "Download failed: ERROR: [youtube] uueRqEalZ7s: Sign in to confirm your age. "
+            "See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp "
+            "for how to manually pass cookies."
+        )
+        reply_msg = MagicMock()
+        reply_msg.text = bot_error_text
+        reply_msg.from_user = MagicMock()
+        reply_msg.from_user.id = 111
+        reply_msg.from_user.is_bot = True
+
+        msg = _make_guest_message(text="@botname", reply_to=reply_msg)
+        update = _make_update(msg)
+        context = _make_context()
+
+        with patch("guest.is_user_allowed", return_value=True), \
+             patch("guest.extract_urls", return_value=[]) as mock_extract:
+            await handle_guest(update, context)
+            # extract_urls should only be called once (for user's text), not for bot's reply
+            assert mock_extract.call_count == 1
+            # The call should be with the user's text "@botname", not the bot error message
+            assert mock_extract.call_args[0][0] == "@botname"
+
 
 # ---------------------------------------------------------------------------
 # Cache integration in _download_and_build_result
@@ -630,3 +659,39 @@ class TestDownloadMediaResultAuth:
 
         assert result["type"] == "article"
         assert "restricted" in result["input_message_content"]["message_text"]
+
+
+class TestDownloadYoutubeAuth:
+    """Tests for DownloadAuthRequired handling in _download_youtube."""
+
+    @pytest.mark.asyncio
+    async def test_download_youtube_age_restricted_returns_login_required(self):
+        """Age-restricted YouTube video returns friendly login-required message."""
+        from guest import _download_youtube
+        from downloader import DownloadAuthRequired
+
+        with patch("guest.get_metadata", side_effect=DownloadAuthRequired("Sign in to confirm your age")):
+            result, content_type, file_size_mb = await _download_youtube(
+                "https://youtube.com/watch?v=abc123"
+            )
+
+        assert result["type"] == "article"
+        assert "restricted" in result["input_message_content"]["message_text"].lower()
+        assert content_type == "video"
+        assert file_size_mb is None
+
+    @pytest.mark.asyncio
+    async def test_ytdlp_generic_age_restricted_returns_login_required(self):
+        """Age-restricted generic yt-dlp video returns friendly login-required message."""
+        from guest import _ytdlp_generic_result
+        from downloader import DownloadAuthRequired
+
+        with patch("guest.get_metadata", side_effect=DownloadAuthRequired("Sign in to confirm your age")):
+            result, content_type, file_size_mb = await _ytdlp_generic_result(
+                "https://example.com/video/123"
+            )
+
+        assert result["type"] == "article"
+        assert "restricted" in result["input_message_content"]["message_text"].lower()
+        assert content_type == "video"
+        assert file_size_mb is None

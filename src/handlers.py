@@ -21,7 +21,7 @@ from utils import get_gallery_dl_domains, get_ytdlp_domains
 from platforms.youtube import handle_youtube, handle_ytmusic, AUDIO_TITLE_MAX, _store_download_metadata
 from platforms.instagram import handle_instagram
 from platforms.tiktok import handle_tiktok
-from downloader import get_metadata, download_audio, download_video, download_gallery_dl_images, download_gallery_dl_video, DownloadAuthRequired
+from downloader import get_metadata, download_audio, download_video, download_gallery_dl_images, download_gallery_dl_video, DownloadAuthRequired, DownloadError
 from messages import (
     MSG_UNAUTHORIZED, MSG_UNSUPPORTED_PLATFORM, MSG_NO_URL, MSG_INVALID_URL,
     MSG_LOGIN_REQUIRED, MSG_FETCH_FAILED, MSG_SIZE_LIMIT,
@@ -216,6 +216,13 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     MSG_AUDIO_FAILED,
                     reply_parameters=reply_params,
                 )
+        except DownloadError as e:
+            details_logger.warning("audio: download error: %s", e.raw_error, extra=extra)
+            context.user_data["_request_success"] = False
+            await update.message.reply_text(
+                e.user_message,
+                reply_parameters=reply_params,
+            )
         except Exception as e:
             details_logger.error("audio: error: %s", e, exc_info=True, extra=extra)
             context.user_data["_request_success"] = False
@@ -339,6 +346,16 @@ async def _download_and_send(
                     reply_parameters=reply_params,
                 )
             return False
+        except DownloadError as e:
+            context.user_data["_request_success"] = False
+            context.user_data["_skip_reason"] = "fetch_failed"
+            details_logger.warning("instagram: download error: %s", e.raw_error, extra=extra)
+            if not (is_group_chat(update) and silent):
+                await update.message.reply_text(
+                    e.user_message,
+                    reply_parameters=reply_params,
+                )
+            return False
         if not handled:
             context.user_data["_request_success"] = False
             context.user_data["_skip_reason"] = "fetch_failed"
@@ -358,6 +375,16 @@ async def _download_and_send(
             if not (is_group_chat(update) and silent):
                 await update.message.reply_text(
                     MSG_LOGIN_REQUIRED,
+                    reply_parameters=reply_params,
+                )
+            return False
+        except DownloadError as e:
+            context.user_data["_request_success"] = False
+            context.user_data["_skip_reason"] = "fetch_failed"
+            details_logger.warning("tiktok: download error: %s", e.raw_error, extra=extra)
+            if not (is_group_chat(update) and silent):
+                await update.message.reply_text(
+                    e.user_message,
                     reply_parameters=reply_params,
                 )
             return False

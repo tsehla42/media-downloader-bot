@@ -293,6 +293,24 @@ def test_download_video_raises_auth_required_on_instagram_content_restriction():
             download_video("https://www.instagram.com/reel/DUruRXWChNQ", "/tmp/test.mp4")
 
 
+def test_download_video_raises_auth_required_on_age_restricted():
+    """download_video raises DownloadAuthRequired for age-restricted YouTube content."""
+    from downloader import DownloadAuthRequired
+
+    age_restricted_error = (
+        "ERROR: [youtube] uueRqEalZ7s: Sign in to confirm your age. "
+        "This video may be inappropriate for some users. "
+        "Use --cookies-from-browser or --cookies for the authentication."
+    )
+    with patch("downloader.subprocess.run") as mock_run:
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr=age_restricted_error),
+            MagicMock(returncode=1, stdout="", stderr=age_restricted_error),
+        ]
+        with pytest.raises(DownloadAuthRequired):
+            download_video("https://youtube.com/watch?v=uueRqEalZ7s", "/tmp/test.mp4")
+
+
 def test_download_video_does_not_raise_on_generic_failure():
     """download_video returns False for non-auth failures."""
     with patch("downloader.subprocess.run") as mock_run:
@@ -302,3 +320,53 @@ def test_download_video_does_not_raise_on_generic_failure():
         ]
         result = download_video("https://youtube.com/watch?v=abc", "/tmp/test.mp4")
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# DownloadError tests
+# ---------------------------------------------------------------------------
+
+
+def test_download_error_stores_user_message_and_raw_error():
+    """DownloadError stores both user-facing message and raw technical details."""
+    from downloader import DownloadError
+
+    err = DownloadError("Could not download. Please try again.", raw_error="timeout details")
+    assert err.user_message == "Could not download. Please try again."
+    assert err.raw_error == "timeout details"
+    assert str(err) == "Could not download. Please try again."
+
+
+def test_download_error_raw_error_optional():
+    """DownloadError works without raw_error."""
+    from downloader import DownloadError
+
+    err = DownloadError("Something went wrong")
+    assert err.user_message == "Something went wrong"
+    assert err.raw_error is None
+
+
+def test_download_gallery_dl_images_raises_on_timeout():
+    """download_gallery_dl_images raises DownloadError on subprocess timeout."""
+    import subprocess as sp
+    from downloader import DownloadError
+
+    with patch("downloader._find_gallery_dl", return_value="/usr/bin/gallery-dl"), \
+         patch("downloader.subprocess.run", side_effect=sp.TimeoutExpired(cmd="gallery-dl", timeout=60)):
+        with pytest.raises(DownloadError) as exc_info:
+            download_gallery_dl_images("https://example.com/page", "/tmp/out")
+        assert "Could not fetch" in exc_info.value.user_message
+        assert "timed out" in exc_info.value.raw_error
+
+
+def test_download_gallery_dl_video_raises_on_timeout():
+    """download_gallery_dl_video raises DownloadError on subprocess timeout."""
+    import subprocess as sp
+    from downloader import DownloadError
+
+    with patch("downloader._find_gallery_dl", return_value="/usr/bin/gallery-dl"), \
+         patch("downloader.subprocess.run", side_effect=sp.TimeoutExpired(cmd="gallery-dl", timeout=60)):
+        with pytest.raises(DownloadError) as exc_info:
+            download_gallery_dl_video("https://example.com/page", "/tmp/out")
+        assert "Could not fetch" in exc_info.value.user_message
+        assert "timed out" in exc_info.value.raw_error

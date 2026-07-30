@@ -8,12 +8,26 @@ import sys
 import tempfile
 
 from logging_config import details_logger as logger, get_current_request_id
+from messages import MSG_FETCH_FAILED
 
 MAX_FILE_SIZE_MB = 50
 
 
 class DownloadAuthRequired(Exception):
     """Raised when content requires platform login/cookies to access."""
+
+
+class DownloadError(Exception):
+    """Download failed with a user-facing message and raw technical details.
+
+    Attributes:
+        user_message: Safe message to show to the user (MSG_* constant).
+        raw_error: Technical error details for logging (never shown to users).
+    """
+    def __init__(self, user_message: str, raw_error: str | None = None):
+        self.user_message = user_message
+        self.raw_error = raw_error
+        super().__init__(user_message)
 
 
 def _log_extra(url: str, platform: str = "") -> dict:
@@ -194,7 +208,9 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
         extra["yt_dlp_stderr"] = stderr
-        if "Log in for access" in stderr or "This content isn't available to everyone" in stderr:
+        if ("Log in for access" in stderr
+            or "This content isn't available to everyone" in stderr
+            or "Sign in to confirm your age" in stderr):
             raise DownloadAuthRequired(stderr)
         logger.warning("download_video: yt-dlp failed (code %d)", result.returncode, extra=extra)
     else:
@@ -303,12 +319,19 @@ def download_gallery_dl_images(url: str, output_dir: str, cookies: str = "") -> 
     cmd.append(url)
 
     extra = _log_extra(url)
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired as e:
+        logger.warning("gallery-dl images: timed out after 60s", extra=extra)
+        raise DownloadError(
+            MSG_FETCH_FAILED,
+            raw_error=str(e),
+        ) from e
 
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
@@ -352,9 +375,12 @@ def download_gallery_dl_video(url: str, output_dir: str) -> str | None:
             text=True,
             timeout=60,
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as e:
         logger.warning("gallery-dl video: timed out after 60s", extra=extra)
-        return None
+        raise DownloadError(
+            MSG_FETCH_FAILED,
+            raw_error=str(e),
+        ) from e
 
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()

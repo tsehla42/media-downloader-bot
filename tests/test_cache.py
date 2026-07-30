@@ -1,4 +1,8 @@
 import os
+from unittest.mock import patch, MagicMock
+
+import httpx
+
 from cache import (
     get_cached,
     store,
@@ -9,6 +13,9 @@ from cache import (
     _extract_instagram_shortcode,
     _get_cache_key,
     _metadata_hash,
+    _resolve_tiktok_redirect,
+    _url_hash,
+    clear_redirect_cache,
 )
 
 
@@ -70,9 +77,22 @@ def test_get_cache_key_tiktok_full_url():
 
 
 def test_get_cache_key_tiktok_short_url_no_metadata():
-    """TikTok short URL without metadata returns None."""
+    """TikTok short URL without metadata falls back to URL hash."""
+    clear_redirect_cache()
     url = "https://vt.tiktok.com/ZSQqy1R4y/"
-    assert _get_cache_key(url, "tiktok") is None
+
+    with patch("cache.httpx.Client") as mock_client:
+        mock_client.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.head.side_effect = httpx.RequestError("Connection failed")
+
+        key = _get_cache_key(url, "tiktok")
+        assert key is not None
+        assert key.startswith("tiktok:")
+        # Should be a hash-based key
+        assert len(key) == 19  # "tiktok:" + 12 char hash
+
+    clear_redirect_cache()
 
 
 def test_get_cache_key_tiktok_short_url_with_metadata():
@@ -291,3 +311,147 @@ def test_cleanup_older_than_removes_nothing(monkeypatch, tmp_path):
 
     stats = get_stats()
     assert stats["total_entries"] == 1
+
+
+def test_resolve_tiktok_redirect_success():
+    """Redirect resolution extracts video ID from final URL."""
+    clear_redirect_cache()
+    mock_response = MagicMock()
+    mock_response.url = "https://www.tiktok.com/@user/video/7634892654269959446"
+
+    with patch("cache.httpx.Client") as mock_client:
+        mock_client.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.head.return_value = mock_response
+
+        result = _resolve_tiktok_redirect("https://vt.tiktok.com/ZSQqy1R4y/")
+        assert result == "7634892654269959446"
+
+    clear_redirect_cache()
+
+
+def test_resolve_tiktok_redirect_failure():
+    """Redirect resolution returns None on HTTP error."""
+    clear_redirect_cache()
+
+    with patch("cache.httpx.Client") as mock_client:
+        mock_client.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.head.side_effect = httpx.RequestError("Connection failed")
+
+        result = _resolve_tiktok_redirect("https://vt.tiktok.com/ZSQqy1R4y/")
+        assert result is None
+
+    clear_redirect_cache()
+
+
+def test_resolve_tiktok_redirect_non_tiktok_final_url():
+    """Redirect resolution returns None when final URL is not TikTok."""
+    clear_redirect_cache()
+    mock_response = MagicMock()
+    mock_response.url = "https://example.com/some-page"
+
+    with patch("cache.httpx.Client") as mock_client:
+        mock_client.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.head.return_value = mock_response
+
+        result = _resolve_tiktok_redirect("https://vt.tiktok.com/ZSQqy1R4y/")
+        assert result is None
+
+    clear_redirect_cache()
+
+
+def test_resolve_tiktok_redirect_caches_result():
+    """Redirect resolution caches results in memory."""
+    clear_redirect_cache()
+    mock_response = MagicMock()
+    mock_response.url = "https://www.tiktok.com/@user/video/7634892654269959446"
+
+    with patch("cache.httpx.Client") as mock_client:
+        mock_client.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.head.return_value = mock_response
+
+        # First call
+        result1 = _resolve_tiktok_redirect("https://vt.tiktok.com/ZSQqy1R4y/")
+        # Second call (should use cache, not make HTTP request)
+        result2 = _resolve_tiktok_redirect("https://vt.tiktok.com/ZSQqy1R4y/")
+
+        assert result1 == result2 == "7634892654269959446"
+        # head should only be called once
+        assert mock_client.head.call_count == 1
+
+    clear_redirect_cache()
+
+
+def test_url_hash_deterministic():
+    """URL hash is deterministic."""
+    url = "https://vt.tiktok.com/ZSQqy1R4y/"
+    hash1 = _url_hash(url)
+    hash2 = _url_hash(url)
+    assert hash1 == hash2
+    assert len(hash1) == 12
+
+
+def test_url_hash_different_for_different_urls():
+    """Different URLs produce different hashes."""
+    url1 = "https://vt.tiktok.com/ZSQqy1R4y/"
+    url2 = "https://vt.tiktok.com/ZS4YCMwhv/"
+    assert _url_hash(url1) != _url_hash(url2)
+
+
+def test_get_cache_key_tiktok_short_url_with_redirect(monkeypatch):
+    """TikTok short URL uses redirect resolution when available."""
+    clear_redirect_cache()
+    mock_response = MagicMock()
+    mock_response.url = "https://www.tiktok.com/@user/video/7634892654269959446"
+
+    with patch("cache.httpx.Client") as mock_client:
+        mock_client.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.head.return_value = mock_response
+
+        key = _get_cache_key("https://vt.tiktok.com/ZSQqy1R4y/", "tiktok")
+        assert key == "tiktok:7634892654269959446"
+
+    clear_redirect_cache()
+
+
+def test_get_cache_key_tiktok_short_url_redirect_fallback_to_hash():
+    """TikTok short URL falls back to hash when redirect fails."""
+    clear_redirect_cache()
+
+    with patch("cache.httpx.Client") as mock_client:
+        mock_client.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.head.side_effect = httpx.RequestError("Connection failed")
+
+        key = _get_cache_key("https://vt.tiktok.com/ZSQqy1R4y/", "tiktok")
+        assert key is not None
+        assert key.startswith("tiktok:")
+        # Should be a hash-based key
+        assert len(key) == 19  # "tiktok:" + 12 char hash
+
+    clear_redirect_cache()
+
+
+def test_get_cache_key_tiktok_metadata_takes_precedence_over_redirect():
+    """Metadata ID takes precedence over redirect resolution."""
+    clear_redirect_cache()
+    mock_response = MagicMock()
+    mock_response.url = "https://www.tiktok.com/@user/video/7634892654269959446"
+
+    with patch("cache.httpx.Client") as mock_client:
+        mock_client.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.head.return_value = mock_response
+
+        metadata = {"id": "9999999999999999999", "title": "test"}
+        key = _get_cache_key("https://vt.tiktok.com/ZSQqy1R4y/", "tiktok", metadata)
+        # Metadata should take precedence
+        assert key == "tiktok:9999999999999999999"
+        # head should NOT be called (metadata was sufficient)
+        assert mock_client.head.call_count == 0
+
+    clear_redirect_cache()

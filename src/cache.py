@@ -6,6 +6,8 @@ import os
 import re
 import sqlite3
 
+import httpx
+
 from logging_config import get_current_request_id
 
 logger = logging.getLogger("media_downloader.cache")
@@ -13,6 +15,9 @@ details_logger = logging.getLogger("media_downloader.details")
 
 _db_path = None
 _conn = None
+
+# In-memory cache for TikTok redirect resolution (short URL -> video ID)
+_redirect_cache: dict[str, str | None] = {}
 
 
 def _log_extra(url: str, cache_key: str) -> dict:
@@ -60,6 +65,40 @@ def _extract_instagram_shortcode(url: str) -> str | None:
     return None
 
 
+def _resolve_tiktok_redirect(url: str) -> str | None:
+    """Resolve a TikTok short URL to its video ID via HTTP redirect.
+
+    Uses httpx to follow redirects and extract the video ID from the final URL.
+    Results are cached in-memory to avoid repeated HTTP requests.
+
+    Returns video ID or None if resolution fails.
+    """
+    if url in _redirect_cache:
+        return _redirect_cache[url]
+
+    try:
+        with httpx.Client(timeout=5.0, follow_redirects=True) as client:
+            response = client.head(url)
+            final_url = str(response.url)
+            video_id = _extract_tiktok_id(final_url)
+            _redirect_cache[url] = video_id
+            if video_id:
+                details_logger.info("TikTok redirect resolved: %s -> %s", url, video_id)
+            return video_id
+    except Exception as e:
+        logger.debug("TikTok redirect resolution failed for %s: %s", url, e)
+        _redirect_cache[url] = None
+        return None
+
+
+def _url_hash(url: str) -> str:
+    """Generate a hash-based cache key from URL.
+
+    Used as fallback when no stable video ID can be extracted.
+    """
+    return hashlib.md5(url.encode()).hexdigest()[:12]
+
+
 def _metadata_hash(metadata: dict) -> str:
     """Hash title + duration + uploader for fallback key."""
     title = metadata.get("title", "")
@@ -79,10 +118,15 @@ def _get_cache_key(url: str, platform: str | None, metadata: dict | None = None)
         video_id = _extract_tiktok_id(url)
         if video_id:
             return f"tiktok:{video_id}"
-        # Try metadata for short URLs
+        # Try metadata for short URLs (if yt-dlp succeeded)
         if metadata and metadata.get("id"):
             return f"tiktok:{metadata['id']}"
-        return None
+        # Try redirect resolution for short URLs
+        video_id = _resolve_tiktok_redirect(url)
+        if video_id:
+            return f"tiktok:{video_id}"
+        # Fallback: URL hash (different short URLs get different entries)
+        return f"tiktok:{_url_hash(url)}"
 
     # YouTube
     if platform == "youtube":
@@ -207,6 +251,11 @@ def get_stats() -> dict:
     except Exception as e:
         logger.error("Cache stats error: %s", e)
         return {"total_entries": 0, "total_size_mb": 0}
+
+
+def clear_redirect_cache():
+    """Clear in-memory redirect cache. For testing."""
+    _redirect_cache.clear()
 
 
 def cleanup_older_than(days: int = 30) -> int:
