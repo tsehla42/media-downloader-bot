@@ -51,7 +51,7 @@ async def test_handle_instagram_stories_with_cookies_proceeds(update, context):
          patch("platforms.instagram.os.path.isfile", side_effect=is_file), \
          patch("platforms.instagram.download_video", return_value=True), \
          patch("builtins.open", MagicMock()), \
-         patch("platforms.instagram.cleanup_file"):
+         patch("platforms.instagram.cleanup_video_files"):
         result = await handle_instagram(
             update, context,
             "https://www.instagram.com/stories/whhiteblood/3933848826919684824",
@@ -68,7 +68,7 @@ async def test_handle_instagram_non_stories_without_cookies_proceeds(update, con
     with patch("platforms.instagram.download_video", return_value=True), \
          patch("platforms.instagram.os.path.isfile", side_effect=lambda p: p.endswith(".mp4")), \
          patch("builtins.open", MagicMock()), \
-         patch("platforms.instagram.cleanup_file"):
+         patch("platforms.instagram.cleanup_video_files"):
         result = await handle_instagram(
             update, context,
             "https://www.instagram.com/reel/DUruRXWChNQ",
@@ -94,7 +94,7 @@ async def test_handle_instagram_stories_with_utm_params(update, context):
 async def test_handle_instagram_download_auth_required_propagates(update, context):
     """DownloadAuthRequired from download_video propagates to caller."""
     with patch("platforms.instagram.download_video", side_effect=DownloadAuthRequired("content restricted")), \
-         patch("platforms.instagram.cleanup_file"):
+         patch("platforms.instagram.cleanup_video_files"):
         with pytest.raises(DownloadAuthRequired):
             await handle_instagram(
                 update, context,

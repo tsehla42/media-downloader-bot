@@ -16,6 +16,47 @@ def _log_extra(context, url: str) -> dict:
         "request_id": context.user_data.get("request_id", ""),
         "platform": context.user_data.get("_platform", ""),
     }
+
+
+async def _reply_failure(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    message: str,
+    skip_reason: str,
+    reply_params: dict,
+    silent: bool = True,
+) -> None:
+    """Mark request as failed, set skip reason, and optionally reply with error message."""
+    context.user_data["_request_success"] = False
+    context.user_data["_skip_reason"] = skip_reason
+    if not (is_group_chat(update) and silent):
+        await update.message.reply_text(
+            message,
+            reply_parameters=reply_params,
+        )
+
+
+async def _handle_metadata_failure(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    url: str,
+    silent: bool,
+    reply_params: dict,
+    log_event: str,
+    user_message: str,
+) -> None:
+    """Handle metadata fetch failure with logging and optional reply."""
+    extra = _log_extra(context, url)
+    context.user_data["_request_success"] = False
+    context.user_data["_skip_reason"] = "metadata_failed"
+    details_logger.info(log_event, extra=extra)
+    if not (is_group_chat(update) and silent):
+        await update.message.reply_text(
+            user_message,
+            reply_parameters=reply_params,
+        )
+
+
 from platforms import detect_platform, extract_domain
 from utils import get_gallery_dl_domains, get_ytdlp_domains
 from platforms.youtube import handle_youtube, handle_ytmusic, AUDIO_TITLE_MAX, _store_download_metadata
@@ -23,13 +64,13 @@ from platforms.instagram import handle_instagram
 from platforms.tiktok import handle_tiktok
 from downloader import get_metadata, download_audio, download_video, download_gallery_dl_images, download_gallery_dl_video, DownloadAuthRequired, DownloadError
 from messages import (
-    MSG_UNAUTHORIZED, MSG_UNSUPPORTED_PLATFORM, MSG_NO_URL, MSG_INVALID_URL,
+    MSG_UNSUPPORTED_PLATFORM, MSG_INVALID_URL,
     MSG_LOGIN_REQUIRED, MSG_FETCH_FAILED, MSG_SIZE_LIMIT,
     MSG_METADATA_FAILED, MSG_DOWNLOAD_FAILED, MSG_AUDIO_USAGE, MSG_AUDIO_FAILED,
     MSG_ONLY_ADMINS_CAN_ADD,
 )
 from commands import get_caption_for_user
-from auth import is_authorized, is_group_chat, was_notified, mark_notified, is_bot_admin, _is_allowed
+from auth import is_group_chat, is_private_chat, is_bot_admin, _is_allowed, reject_if_unauthorized
 from logging_config import (
     with_request_logging,
     log_bot_added_to_chat,
@@ -40,7 +81,6 @@ from logging_config import (
     log_custom_title_changed,
     log_user_blocked_bot,
     log_user_unblocked_bot,
-    log_unauthorized_access,
     _extract_admin_rights,
     log_request_received,
     log_request_completed,
@@ -61,17 +101,14 @@ async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_T
     new_status = chat_member_update.new_chat_member.status
     from_user = chat_member_update.from_user
 
-    # User blocked bot in private chat (status becomes "kicked")
-    if new_status == "kicked" and getattr(chat, "type", None) == "private":
+    if new_status == "kicked" and is_private_chat(chat):
         log_user_blocked_bot(chat, from_user)
         return
 
-    # User unblocked bot in private chat (status was "kicked", now "member")
-    if old_status == "kicked" and new_status == "member" and getattr(chat, "type", None) == "private":
+    if old_status == "kicked" and new_status == "member" and is_private_chat(chat):
         log_user_unblocked_bot(chat, from_user)
         return
 
-    # Bot removed from chat (any status → left/kicked)
     if new_status in ("left", "kicked"):
         log_bot_removed_from_chat(chat, from_user)
         return
@@ -119,8 +156,7 @@ async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     # Bot added to chat (non-admin, e.g. added as regular member)
-    # Skip private chats — /start command handles P2P user tracking
-    if old_status in ("left", "kicked") and getattr(chat, "type", None) != "private":
+    if old_status in ("left", "kicked") and not is_private_chat(chat):
         # Check if user is admin - if not, reject and leave
         if not is_bot_admin(from_user.id):
             log_bot_rejected_group_addition(chat, from_user)
@@ -138,16 +174,7 @@ async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_T
 async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reply_params = {"message_id": update.message.message_id}
 
-    if not is_authorized(update):
-        if not is_group_chat(update):
-            user_id = update.message.from_user.id
-            if not was_notified(user_id):
-                await update.message.reply_text(
-                    MSG_UNAUTHORIZED,
-                    reply_parameters=reply_params,
-                )
-                mark_notified(user_id)
-                log_unauthorized_access(update.message.from_user, update.message.chat, "/audio")
+    if await reject_if_unauthorized(update, "/audio", reply_parameters=reply_params, group_silent=True):
         context.user_data["_request_success"] = False
         return
 
@@ -266,28 +293,14 @@ async def _download_and_send(
         if domain in ytdlp_domains:
             # Generic yt-dlp download for non-yt/tt/ig sites
             metadata = get_metadata(url)
-            extra = _log_extra(context, url)
             if not metadata:
-                context.user_data["_request_success"] = False
-                context.user_data["_skip_reason"] = "metadata_failed"
-                details_logger.info("ytdlp_metadata_failed", extra=extra)
-                if not (is_group_chat(update) and silent):
-                    await update.message.reply_text(
-                        MSG_METADATA_FAILED,
-                        reply_parameters=reply_params,
-                    )
+                await _handle_metadata_failure(update, context, url, silent, reply_params, "ytdlp_metadata_failed", MSG_METADATA_FAILED)
                 return False
 
             title = metadata.get("title", "video")
             estimated_size = metadata.get("filesize") or metadata.get("filesize_approx")
             if estimated_size and estimated_size > MAX_FILE_SIZE * 1024 * 1024:
-                context.user_data["_request_success"] = False
-                context.user_data["_skip_reason"] = "size_limit"
-                if not (is_group_chat(update) and silent):
-                    await update.message.reply_text(
-                        MSG_SIZE_LIMIT,
-                        reply_parameters=reply_params,
-                    )
+                await _reply_failure(update, context, MSG_SIZE_LIMIT, "size_limit", reply_params, silent)
                 return False
 
             tmp_id = uuid.uuid4().hex[:8]
@@ -298,13 +311,7 @@ async def _download_and_send(
             try:
                 video_ok = download_video(url, output_path)
                 if not video_ok:
-                    context.user_data["_request_success"] = False
-                    context.user_data["_skip_reason"] = "download_failed"
-                    if not (is_group_chat(update) and silent):
-                        await update.message.reply_text(
-                            MSG_DOWNLOAD_FAILED,
-                            reply_parameters=reply_params,
-                        )
+                    await _reply_failure(update, context, MSG_DOWNLOAD_FAILED, "download_failed", reply_params, silent)
                     return False
 
                 for ext in ["mp4", "webm", "mkv"]:
@@ -324,13 +331,7 @@ async def _download_and_send(
                 for ext in ["mp4", "webm", "mkv"]:
                     cleanup_file(f"{base}.{ext}")
 
-        context.user_data["_request_success"] = False
-        context.user_data["_skip_reason"] = "unsupported"
-        if not (is_group_chat(update) and silent):
-            await update.message.reply_text(
-                MSG_UNSUPPORTED_PLATFORM,
-                reply_parameters=reply_params,
-            )
+        await _reply_failure(update, context, MSG_UNSUPPORTED_PLATFORM, "unsupported", reply_params, silent)
         return False
 
     # Instagram and TikTok handle their own metadata and content fetching
@@ -338,88 +339,41 @@ async def _download_and_send(
         try:
             handled = await handle_instagram(update, context, url)
         except DownloadAuthRequired:
-            context.user_data["_request_success"] = False
-            context.user_data["_skip_reason"] = "auth_required"
-            if not (is_group_chat(update) and silent):
-                await update.message.reply_text(
-                    MSG_LOGIN_REQUIRED,
-                    reply_parameters=reply_params,
-                )
+            await _reply_failure(update, context, MSG_LOGIN_REQUIRED, "auth_required", reply_params, silent)
             return False
         except DownloadError as e:
-            context.user_data["_request_success"] = False
-            context.user_data["_skip_reason"] = "fetch_failed"
+            extra = _log_extra(context, url)
             details_logger.warning("instagram: download error: %s", e.raw_error, extra=extra)
-            if not (is_group_chat(update) and silent):
-                await update.message.reply_text(
-                    e.user_message,
-                    reply_parameters=reply_params,
-                )
+            await _reply_failure(update, context, e.user_message, "fetch_failed", reply_params, silent)
             return False
         if not handled:
-            context.user_data["_request_success"] = False
-            context.user_data["_skip_reason"] = "fetch_failed"
-            if not (is_group_chat(update) and silent):
-                await update.message.reply_text(
-                    MSG_FETCH_FAILED,
-                    reply_parameters=reply_params,
-                )
+            await _reply_failure(update, context, MSG_FETCH_FAILED, "fetch_failed", reply_params, silent)
         return handled
 
     if platform == "tiktok":
         try:
             handled = await handle_tiktok(update, context, url)
         except DownloadAuthRequired:
-            context.user_data["_request_success"] = False
-            context.user_data["_skip_reason"] = "auth_required"
-            if not (is_group_chat(update) and silent):
-                await update.message.reply_text(
-                    MSG_LOGIN_REQUIRED,
-                    reply_parameters=reply_params,
-                )
+            await _reply_failure(update, context, MSG_LOGIN_REQUIRED, "auth_required", reply_params, silent)
             return False
         except DownloadError as e:
-            context.user_data["_request_success"] = False
-            context.user_data["_skip_reason"] = "fetch_failed"
+            extra = _log_extra(context, url)
             details_logger.warning("tiktok: download error: %s", e.raw_error, extra=extra)
-            if not (is_group_chat(update) and silent):
-                await update.message.reply_text(
-                    e.user_message,
-                    reply_parameters=reply_params,
-                )
+            await _reply_failure(update, context, e.user_message, "fetch_failed", reply_params, silent)
             return False
         if not handled:
-            context.user_data["_request_success"] = False
-            context.user_data["_skip_reason"] = "fetch_failed"
-            if not (is_group_chat(update) and silent):
-                await update.message.reply_text(
-                    MSG_FETCH_FAILED,
-                    reply_parameters=reply_params,
-                )
+            await _reply_failure(update, context, MSG_FETCH_FAILED, "fetch_failed", reply_params, silent)
         return handled
 
     # YouTube / YouTube Music: fetch metadata first
     try:
         metadata = get_metadata(url)
     except DownloadAuthRequired:
-        context.user_data["_request_success"] = False
-        context.user_data["_skip_reason"] = "auth_required"
-        if not (is_group_chat(update) and silent):
-            await update.message.reply_text(
-                MSG_LOGIN_REQUIRED,
-                reply_parameters=reply_params,
-            )
+        await _reply_failure(update, context, MSG_LOGIN_REQUIRED, "auth_required", reply_params, silent)
         return False
     extra = _log_extra(context, url)
     if not metadata:
-        context.user_data["_request_success"] = False
-        context.user_data["_skip_reason"] = "metadata_failed"
-        details_logger.info("youtube_metadata_failed", extra=extra)
-        if not (is_group_chat(update) and silent):
-            await update.message.reply_text(
-                MSG_FETCH_FAILED,
-                reply_parameters=reply_params,
-            )
+        await _handle_metadata_failure(update, context, url, silent, reply_params, "youtube_metadata_failed", MSG_FETCH_FAILED)
         return False
 
     title = metadata.get("title", "video")
@@ -447,13 +401,7 @@ async def _download_and_send(
                         title, size_mb,
                         extra=extra,
                     )
-                    context.user_data["_request_success"] = False
-                    context.user_data["_skip_reason"] = "size_limit"
-                    if not (is_group_chat(update) and silent):
-                        await update.message.reply_text(
-                            MSG_SIZE_LIMIT,
-                            reply_parameters=reply_params,
-                        )
+                    await _reply_failure(update, context, MSG_SIZE_LIMIT, "size_limit", reply_params, silent)
                     return False
                 details_logger.info(
                     "youtube_size_check, title=%s, size_mb=%.2f, passed=true",
@@ -472,21 +420,10 @@ async def _download_and_send(
                 update, context, url, base, output_path, caption, reply_params,
             )
             if not video_ok:
-                context.user_data["_request_success"] = False
-                context.user_data["_skip_reason"] = "download_failed"
-                if not (is_group_chat(update) and silent):
-                    await update.message.reply_text(
-                        MSG_DOWNLOAD_FAILED,
-                        reply_parameters=reply_params,
-                    )
+                await _reply_failure(update, context, MSG_DOWNLOAD_FAILED, "download_failed", reply_params, silent)
             return video_ok
 
-        context.user_data["_request_success"] = False
-        if not (is_group_chat(update) and silent):
-            await update.message.reply_text(
-                MSG_DOWNLOAD_FAILED,
-                reply_parameters=reply_params,
-            )
+        await _reply_failure(update, context, MSG_DOWNLOAD_FAILED, "download_failed", reply_params, silent)
         return False
     except Exception as e:
         context.user_data["_request_success"] = False
@@ -578,17 +515,8 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not update.message or not update.message.text:
         return
 
-    if not is_authorized(update):
-        if not is_group_chat(update):
-            user_id = update.message.from_user.id
-            if not was_notified(user_id):
-                await update.message.reply_text(
-                    MSG_UNAUTHORIZED,
-                    reply_parameters={"message_id": update.message.message_id},
-                )
-                mark_notified(user_id)
-                log_unauthorized_access(update.message.from_user, update.message.chat, "url")
-        return  # silently ignore in groups or if already told
+    if await reject_if_unauthorized(update, "url", reply_parameters={"message_id": update.message.message_id}, group_silent=True):
+        return
 
     # Unauthorized user replying to bot message in a group — silently ignore
     if (is_group_chat(update)

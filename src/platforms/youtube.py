@@ -3,16 +3,15 @@
 import asyncio
 import os
 import time
-import uuid
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from config import DOWNLOAD_DIR, MAX_FILE_SIZE
+from config import MAX_FILE_SIZE
 from downloader import download_video, download_audio
 from commands import get_caption_for_user
 from telegram_utils import typing_indicator
-from utils import cleanup_file
+from utils import cleanup_file, find_downloaded_file, cleanup_video_files, make_video_tmp_path
 from messages import MSG_DOWNLOAD_FAILED, MSG_YTMUSIC_AUDIO_FAILED, MSG_YTMUSIC_VIDEO_FAILED, MSG_YTMUSIC_UNKNOWN_CHOICE, MSG_YTMUSIC_REQUEST_EXPIRED
 
 from logging_config import details_logger as _log
@@ -47,12 +46,7 @@ async def _download_and_send_video(
     if not success:
         return False
 
-    downloaded = None
-    for ext in ["mp4", "webm", "mkv"]:
-        candidate = f"{base}.{ext}"
-        if os.path.isfile(candidate):
-            downloaded = candidate
-            break
+    downloaded = find_downloaded_file(base)
 
     if not downloaded:
         return False
@@ -167,10 +161,7 @@ async def ytmusic_callback(update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception:
             pass
 
-        tmp_id = uuid.uuid4().hex[:8]
-        base = os.path.join(DOWNLOAD_DIR, tmp_id)
-        output_path = f"{base}.%(ext)s"
-        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        tmp_id, output_path, base = make_video_tmp_path()
 
         reply_params = {"message_id": msg_id}
 
@@ -225,12 +216,7 @@ async def ytmusic_callback(update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
                 # Send video first
                 if video_ok:
-                    downloaded = None
-                    for ext in ["mp4", "webm", "mkv"]:
-                        candidate = f"{base}.{ext}"
-                        if os.path.isfile(candidate):
-                            downloaded = candidate
-                            break
+                    downloaded = find_downloaded_file(base)
                     if downloaded:
                         caption = get_caption_for_user(update.effective_message.from_user.id, title)
                         with open(downloaded, "rb") as f:
@@ -284,5 +270,6 @@ async def ytmusic_callback(update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 reply_parameters=reply_params,
             )
         finally:
-            for ext in ["mp4", "webm", "mkv", "mp3", "m4a"]:
+            cleanup_video_files(base)
+            for ext in ["mp3", "m4a"]:
                 cleanup_file(f"{base}.{ext}")

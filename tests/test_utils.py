@@ -103,6 +103,64 @@ def test_get_gallery_dl_domains_import_error_returns_empty(monkeypatch):
     assert result == frozenset()
 
 
+import os
+from utils import find_downloaded_file, cleanup_video_files, make_video_tmp_path, make_tmp_dir
+
+
+def test_find_downloaded_file_finds_mp4(tmp_path):
+    base = tmp_path / "test123"
+    (tmp_path / "test123.mp4").touch()
+    result = find_downloaded_file(str(base))
+    assert result == str(tmp_path / "test123.mp4")
+
+def test_find_downloaded_file_finds_webm(tmp_path):
+    base = tmp_path / "test123"
+    (tmp_path / "test123.webm").touch()
+    result = find_downloaded_file(str(base))
+    assert result == str(tmp_path / "test123.webm")
+
+def test_find_downloaded_file_finds_mkv(tmp_path):
+    base = tmp_path / "test123"
+    (tmp_path / "test123.mkv").touch()
+    result = find_downloaded_file(str(base))
+    assert result == str(tmp_path / "test123.mkv")
+
+def test_find_downloaded_file_returns_none_if_no_match(tmp_path):
+    base = tmp_path / "test123"
+    result = find_downloaded_file(str(base))
+    assert result is None
+
+def test_find_downloaded_file_prefers_mp4(tmp_path):
+    base = tmp_path / "test123"
+    (tmp_path / "test123.mp4").touch()
+    (tmp_path / "test123.webm").touch()
+    (tmp_path / "test123.mkv").touch()
+    result = find_downloaded_file(str(base))
+    assert result == str(tmp_path / "test123.mp4")
+
+def test_cleanup_video_files_removes_all_variants(tmp_path):
+    base = tmp_path / "test123"
+    for ext in ["mp4", "webm", "mkv"]:
+        (tmp_path / f"test123.{ext}").touch()
+    cleanup_video_files(str(base))
+    for ext in ["mp4", "webm", "mkv"]:
+        assert not (tmp_path / f"test123.{ext}").exists()
+
+def test_cleanup_video_files_handles_missing_files(tmp_path):
+    base = tmp_path / "test123"
+    cleanup_video_files(str(base))  # Should not raise
+
+def test_make_video_tmp_path_creates_dir():
+    tmp_id, output_path, base = make_video_tmp_path()
+    assert len(tmp_id) == 8
+    assert output_path.endswith(".%(ext)s")
+    assert os.path.isdir(os.path.dirname(base))
+
+def test_make_tmp_dir_creates_dir():
+    out_dir = make_tmp_dir()
+    assert os.path.isdir(out_dir)
+
+
 from utils import get_ytdlp_domains
 
 def test_get_ytdlp_domains_returns_frozenset():

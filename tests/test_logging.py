@@ -861,7 +861,7 @@ def test_reply_to_retry_logs_request_received():
     with patch("handlers.log_request_received") as mock_received, \
          patch("handlers.log_request_completed") as mock_completed, \
          patch("handlers._download_and_send", new_callable=AsyncMock, return_value=True), \
-         patch("handlers.is_authorized", return_value=True), \
+         patch("handlers.reject_if_unauthorized", return_value=False), \
          patch("handlers.typing_indicator") as mock_typing:
         mock_cm = MagicMock()
         mock_cm.__aenter__ = AsyncMock(return_value=mock_cm)

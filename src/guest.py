@@ -16,7 +16,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from auth import is_user_allowed, was_notified_guest, mark_notified_guest
-from config import DOWNLOAD_DIR, MAX_FILE_SIZE, IG_COOKIES_PATH, STORAGE_CHANNEL_ID
+from config import MAX_FILE_SIZE, IG_COOKIES_PATH, STORAGE_CHANNEL_ID
+from utils import find_downloaded_file, cleanup_video_files, make_video_tmp_path, make_tmp_dir
 from logging_config import (
     details_logger,
     error_logger,
@@ -27,7 +28,7 @@ from logging_config import (
     _build_forwarded_dict,
 )
 from platforms import detect_platform, extract_domain
-from utils import extract_urls, cleanup_file, cleanup_dir, get_gallery_dl_domains, get_ytdlp_domains
+from utils import extract_urls, cleanup_dir, get_gallery_dl_domains, get_ytdlp_domains
 from cache import get_cached, store
 from downloader import (
     get_metadata,
@@ -40,7 +41,7 @@ from downloader import (
 from messages import (
     MSG_UNAUTHORIZED, MSG_NO_URL, MSG_LOGIN_REQUIRED, MSG_SIZE_LIMIT,
     MSG_UNSUPPORTED_PLATFORM, MSG_METADATA_FAILED, MSG_DOWNLOAD_FAILED,
-    MSG_GUEST_DOWNLOAD_FAILED, MSG_GUEST_NO_IMAGES,
+    MSG_GUEST_NO_IMAGES,
     MSG_GUEST_METADATA_FAILED, MSG_GUEST_UPLOAD_FAILED,
     MSG_GUEST_DOWNLOAD_NOT_FOUND, MSG_GUEST_COULD_NOT_DOWNLOAD,
     MSG_GUEST_CONTENT_NOT_FOUND,
@@ -361,37 +362,29 @@ async def _download_youtube(url: str) -> tuple[dict, str, float | None]:
         return _text_result(MSG_SIZE_LIMIT), "video", None
 
     thumbnail_url = metadata.get("thumbnail", "")
-    tmp_id = uuid.uuid4().hex[:8]
-    output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
-    base = os.path.join(DOWNLOAD_DIR, tmp_id)
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    tmp_id, output_path, base = make_video_tmp_path()
 
     try:
         success = await asyncio.to_thread(download_video, url, output_path)
         if not success:
             raise ValueError(MSG_DOWNLOAD_FAILED)
 
-        for ext in ["mp4", "webm", "mkv"]:
-            filepath = f"{base}.{ext}"
-            if os.path.isfile(filepath):
-                file_size = os.path.getsize(filepath)
-                file_size_mb = round(file_size / (1024 * 1024), 2)
-                file_id = await _upload_to_telegram(filepath, "video")
-                if file_id:
-                    return _video_result(file_id, title=title, thumbnail_url=thumbnail_url), "video", file_size_mb
-                raise ValueError(MSG_GUEST_UPLOAD_FAILED)
+        filepath = find_downloaded_file(base)
+        if filepath:
+            file_size = os.path.getsize(filepath)
+            file_size_mb = round(file_size / (1024 * 1024), 2)
+            file_id = await _upload_to_telegram(filepath, "video")
+            if file_id:
+                return _video_result(file_id, title=title, thumbnail_url=thumbnail_url), "video", file_size_mb
+            raise ValueError(MSG_GUEST_UPLOAD_FAILED)
         raise ValueError(MSG_GUEST_DOWNLOAD_NOT_FOUND)
     finally:
-        for ext in ["mp4", "webm", "mkv"]:
-            fpath = f"{base}.{ext}"
-            if os.path.isfile(fpath):
-                os.unlink(fpath)
+        cleanup_video_files(base)
 
 
 async def _download_media_result(url: str, platform: str) -> tuple[dict, str, float | None]:
     """Download TikTok/Instagram content. Returns (result, content_type, file_size_mb)."""
-    output_dir = os.path.join(DOWNLOAD_DIR, f"guest_{uuid.uuid4().hex[:8]}")
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = make_tmp_dir()
 
     try:
         # Try video download first
@@ -454,37 +447,29 @@ async def _ytdlp_generic_result(url: str) -> tuple[dict, str, float | None]:
         return _text_result(MSG_SIZE_LIMIT), "video", None
 
     thumbnail_url = metadata.get("thumbnail", "")
-    tmp_id = uuid.uuid4().hex[:8]
-    output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
-    base = os.path.join(DOWNLOAD_DIR, tmp_id)
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    tmp_id, output_path, base = make_video_tmp_path()
 
     try:
         success = await asyncio.to_thread(download_video, url, output_path)
         if not success:
             raise ValueError(MSG_DOWNLOAD_FAILED)
 
-        for ext in ["mp4", "webm", "mkv"]:
-            filepath = f"{base}.{ext}"
-            if os.path.isfile(filepath):
-                file_size = os.path.getsize(filepath)
-                file_size_mb = round(file_size / (1024 * 1024), 2)
-                file_id = await _upload_to_telegram(filepath, "video")
-                if file_id:
-                    return _video_result(file_id, title=title, thumbnail_url=thumbnail_url), "video", file_size_mb
-                raise ValueError(MSG_GUEST_UPLOAD_FAILED)
+        filepath = find_downloaded_file(base)
+        if filepath:
+            file_size = os.path.getsize(filepath)
+            file_size_mb = round(file_size / (1024 * 1024), 2)
+            file_id = await _upload_to_telegram(filepath, "video")
+            if file_id:
+                return _video_result(file_id, title=title, thumbnail_url=thumbnail_url), "video", file_size_mb
+            raise ValueError(MSG_GUEST_UPLOAD_FAILED)
         raise ValueError(MSG_GUEST_DOWNLOAD_NOT_FOUND)
     finally:
-        for ext in ["mp4", "webm", "mkv"]:
-            fpath = f"{base}.{ext}"
-            if os.path.isfile(fpath):
-                os.unlink(fpath)
+        cleanup_video_files(base)
 
 
 async def _gallery_dl_result(url: str) -> tuple[dict, str, float | None]:
     """gallery-dl fallback. Returns (result, content_type, file_size_mb)."""
-    output_dir = os.path.join(DOWNLOAD_DIR, f"guest_{uuid.uuid4().hex[:8]}")
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = make_tmp_dir()
 
     try:
         images = await asyncio.to_thread(download_gallery_dl_images, url, output_dir, "")

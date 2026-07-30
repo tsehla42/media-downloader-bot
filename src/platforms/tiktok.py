@@ -1,12 +1,11 @@
 """TikTok download logic."""
 
 import os
-import uuid
 
-from config import DOWNLOAD_DIR, MAX_FILE_SIZE
+from config import MAX_FILE_SIZE
 from downloader import download_video, download_gallery_dl_images, get_metadata
 from telegram_utils import send_images
-from utils import cleanup_file, cleanup_dir
+from utils import cleanup_dir, find_downloaded_file, cleanup_video_files, make_video_tmp_path, make_tmp_dir
 from logging_config import details_logger as _log
 
 IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
@@ -27,9 +26,7 @@ async def handle_tiktok(update, context, url: str) -> bool:
             ext = (metadata.get("ext") or "").lower()
             if ext in IMAGE_EXTENSIONS:
                 _log.info("tiktok: metadata indicates photo post (ext=%s), trying gallery-dl", ext)
-                tmp_id = uuid.uuid4().hex[:8]
-                out_dir = os.path.join(DOWNLOAD_DIR, tmp_id)
-                os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+                out_dir = make_tmp_dir()
                 try:
                     images = download_gallery_dl_images(url, out_dir, "")
                     if images:
@@ -42,19 +39,11 @@ async def handle_tiktok(update, context, url: str) -> bool:
                     cleanup_dir(out_dir)
 
         # Try video download
-        tmp_id = uuid.uuid4().hex[:8]
-        output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
-        base = os.path.join(DOWNLOAD_DIR, tmp_id)
-        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        _, output_path, base = make_video_tmp_path()
 
         success = download_video(url, output_path, MAX_FILE_SIZE, platform="tiktok")
         if success:
-            downloaded = None
-            for ext in ["mp4", "webm", "mkv"]:
-                candidate = f"{base}.{ext}"
-                if os.path.isfile(candidate):
-                    downloaded = candidate
-                    break
+            downloaded = find_downloaded_file(base)
 
             if downloaded:
                 with open(downloaded, "rb") as f:
@@ -72,9 +61,7 @@ async def handle_tiktok(update, context, url: str) -> bool:
                 return True
 
         # Fallback: try gallery-dl for photo posts
-        tmp_id = uuid.uuid4().hex[:8]
-        out_dir = os.path.join(DOWNLOAD_DIR, tmp_id)
-        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        out_dir = make_tmp_dir()
         try:
             images = download_gallery_dl_images(url, out_dir, "")
             if images:
@@ -90,5 +77,4 @@ async def handle_tiktok(update, context, url: str) -> bool:
 
     finally:
         if base:
-            for ext in ["mp4", "webm", "mkv"]:
-                cleanup_file(f"{base}.{ext}")
+            cleanup_video_files(base)

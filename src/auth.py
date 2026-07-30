@@ -3,6 +3,8 @@
 from telegram import Update
 
 from config import ALLOWED_USER_IDS, ALLOWED_GROUP_IDS, BOT_ADMIN_IDS, ALLOWED_IDS_CONFIGURED
+from messages import MSG_UNAUTHORIZED
+from logging_config import log_unauthorized_access
 
 _already_told_users: set[int] = set()
 _already_told_guest_users: set[int] = set()
@@ -41,6 +43,11 @@ def is_group_chat(update: Update) -> bool:
     return chat.type in ("group", "supergroup")
 
 
+def is_private_chat(chat) -> bool:
+    """Check if a chat is a private chat (1:1 DM)."""
+    return getattr(chat, "type", None) == "private"
+
+
 def _is_allowed(user_id: int) -> bool:
     """Check if user is in the allowlist.
 
@@ -74,3 +81,29 @@ def is_authorized(update: Update) -> bool:
     if update.message and update.message.from_user:
         return _is_allowed(update.message.from_user.id)
     return False
+
+
+async def reject_if_unauthorized(
+    update,
+    command: str,
+    *,
+    reply_parameters: dict | None = None,
+    group_silent: bool = False,
+) -> bool:
+    """Check authorization; notify unauthorized users once. Returns True if rejected."""
+    if is_authorized(update):
+        return False
+
+    if group_silent and is_group_chat(update):
+        return True
+
+    user_id = update.message.from_user.id
+    if not was_notified(user_id):
+        kwargs = {}
+        if reply_parameters is not None:
+            kwargs["reply_parameters"] = reply_parameters
+        await update.message.reply_text(MSG_UNAUTHORIZED, **kwargs)
+        mark_notified(user_id)
+        log_unauthorized_access(update.message.from_user, update.message.chat, command)
+
+    return True

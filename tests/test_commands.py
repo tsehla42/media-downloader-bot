@@ -103,7 +103,7 @@ def context():
 @pytest.mark.asyncio
 async def test_caption_command_enables_captions(update, context):
     update.message.text = "/caption on"
-    with patch("commands.is_authorized", return_value=True):
+    with patch("commands.reject_if_unauthorized", return_value=False):
         await caption_command(update, context)
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args[0][0]
@@ -114,7 +114,7 @@ async def test_caption_command_enables_captions(update, context):
 @pytest.mark.asyncio
 async def test_caption_command_disables_captions(update, context):
     update.message.text = "/caption off"
-    with patch("commands.is_authorized", return_value=True):
+    with patch("commands.reject_if_unauthorized", return_value=False):
         await caption_command(update, context)
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args[0][0]
@@ -125,7 +125,7 @@ async def test_caption_command_disables_captions(update, context):
 @pytest.mark.asyncio
 async def test_caption_command_shows_status_when_no_arg(update, context):
     update.message.text = "/caption"
-    with patch("commands.is_authorized", return_value=True):
+    with patch("commands.reject_if_unauthorized", return_value=False):
         await caption_command(update, context)
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args[0][0]
@@ -137,7 +137,7 @@ async def test_caption_command_shows_status_when_no_arg(update, context):
 async def test_caption_command_shows_status_when_already_on(update, context):
     _user_caption_prefs[123456] = False  # captions on
     update.message.text = "/caption"
-    with patch("commands.is_authorized", return_value=True):
+    with patch("commands.reject_if_unauthorized", return_value=False):
         await caption_command(update, context)
     text = update.message.reply_text.call_args[0][0]
     assert "ON" in text
@@ -147,13 +147,13 @@ async def test_caption_command_shows_status_when_already_on(update, context):
 async def test_caption_command_accepts_numeric_aliases(update, context):
     """'1' enables, '0' disables, matching on/off behavior."""
     update.message.text = "/caption 1"
-    with patch("commands.is_authorized", return_value=True):
+    with patch("commands.reject_if_unauthorized", return_value=False):
         await caption_command(update, context)
     assert _user_caption_prefs[123456] is False
 
     _user_caption_prefs.clear()
     update.message.text = "/caption 0"
-    with patch("commands.is_authorized", return_value=True):
+    with patch("commands.reject_if_unauthorized", return_value=False):
         await caption_command(update, context)
     assert _user_caption_prefs[123456] is True
 
@@ -161,15 +161,10 @@ async def test_caption_command_accepts_numeric_aliases(update, context):
 @pytest.mark.asyncio
 async def test_caption_command_rejects_unauthorized_user(update, context):
     """Unauthorized user gets rejected."""
-    with patch("commands.is_authorized", return_value=False), \
-         patch("commands.was_notified", return_value=False), \
-         patch("commands.mark_notified"), \
-         patch("commands.log_unauthorized_access"):
-        update.message.text = "/caption on"
+    update.message.text = "/caption on"
+    with patch("commands.reject_if_unauthorized", return_value=True):
         await caption_command(update, context)
-        update.message.reply_text.assert_called_once()
-        text = update.message.reply_text.call_args[0][0]
-        assert "not authorized" in text
+    update.message.reply_text.assert_not_called()
     # Preference should NOT be set
     assert 123456 not in _user_caption_prefs
 
@@ -178,7 +173,7 @@ async def test_caption_command_rejects_unauthorized_user(update, context):
 async def test_caption_command_includes_reply_parameters(update, context):
     """All replies include reply_parameters with message_id."""
     update.message.text = "/caption on"
-    with patch("commands.is_authorized", return_value=True):
+    with patch("commands.reject_if_unauthorized", return_value=False):
         await caption_command(update, context)
     kwargs = update.message.reply_text.call_args[1]
     assert "reply_parameters" in kwargs
@@ -192,7 +187,7 @@ async def test_caption_command_includes_reply_parameters(update, context):
 async def test_start_command(update, context):
     """start_command sends welcome message with bot info."""
     context.bot_data = {"bot_username": "testbot"}
-    with patch("commands.is_authorized", return_value=True):
+    with patch("commands.reject_if_unauthorized", return_value=False):
         await start_command(update, context)
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args[0][0]
@@ -202,14 +197,9 @@ async def test_start_command(update, context):
 @pytest.mark.asyncio
 async def test_start_command_rejects_unauthorized_user(update, context):
     """Unauthorized user gets rejected by start_command."""
-    with patch("commands.is_authorized", return_value=False), \
-         patch("commands.was_notified", return_value=False), \
-         patch("commands.mark_notified"), \
-         patch("commands.log_unauthorized_access"):
+    with patch("commands.reject_if_unauthorized", return_value=True):
         await start_command(update, context)
-        update.message.reply_text.assert_called_once()
-        text = update.message.reply_text.call_args[0][0]
-        assert "not authorized" in text
+    update.message.reply_text.assert_not_called()
 
 
 # --- help_command tests ---
@@ -218,7 +208,7 @@ async def test_start_command_rejects_unauthorized_user(update, context):
 @pytest.mark.asyncio
 async def test_help_command(update, context):
     """help_command sends supported platforms and commands."""
-    with patch("commands.is_authorized", return_value=True):
+    with patch("commands.reject_if_unauthorized", return_value=False):
         await help_command(update, context)
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args[0][0]
@@ -230,11 +220,6 @@ async def test_help_command(update, context):
 @pytest.mark.asyncio
 async def test_help_command_rejects_unauthorized_user(update, context):
     """Unauthorized user gets rejected by help_command."""
-    with patch("commands.is_authorized", return_value=False), \
-         patch("commands.was_notified", return_value=False), \
-         patch("commands.mark_notified"), \
-         patch("commands.log_unauthorized_access"):
+    with patch("commands.reject_if_unauthorized", return_value=True):
         await help_command(update, context)
-        update.message.reply_text.assert_called_once()
-        text = update.message.reply_text.call_args[0][0]
-        assert "not authorized" in text
+    update.message.reply_text.assert_not_called()

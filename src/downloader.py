@@ -1,11 +1,9 @@
 import glob
 import json
 import os
-import re
 import subprocess
 import shutil
 import sys
-import tempfile
 
 from logging_config import details_logger as logger, get_current_request_id
 from messages import MSG_FETCH_FAILED

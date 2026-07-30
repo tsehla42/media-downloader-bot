@@ -3,6 +3,8 @@
 import os
 import re
 import shutil
+import uuid
+from config import DOWNLOAD_DIR
 
 URL_PATTERN = re.compile(r"https?://\S+")
 
@@ -81,3 +83,35 @@ def get_ytdlp_domains() -> frozenset[str]:
             return YTDLP_DOMAINS
         except Exception:
             return frozenset()
+
+
+def find_downloaded_file(base: str) -> str | None:
+    """Find the first downloaded file matching mp4/webm/mkv extensions."""
+    for ext in ["mp4", "webm", "mkv"]:
+        candidate = f"{base}.{ext}"
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def cleanup_video_files(base: str) -> None:
+    """Remove all mp4/webm/mkv variants for a download base path."""
+    for ext in ["mp4", "webm", "mkv"]:
+        cleanup_file(f"{base}.{ext}")
+
+
+def make_video_tmp_path() -> tuple[str, str, str]:
+    """Create a temp path for yt-dlp video download."""
+    tmp_id = uuid.uuid4().hex[:8]
+    output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
+    base = os.path.join(DOWNLOAD_DIR, tmp_id)
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    return tmp_id, output_path, base
+
+
+def make_tmp_dir() -> str:
+    """Create a temp directory for gallery-dl downloads."""
+    tmp_id = uuid.uuid4().hex[:8]
+    out_dir = os.path.join(DOWNLOAD_DIR, tmp_id)
+    os.makedirs(out_dir, exist_ok=True)
+    return out_dir

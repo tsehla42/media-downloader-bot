@@ -102,6 +102,7 @@ async def test_ytmusic_callback_audio_choice():
 
     with patch("platforms.youtube.download_audio", return_value=True), \
          patch("os.path.isfile", return_value=True), \
+         patch("os.remove"), \
          patch("platforms.youtube.cleanup_file"), \
          patch("builtins.open", MagicMock()), \
          patch("platforms.youtube.typing_indicator", mock_typing):
@@ -137,6 +138,7 @@ async def test_ytmusic_callback_video_choice():
 
     with patch("platforms.youtube.download_video", return_value=True), \
          patch("os.path.isfile", return_value=True), \
+         patch("os.remove"), \
          patch("platforms.youtube.cleanup_file"), \
          patch("builtins.open", MagicMock()), \
          patch("platforms.youtube.typing_indicator", mock_typing):
@@ -174,6 +176,7 @@ async def test_ytmusic_callback_both_choice():
     with patch("platforms.youtube.download_video", return_value=True), \
          patch("platforms.youtube.download_audio", return_value=True), \
          patch("os.path.isfile", return_value=True), \
+         patch("os.remove"), \
          patch("platforms.youtube.cleanup_file"), \
          patch("builtins.open", MagicMock()), \
          patch("platforms.youtube.typing_indicator", mock_typing):

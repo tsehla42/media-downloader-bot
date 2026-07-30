@@ -5,10 +5,9 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from config import MAX_FILE_SIZE
-from auth import is_authorized, was_notified, mark_notified
-from logging_config import log_unauthorized_access
+from auth import reject_if_unauthorized
 from messages import (
-    MSG_UNAUTHORIZED, MSG_CAPTION_ENABLED, MSG_CAPTION_DISABLED,
+    MSG_CAPTION_ENABLED, MSG_CAPTION_DISABLED,
     MSG_CAPTION_STATUS, MSG_START, MSG_HELP,
 )
 
@@ -26,12 +25,7 @@ def get_caption_for_user(user_id: int, title: str) -> str:
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
-    if not is_authorized(update):
-        user_id = update.message.from_user.id
-        if not was_notified(user_id):
-            await update.message.reply_text(MSG_UNAUTHORIZED)
-            mark_notified(user_id)
-            log_unauthorized_access(update.message.from_user, update.message.chat, "/start")
+    if await reject_if_unauthorized(update, "/start"):
         return
 
     await update.message.reply_text(
@@ -41,12 +35,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command."""
-    if not is_authorized(update):
-        user_id = update.message.from_user.id
-        if not was_notified(user_id):
-            await update.message.reply_text(MSG_UNAUTHORIZED)
-            mark_notified(user_id)
-            log_unauthorized_access(update.message.from_user, update.message.chat, "/help")
+    if await reject_if_unauthorized(update, "/help"):
         return
 
     await update.message.reply_text(
@@ -56,15 +45,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /caption command to toggle caption preferences."""
-    if not is_authorized(update):
-        user_id = update.message.from_user.id
-        if not was_notified(user_id):
-            await update.message.reply_text(
-                MSG_UNAUTHORIZED,
-                reply_parameters={"message_id": update.message.message_id},
-            )
-            mark_notified(user_id)
-            log_unauthorized_access(update.message.from_user, update.message.chat, "/caption")
+    if await reject_if_unauthorized(
+        update, "/caption",
+        reply_parameters={"message_id": update.message.message_id},
+    ):
         return
 
     text = update.message.text.replace("/caption", "").strip().lower()

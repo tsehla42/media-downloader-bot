@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from logging_config import setup_logging, details_logger, service_logger, log_error
 

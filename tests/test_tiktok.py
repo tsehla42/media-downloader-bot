@@ -41,7 +41,7 @@ async def test_handle_tiktok_sends_single_photo(update, context):
          patch("platforms.tiktok.download_gallery_dl_images", return_value=["/tmp/tt.jpg"]), \
          patch("platforms.tiktok.send_images", new_callable=AsyncMock, return_value=500000), \
          patch("platforms.tiktok.cleanup_dir"), \
-         patch("platforms.tiktok.cleanup_file"):
+          patch("platforms.tiktok.cleanup_video_files"):
         result = await handle_tiktok(update, context, "https://tiktok.com/@user/photo/123")
 
     assert result is True
@@ -57,7 +57,7 @@ async def test_handle_tiktok_sends_multiple_photos(update, context):
          patch("platforms.tiktok.download_gallery_dl_images", return_value=images), \
          patch("platforms.tiktok.send_images", new_callable=AsyncMock, return_value=1500000), \
          patch("platforms.tiktok.cleanup_dir"), \
-         patch("platforms.tiktok.cleanup_file"):
+          patch("platforms.tiktok.cleanup_video_files"):
         result = await handle_tiktok(update, context, "https://tiktok.com/@user/gallery/456")
 
     assert result is True
@@ -73,7 +73,7 @@ async def test_handle_tiktok_returns_false_when_gallery_dl_fails(update, context
          patch("platforms.tiktok.download_gallery_dl_images", return_value=[]), \
          patch("platforms.tiktok.send_images") as mock_send, \
          patch("platforms.tiktok.cleanup_dir"), \
-         patch("platforms.tiktok.cleanup_file"):
+          patch("platforms.tiktok.cleanup_video_files"):
         result = await handle_tiktok(update, context, "https://tiktok.com/@user/photo/789")
 
     assert result is False
@@ -87,7 +87,7 @@ async def test_handle_tiktok_cleans_up_on_success(update, context):
          patch("platforms.tiktok.download_gallery_dl_images", return_value=["/tmp/tt.jpg"]), \
          patch("platforms.tiktok.send_images", new_callable=AsyncMock, return_value=500000), \
          patch("platforms.tiktok.cleanup_dir") as mock_cleanup, \
-         patch("platforms.tiktok.cleanup_file"):
+          patch("platforms.tiktok.cleanup_video_files"):
         await handle_tiktok(update, context, "https://tiktok.com/@user/photo/123")
 
     mock_cleanup.assert_called_once()
@@ -100,7 +100,7 @@ async def test_handle_tiktok_cleans_up_on_failure(update, context):
          patch("platforms.tiktok.download_gallery_dl_images", return_value=[]), \
          patch("platforms.tiktok.send_images"), \
          patch("platforms.tiktok.cleanup_dir") as mock_cleanup, \
-         patch("platforms.tiktok.cleanup_file"):
+          patch("platforms.tiktok.cleanup_video_files"):
         await handle_tiktok(update, context, "https://tiktok.com/@user/photo/123")
 
     mock_cleanup.assert_called_once()
@@ -113,7 +113,7 @@ async def test_handle_tiktok_cleans_up_on_exception(update, context):
          patch("platforms.tiktok.download_gallery_dl_images", return_value=["/tmp/tt.jpg"]), \
          patch("platforms.tiktok.send_images", new_callable=AsyncMock, side_effect=Exception("send failed")), \
          patch("platforms.tiktok.cleanup_dir") as mock_cleanup, \
-         patch("platforms.tiktok.cleanup_file"):
+          patch("platforms.tiktok.cleanup_video_files"):
         with pytest.raises(Exception, match="send failed"):
             await handle_tiktok(update, context, "https://tiktok.com/@user/photo/123")
 
@@ -127,7 +127,7 @@ async def test_handle_tiktok_passes_empty_cookies(update, context):
          patch("platforms.tiktok.download_gallery_dl_images", return_value=[]) as mock_dl, \
          patch("platforms.tiktok.send_images"), \
          patch("platforms.tiktok.cleanup_dir"), \
-         patch("platforms.tiktok.cleanup_file"):
+          patch("platforms.tiktok.cleanup_video_files"):
         await handle_tiktok(update, context, "https://tiktok.com/@user/photo/123")
 
     mock_dl.assert_called_once()
@@ -142,7 +142,7 @@ async def test_handle_tiktok_sets_file_size_mb(update, context):
          patch("platforms.tiktok.download_gallery_dl_images", return_value=["/tmp/tt.jpg"]), \
          patch("platforms.tiktok.send_images", new_callable=AsyncMock, return_value=2 * 1024 * 1024), \
          patch("platforms.tiktok.cleanup_dir"), \
-         patch("platforms.tiktok.cleanup_file"):
+          patch("platforms.tiktok.cleanup_video_files"):
         await handle_tiktok(update, context, "https://tiktok.com/@user/photo/123")
 
     assert context.user_data["_file_size_mb"] == 2.0
@@ -155,7 +155,7 @@ async def test_handle_tiktok_zero_size_images(update, context):
          patch("platforms.tiktok.download_gallery_dl_images", return_value=["/tmp/tt.jpg"]), \
          patch("platforms.tiktok.send_images", new_callable=AsyncMock, return_value=0), \
          patch("platforms.tiktok.cleanup_dir"), \
-         patch("platforms.tiktok.cleanup_file"):
+          patch("platforms.tiktok.cleanup_video_files"):
         await handle_tiktok(update, context, "https://tiktok.com/@user/photo/123")
 
     assert context.user_data["_file_size_mb"] is None
@@ -219,7 +219,7 @@ async def test_handle_tiktok_skips_video_for_photo_post(update, context):
          patch("platforms.tiktok.download_gallery_dl_images", return_value=["/tmp/tt.jpg"]), \
          patch("platforms.tiktok.send_images", new_callable=AsyncMock, return_value=500000), \
          patch("platforms.tiktok.cleanup_dir"), \
-         patch("platforms.tiktok.cleanup_file"):
+          patch("platforms.tiktok.cleanup_video_files"):
         result = await handle_tiktok(update, context, "https://tiktok.com/@user/photo/123")
 
     assert result is True
@@ -236,7 +236,7 @@ async def test_handle_tiktok_tries_video_when_metadata_fails(update, context):
          patch("platforms.tiktok.os.path.isfile", return_value=True), \
          patch("builtins.open", MagicMock()), \
          patch("platforms.tiktok.cleanup_dir"), \
-         patch("platforms.tiktok.cleanup_file"):
+          patch("platforms.tiktok.cleanup_video_files"):
         result = await handle_tiktok(update, context, "https://tiktok.com/@user/video/123")
 
     assert result is True
@@ -254,7 +254,7 @@ async def test_handle_tiktok_tries_video_for_unknown_ext(update, context):
          patch("platforms.tiktok.os.path.isfile", return_value=True), \
          patch("builtins.open", MagicMock()), \
          patch("platforms.tiktok.cleanup_dir"), \
-         patch("platforms.tiktok.cleanup_file"):
+          patch("platforms.tiktok.cleanup_video_files"):
         result = await handle_tiktok(update, context, "https://tiktok.com/@user/video/123")
 
     assert result is True

@@ -3,7 +3,7 @@
 import json
 import os
 import pytest
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import AsyncMock, MagicMock, patch, mock_open
 
 
 def _make_update(chat_type="private", chat_id=123456, user_id=123456, from_user=True):
@@ -21,6 +21,35 @@ def _make_update(chat_type="private", chat_id=123456, user_id=123456, from_user=
         update.message.from_user = None
 
     return update
+
+
+class TestIsPrivateChat:
+    def test_private_chat_returns_true(self):
+        from auth import is_private_chat
+
+        chat = MagicMock()
+        chat.type = "private"
+        assert is_private_chat(chat) is True
+
+    def test_group_chat_returns_false(self):
+        from auth import is_private_chat
+
+        chat = MagicMock()
+        chat.type = "group"
+        assert is_private_chat(chat) is False
+
+    def test_supergroup_chat_returns_false(self):
+        from auth import is_private_chat
+
+        chat = MagicMock()
+        chat.type = "supergroup"
+        assert is_private_chat(chat) is False
+
+    def test_missing_type_returns_false(self):
+        from auth import is_private_chat
+
+        chat = MagicMock(spec=[])
+        assert is_private_chat(chat) is False
 
 
 class TestIsGroupChat:
@@ -298,3 +327,81 @@ class TestBotAdminIds:
             from config import _load_bot_admin_ids
             result = _load_bot_admin_ids()
             assert result == set()
+
+
+class TestRejectIfUnauthorized:
+    @pytest.mark.asyncio
+    async def test_returns_false_for_authorized(self):
+        from auth import reject_if_unauthorized
+
+        update = MagicMock()
+        update.message.from_user.id = 123
+        update.effective_chat.type = "private"
+        with patch("auth.is_authorized", return_value=True):
+            result = await reject_if_unauthorized(update, "/test")
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_returns_true_for_unauthorized(self):
+        from auth import reject_if_unauthorized
+        from messages import MSG_UNAUTHORIZED
+
+        update = MagicMock()
+        update.message.from_user.id = 123
+        update.message.reply_text = AsyncMock()
+        update.effective_chat.type = "private"
+        with patch("auth.is_authorized", return_value=False), \
+             patch("auth.was_notified", return_value=False), \
+             patch("auth.mark_notified"), \
+             patch("auth.log_unauthorized_access"):
+            result = await reject_if_unauthorized(update, "/test")
+            assert result is True
+            update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_reply_if_already_notified(self):
+        from auth import reject_if_unauthorized
+
+        update = MagicMock()
+        update.message.from_user.id = 123
+        update.effective_chat.type = "private"
+        with patch("auth.is_authorized", return_value=False), \
+             patch("auth.was_notified", return_value=True), \
+             patch("auth.mark_notified"), \
+             patch("auth.log_unauthorized_access"):
+            result = await reject_if_unauthorized(update, "/test")
+            assert result is True
+            update.message.reply_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_group_silent_skips_in_groups(self):
+        from auth import reject_if_unauthorized
+
+        update = MagicMock()
+        update.message.from_user.id = 123
+        update.effective_chat.type = "group"
+        with patch("auth.is_authorized", return_value=False), \
+             patch("auth.is_group_chat", return_value=True):
+            result = await reject_if_unauthorized(update, "/test", group_silent=True)
+            assert result is True
+            update.message.reply_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_passes_reply_parameters(self):
+        from auth import reject_if_unauthorized
+        from messages import MSG_UNAUTHORIZED
+
+        update = MagicMock()
+        update.message.from_user.id = 123
+        update.message.reply_text = AsyncMock()
+        update.effective_chat.type = "private"
+        params = {"message_id": 456}
+        with patch("auth.is_authorized", return_value=False), \
+             patch("auth.was_notified", return_value=False), \
+             patch("auth.mark_notified"), \
+             patch("auth.log_unauthorized_access"):
+            result = await reject_if_unauthorized(update, "/test", reply_parameters=params)
+            assert result is True
+            update.message.reply_text.assert_called_once_with(
+                MSG_UNAUTHORIZED, reply_parameters=params
+            )

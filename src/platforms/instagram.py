@@ -2,12 +2,11 @@
 
 import os
 import re
-import uuid
 
-from config import DOWNLOAD_DIR, IG_COOKIES_PATH, MAX_FILE_SIZE
+from config import IG_COOKIES_PATH, MAX_FILE_SIZE
 from downloader import download_video, download_gallery_dl_images
 from telegram_utils import send_images
-from utils import cleanup_file, cleanup_dir
+from utils import cleanup_dir, find_downloaded_file, cleanup_video_files, make_video_tmp_path, make_tmp_dir
 
 from logging_config import details_logger as _log
 
@@ -27,19 +26,11 @@ async def handle_instagram(update, context, url: str) -> bool:
 
     try:
         # Try video download first
-        tmp_id = uuid.uuid4().hex[:8]
-        output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.%(ext)s")
-        base = os.path.join(DOWNLOAD_DIR, tmp_id)
-        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        _, output_path, base = make_video_tmp_path()
 
         success = download_video(url, output_path, MAX_FILE_SIZE)
         if success:
-            downloaded = None
-            for ext in ["mp4", "webm", "mkv"]:
-                candidate = f"{base}.{ext}"
-                if os.path.isfile(candidate):
-                    downloaded = candidate
-                    break
+            downloaded = find_downloaded_file(base)
 
             if downloaded:
                 with open(downloaded, "rb") as f:
@@ -57,9 +48,7 @@ async def handle_instagram(update, context, url: str) -> bool:
                 return True
 
         # Fallback: try images with gallery-dl
-        tmp_id = uuid.uuid4().hex[:8]
-        out_dir = os.path.join(DOWNLOAD_DIR, tmp_id)
-        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        out_dir = make_tmp_dir()
         try:
             _log.info("instagram: trying gallery-dl fallback, cookies=%s", IG_COOKIES_PATH)
             images = download_gallery_dl_images(url, out_dir, IG_COOKIES_PATH)
@@ -77,5 +66,4 @@ async def handle_instagram(update, context, url: str) -> bool:
 
     finally:
         if base:
-            for ext in ["mp4", "webm", "mkv"]:
-                cleanup_file(f"{base}.{ext}")
+            cleanup_video_files(base)
