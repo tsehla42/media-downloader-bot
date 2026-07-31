@@ -26,6 +26,36 @@ def test_get_metadata_calls_ytdlp():
         call_args = mock_run.call_args[0][0]
         assert "--dump-json" in call_args
 
+
+def test_get_metadata_passes_format_selector():
+    """get_metadata passes -f flag when format_selector is provided."""
+    with patch("downloader.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps(SAMPLE_METADATA),
+            stderr=""
+        )
+        fmt = "best[ext=mp4][filesize<52428800]/best[ext=mp4]/best[filesize<52428800]/best"
+        result = get_metadata("https://youtube.com/watch?v=abc123", format_selector=fmt)
+        assert result["title"] == "Test Video"
+        call_args = mock_run.call_args[0][0]
+        assert "-f" in call_args
+        assert fmt in call_args
+
+
+def test_get_metadata_omits_format_selector_by_default():
+    """get_metadata does not pass -f flag when format_selector is None."""
+    with patch("downloader.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps(SAMPLE_METADATA),
+            stderr=""
+        )
+        result = get_metadata("https://youtube.com/watch?v=abc123")
+        assert result["title"] == "Test Video"
+        call_args = mock_run.call_args[0][0]
+        assert "-f" not in call_args
+
 def test_get_metadata_returns_none_on_failure():
     with patch("downloader.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(

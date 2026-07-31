@@ -108,7 +108,7 @@ Instagram cookie refresh via instagrapi:
 ### downloader.py
 Wraps yt-dlp and gallery-dl binary calls via subprocess:
 - `_find_ytdlp()` / `_find_gallery_dl()` - Locate binaries
-- `get_metadata(url)` - Runs `yt-dlp --dump-json --no-playlist` (60s timeout). Logs stderr on failure. Raises `DownloadAuthRequired` for age-restricted content.
+- `get_metadata(url, format_selector=None)` - Runs `yt-dlp --dump-json --no-playlist` (60s timeout). Optional `format_selector` param passes `-f` flag for accurate size estimates (used for YouTube where `download_video()` forces MP4). Logs stderr on failure. Raises `DownloadAuthRequired` for age-restricted content.
 - `download_video(url, path, max_size, platform)` - Downloads video, retries with lower quality on failure
 - `download_audio(url, path)` - Extracts audio as MP3
 - `download_images(url, dir)` - Downloads carousel/gallery images via gallery-dl

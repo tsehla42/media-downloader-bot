@@ -18,7 +18,7 @@ YouTube and YouTube Music download handling.
 
 1. Detect platform as `youtube` or `ytmusic`
 2. Skip pure playlist URLs silently
-3. Fetch metadata with `--no-playlist` (60s timeout)
+3. Fetch metadata with `VIDEO_FORMAT_SELECTOR` (matches `download_video()`'s `best[ext=mp4]...` format) for accurate size estimate (60s timeout)
 4. If age-restricted: raise `DownloadAuthRequired` → user sees "This content is restricted"
 5. Check if file size > 50MB limit
 6. If too large: skip with `skip_reason: "size_limit"`
@@ -29,12 +29,22 @@ YouTube and YouTube Music download handling.
 
 ```python
 # src/downloader.py
-def get_metadata(url: str) -> dict | None:
-    """Get video metadata via yt-dlp --dump-json."""
+def get_metadata(url: str, format_selector: str | None = None) -> dict | None:
+    """Get video metadata via yt-dlp --dump-json.
+
+    Args:
+        format_selector: Optional yt-dlp -f flag. When set, metadata reflects
+            the size of the format that will actually be downloaded (important
+            for YouTube where download_video() forces MP4, not bestvideo).
+    """
     ytdlp = _find_ytdlp()
     try:
+        cmd = [ytdlp, "--dump-json", "--no-download", "--no-playlist"]
+        if format_selector:
+            cmd.extend(["-f", format_selector])
+        cmd.append(url)
         result = subprocess.run(
-            [ytdlp, "--dump-json", "--no-download", "--no-playlist", url],
+            cmd,
             capture_output=True, text=True, timeout=60,
         )
         if result.returncode != 0:
@@ -53,6 +63,7 @@ def get_metadata(url: str) -> dict | None:
 Key behaviors:
 - **60s timeout** (up from 30s) — gives playlists and slow extractions more time
 - **`--no-playlist`** — fetches metadata for single video only, ignores playlist context
+- **Optional `format_selector`** — when set, passes `-f` flag to yt-dlp so metadata size reflects the format that will actually be downloaded. Used for YouTube where `download_video()` uses `best[ext=mp4]...` but default yt-dlp picks `bestvideo+bestaudio/best` (much larger).
 - **Stderr logging** — failure reason logged to `request-details.jsonl` for debugging
 - **Age-restriction detection** — raises `DownloadAuthRequired` for login-gated content
 

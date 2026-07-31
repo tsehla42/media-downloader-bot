@@ -37,6 +37,7 @@ from downloader import (
     download_gallery_dl_video,
     DownloadAuthRequired,
     DownloadError,
+    VIDEO_FORMAT_SELECTOR,
 )
 from messages import (
     MSG_UNAUTHORIZED, MSG_NO_URL, MSG_LOGIN_REQUIRED, MSG_SIZE_LIMIT,
@@ -350,7 +351,7 @@ async def _download_and_build_result(url: str, platform: str | None) -> tuple[di
 async def _download_youtube(url: str) -> tuple[dict, str, float | None]:
     """Download YouTube video and return (InlineQueryResult, content_type, file_size_mb)."""
     try:
-        metadata = await asyncio.to_thread(get_metadata, url)
+        metadata = await asyncio.to_thread(get_metadata, url, VIDEO_FORMAT_SELECTOR)
     except DownloadAuthRequired:
         return _text_result(MSG_LOGIN_REQUIRED), "video", None
     if not metadata:

@@ -62,7 +62,7 @@ from utils import get_gallery_dl_domains, get_ytdlp_domains
 from platforms.youtube import handle_youtube, handle_ytmusic, AUDIO_TITLE_MAX, _store_download_metadata
 from platforms.instagram import handle_instagram
 from platforms.tiktok import handle_tiktok
-from downloader import get_metadata, download_audio, download_video, download_gallery_dl_images, download_gallery_dl_video, DownloadAuthRequired, DownloadError
+from downloader import get_metadata, download_audio, download_video, download_gallery_dl_images, download_gallery_dl_video, DownloadAuthRequired, DownloadError, VIDEO_FORMAT_SELECTOR
 from messages import (
     MSG_UNSUPPORTED_PLATFORM, MSG_INVALID_URL,
     MSG_LOGIN_REQUIRED, MSG_FETCH_FAILED, MSG_SIZE_LIMIT,
@@ -367,7 +367,7 @@ async def _download_and_send(
 
     # YouTube / YouTube Music: fetch metadata first
     try:
-        metadata = get_metadata(url)
+        metadata = get_metadata(url, format_selector=VIDEO_FORMAT_SELECTOR)
     except DownloadAuthRequired:
         await _reply_failure(update, context, MSG_LOGIN_REQUIRED, "auth_required", reply_params, silent)
         return False

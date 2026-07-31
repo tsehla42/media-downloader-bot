@@ -10,6 +10,17 @@ from messages import MSG_FETCH_FAILED
 
 MAX_FILE_SIZE_MB = 50
 
+# Format selector matching download_video() — used by get_metadata() for
+# accurate pre-download size estimates (avoids rejecting videos whose
+# bestvideo+bestaudio streams exceed 50 MB but whose MP4 fallback fits).
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+VIDEO_FORMAT_SELECTOR = (
+    f"best[ext=mp4][filesize<{MAX_FILE_SIZE_BYTES}]"
+    f"/best[ext=mp4]"
+    f"/best[filesize<{MAX_FILE_SIZE_BYTES}]"
+    f"/best"
+)
+
 
 class DownloadAuthRequired(Exception):
     """Raised when content requires platform login/cookies to access."""
@@ -68,12 +79,22 @@ def _find_gallery_dl() -> str | None:
     return None
 
 
-def get_metadata(url: str) -> dict | None:
-    """Get video metadata via yt-dlp --dump-json."""
+def get_metadata(url: str, format_selector: str | None = None) -> dict | None:
+    """Get video metadata via yt-dlp --dump-json.
+
+    Args:
+        format_selector: Optional yt-dlp -f flag. When set, metadata reflects
+            the size of the format that will actually be downloaded (important
+            for YouTube where download_video() forces MP4, not bestvideo).
+    """
     ytdlp = _find_ytdlp()
     try:
+        cmd = [ytdlp, "--dump-json", "--no-download", "--no-playlist"]
+        if format_selector:
+            cmd.extend(["-f", format_selector])
+        cmd.append(url)
         result = subprocess.run(
-            [ytdlp, "--dump-json", "--no-download", "--no-playlist", url],
+            cmd,
             capture_output=True,
             text=True,
             timeout=60,
