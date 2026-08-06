@@ -26,14 +26,27 @@ async def _reply_failure(
     reply_params: dict,
     silent: bool = True,
 ) -> None:
-    """Mark request as failed, set skip reason, and optionally reply with error message."""
+    """Mark request as failed, set skip reason, and optionally reply with error message.
+
+    Group suppression rules by platform:
+    - TikTok/Instagram: show all errors
+    - YouTube: suppress size_limit only
+    - Unsupported/other: suppress all in groups
+    """
     context.user_data["_request_success"] = False
     context.user_data["_skip_reason"] = skip_reason
-    if not (is_group_chat(update) and silent):
-        await update.message.reply_text(
-            message,
-            reply_parameters=reply_params,
-        )
+    if is_group_chat(update) and silent:
+        platform = context.user_data.get("_platform", "")
+        if platform in ("tiktok", "instagram"):
+            pass  # show all errors
+        elif platform == "youtube" and skip_reason == "size_limit":
+            return  # suppress size limit for YouTube
+        else:
+            return  # suppress everything else in groups
+    await update.message.reply_text(
+        message,
+        reply_parameters=reply_params,
+    )
 
 
 async def _handle_metadata_failure(
@@ -45,16 +58,25 @@ async def _handle_metadata_failure(
     log_event: str,
     user_message: str,
 ) -> None:
-    """Handle metadata fetch failure with logging and optional reply."""
+    """Handle metadata fetch failure with logging and optional reply.
+
+    Group suppression follows same rules as _reply_failure():
+    TikTok/Instagram show all errors, YouTube/others suppress in groups.
+    """
     extra = _log_extra(context, url)
     context.user_data["_request_success"] = False
     context.user_data["_skip_reason"] = "metadata_failed"
     details_logger.info(log_event, extra=extra)
-    if not (is_group_chat(update) and silent):
-        await update.message.reply_text(
-            user_message,
-            reply_parameters=reply_params,
-        )
+    if is_group_chat(update) and silent:
+        platform = context.user_data.get("_platform", "")
+        if platform in ("tiktok", "instagram"):
+            pass  # show all errors
+        else:
+            return  # suppress for YouTube and others in groups
+    await update.message.reply_text(
+        user_message,
+        reply_parameters=reply_params,
+    )
 
 
 from platforms import detect_platform, extract_domain

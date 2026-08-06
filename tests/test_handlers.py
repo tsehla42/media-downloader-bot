@@ -871,8 +871,8 @@ async def test_download_and_send_tiktok_login_required_p2p():
 
 
 @pytest.mark.asyncio
-async def test_download_and_send_tiktok_login_required_group_silent():
-    """DownloadAuthRequired in group (normal URL) is silent."""
+async def test_download_and_send_tiktok_login_required_group():
+    """DownloadAuthRequired in group shows error for TikTok."""
     update = MagicMock()
     update.message.message_id = 42
     update.message.from_user.id = 123
@@ -891,7 +891,7 @@ async def test_download_and_send_tiktok_login_required_group_silent():
          patch("platforms.tiktok.cleanup_dir"):
         await _download_and_send(update, context, "https://tiktok.com/@user/video/123")
 
-    update.message.reply_text.assert_not_called()
+    update.message.reply_text.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -949,8 +949,8 @@ async def test_download_and_send_instagram_login_required_p2p():
 
 
 @pytest.mark.asyncio
-async def test_download_and_send_instagram_login_required_group_silent():
-    """DownloadAuthRequired from Instagram in group (normal URL) is silent."""
+async def test_download_and_send_instagram_login_required_group():
+    """DownloadAuthRequired from Instagram in group shows error."""
     update = MagicMock()
     update.message.message_id = 42
     update.message.from_user.id = 123
@@ -967,7 +967,7 @@ async def test_download_and_send_instagram_login_required_group_silent():
          patch("platforms.instagram.cleanup_video_files"):
         await _download_and_send(update, context, "https://www.instagram.com/reel/DUruRXWChNQ")
 
-    update.message.reply_text.assert_not_called()
+    update.message.reply_text.assert_called_once()
 
 
 @pytest.mark.asyncio
