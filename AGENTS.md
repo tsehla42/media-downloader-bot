@@ -202,6 +202,8 @@ All 391 tests use mocked subprocess calls - no real downloads needed.
 
 **Change download behavior:** Edit `src/downloader.py` for yt-dlp changes, or the platform-specific handler in `src/platforms/` for platform logic.
 
+**Docker tool versions:** `gallery-dl` is pinned to 1.32.4 in the Dockerfile. Version 1.32.9+ has a TikTok regression (403 Forbidden). Do NOT upgrade without testing TikTok first. `yt-dlp` installs from master with curl-cffi for TikTok impersonation support.
+
 **Add logging to a handler:** Apply `@with_request_logging` decorator from `logging_config`. The decorator automatically logs request lifecycle (received/completed/failed).
 
 **Setup for groups:** Disable privacy mode in @BotFather (`/setprivacy` → Disable). Optionally set `ALLOWED_GROUP_IDS` in .env to restrict which groups. Add bot to target groups.
@@ -223,9 +225,32 @@ Run this from the project root on the current host. **Do NOT run raw SSH command
 
 **Deploy timing:** `./bot.sh deploy` runs remotely and can take several minutes. Run it and return without waiting for it to finish — the script handles everything internally.
 
+## Production Environment
+
+**The bot runs on a remote server, not locally.** Local `docker ps` will always show nothing — the production container lives on the remote server. See `docs/deploy.md` for server details.
+
+### Pulling Logs for Debugging
+
+**Before analyzing ANY errors, pull production logs first:**
+```bash
+./bot.sh pull-logs
+```
+This copies today's logs from the server into local `logs/YYYY-MM-DD/`. Then read those files.
+
+**Do NOT** read `logs/*.dev.jsonl` for production issues — those are local dev bot logs.
+
+### Quick Debugging Commands
+
+```bash
+# Pull logs
+./bot.sh pull-logs
+
+# See docs/deploy.md for SSH commands to check container status, tail logs, etc.
+```
+
 ## Docs Index
 
 - [Project Overview](docs/README.md) - Quick summary of what/why, architecture, and links to detailed docs
+- [Deployment](docs/deploy.md) - Production server, SSH access, deploy commands (gitignored)
 - [Guest Mode](docs/guest-mode/README.md) - Bot API 10.0 guest mode overview and technical reference
 - [Cookies](docs/cookies.md) - Instagram cookie refresh setup and troubleshooting
-- [Deployment](docs/deploy.md) - Production server deployment flow

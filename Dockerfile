@@ -24,7 +24,7 @@ FROM python:${PYTHON_VERSION}-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir "yt-dlp[default,curl-cffi] @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz" gallery-dl
+    && pip install --no-cache-dir "yt-dlp[default,curl-cffi] @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz" "gallery-dl==1.32.4"
 
 # Deno JS runtime for yt-dlp YouTube extraction
 COPY --from=denoland/deno:latest --chmod=755 /usr/bin/deno /usr/bin/deno
