@@ -42,7 +42,7 @@ from downloader import (
 from messages import (
     MSG_UNAUTHORIZED, MSG_NO_URL, MSG_LOGIN_REQUIRED, MSG_SIZE_LIMIT,
     MSG_UNSUPPORTED_PLATFORM, MSG_METADATA_FAILED, MSG_DOWNLOAD_FAILED,
-    MSG_GUEST_NO_IMAGES,
+    MSG_GUEST_NO_IMAGES, MSG_GUEST_MEDIA_GROUP_CAPTION,
     MSG_GUEST_METADATA_FAILED, MSG_GUEST_UPLOAD_FAILED,
     MSG_GUEST_DOWNLOAD_NOT_FOUND, MSG_GUEST_COULD_NOT_DOWNLOAD,
     MSG_GUEST_CONTENT_NOT_FOUND,
@@ -94,20 +94,25 @@ def _video_result(file_id: str, title: str = "Video", thumbnail_url: str = "") -
     }
 
 
-def _photo_result(file_id: str) -> dict:
+def _photo_result(file_id: str, caption: str = "") -> dict:
     """Build InlineQueryResultPhoto for single photo response."""
-    return {
+    result = {
         "type": "photo",
         "id": uuid.uuid4().hex[:8],
         "photo_file_id": file_id,
         "thumbnail_url": "",
     }
+    if caption:
+        result["caption"] = caption
+    return result
 
 
 def _media_group_result(file_ids: list[str]) -> dict:
     """Show first image from a media group (inline results don't support groups)."""
     if file_ids:
-        return _photo_result(file_ids[0])
+        count = len(file_ids)
+        caption = MSG_GUEST_MEDIA_GROUP_CAPTION.format(count=count) if count > 1 else ""
+        return _photo_result(file_ids[0], caption=caption)
     return _text_result(MSG_GUEST_NO_IMAGES)
 
 

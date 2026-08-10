@@ -134,11 +134,23 @@ class TestMediaGroupResult:
         assert result["type"] == "photo"
         assert result["photo_file_id"] == "file_1"
 
+    def test_single_file_no_caption(self):
+        from guest import _media_group_result
+        result = _media_group_result(["file_1"])
+        assert "caption" not in result
+
     def test_multiple_files_returns_first_photo(self):
         from guest import _media_group_result
         result = _media_group_result(["first", "second", "third"])
         assert result["type"] == "photo"
         assert result["photo_file_id"] == "first"
+
+    def test_multiple_files_has_caption_with_count(self):
+        from guest import _media_group_result
+        result = _media_group_result(["a", "b", "c", "d", "e", "f", "g", "h"])
+        assert "caption" in result
+        assert "8 photos" in result["caption"]
+        assert "Guest Mode" in result["caption"]
 
     def test_empty_list_returns_text_result(self):
         from guest import _media_group_result

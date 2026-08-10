@@ -62,3 +62,4 @@ CLAUDE.md
 
 deploy.sh
 pull-logs.sh
+version.sh

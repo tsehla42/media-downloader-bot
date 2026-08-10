@@ -74,3 +74,7 @@ MSG_GUEST_UPLOAD_FAILED = "Failed to upload video to Telegram"
 MSG_GUEST_DOWNLOAD_NOT_FOUND = "Downloaded file not found"
 MSG_GUEST_COULD_NOT_DOWNLOAD = "Could not download media from this URL"
 MSG_GUEST_CONTENT_NOT_FOUND = "Unsupported platform or content not found"
+MSG_GUEST_MEDIA_GROUP_CAPTION = (
+    "Telegram allows sending only 1 photo in Guest Mode. "
+    "This post has {count} photos. To get them, send the link as a direct message"
+)
