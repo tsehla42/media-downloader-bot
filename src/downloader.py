@@ -10,6 +10,8 @@ from messages import MSG_FETCH_FAILED
 
 MAX_FILE_SIZE_MB = 50
 
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+
 # Format selector matching download_video() — used by get_metadata() for
 # accurate pre-download size estimates (avoids rejecting videos whose
 # bestvideo+bestaudio streams exceed 50 MB but whose MP4 fallback fits).
@@ -89,7 +91,7 @@ def get_metadata(url: str, format_selector: str | None = None) -> dict | None:
     """
     ytdlp = _find_ytdlp()
     try:
-        cmd = [ytdlp, "--dump-json", "--no-download", "--no-playlist"]
+        cmd = [ytdlp, "--dump-json", "--no-download", "--no-playlist", "--user-agent", USER_AGENT]
         if format_selector:
             cmd.extend(["-f", format_selector])
         cmd.append(url)
@@ -193,6 +195,7 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
             "--merge-output-format", "mp4",
             "-o", output_path,
             "--no-playlist",
+            "--user-agent", USER_AGENT,
             *extra_args,
             url,
         ],
@@ -217,6 +220,7 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
             "--merge-output-format", "mp4",
             "-o", output_path,
             "--no-playlist",
+            "--user-agent", USER_AGENT,
             url,
         ],
         capture_output=True,
@@ -268,6 +272,7 @@ def download_audio(url: str, output_path: str) -> bool:
             "--audio-format", "mp3",
             "-o", output_path,
             "--no-playlist",
+            "--user-agent", USER_AGENT,
             url,
         ],
         capture_output=True,
@@ -304,6 +309,7 @@ def download_images(url: str, output_dir: str) -> list[str]:
             "-o", f"{output_dir}/%(id)s.%(ext)s",
             "--write-thumbnail",
             "--no-download",
+            "--user-agent", USER_AGENT,
             url,
         ],
         capture_output=True,
