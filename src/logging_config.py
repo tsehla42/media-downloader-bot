@@ -235,12 +235,12 @@ def log_request_completed(
     message = messages.get(event, "Request completed")
     log_data = {
         "event": event,
+        "success": success,
         "message": message,
         "request_id": request_id,
         "url": url,
         "platform": platform,
         "duration_ms": duration_ms,
-        "success": success,
         "content_type": content_type,
         "file_size_mb": file_size_mb,
     }
@@ -343,13 +343,13 @@ def log_guest_request_completed(
     """Log when a guest request completes."""
     log_data = {
         "event": "guest_request_completed",
+        "success": success,
         "message": "Guest request completed",
         "request_id": request_id,
         "guest_query_id": guest_query_id,
         "url": url,
         "platform": platform,
         "duration_ms": duration_ms,
-        "success": success,
         "cache": cache_hit,
         "content_type": content_type,
         "file_size_mb": file_size_mb,

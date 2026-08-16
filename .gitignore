@@ -52,6 +52,8 @@ docs/*
 !docs/content-delivery/
 !docs/cache/
 !docs/cookies.md
+# Incident reports — kept on disk but not tracked in git
+docs/incidents/
 
 CLAUDE.md
 

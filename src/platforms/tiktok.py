@@ -3,7 +3,7 @@
 import os
 
 from config import MAX_FILE_SIZE
-from downloader import download_video, download_gallery_dl_images, get_metadata
+from downloader import download_video, download_gallery_dl_images, get_metadata, TIKTOK_REFERER
 from telegram_utils import send_images
 from utils import cleanup_dir, find_downloaded_file, cleanup_video_files, make_video_tmp_path, make_tmp_dir
 from logging_config import details_logger as _log
@@ -21,7 +21,7 @@ async def handle_tiktok(update, context, url: str) -> bool:
 
     try:
         # Best-effort: check metadata to detect photo posts early
-        metadata = get_metadata(url)
+        metadata = get_metadata(url, referer=TIKTOK_REFERER)
         if metadata:
             ext = (metadata.get("ext") or "").lower()
             if ext in IMAGE_EXTENSIONS:

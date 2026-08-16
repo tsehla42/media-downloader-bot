@@ -21,6 +21,12 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 FROM python:${PYTHON_VERSION}-slim
 
 # Install yt-dlp and gallery-dl via pip, ffmpeg for audio extraction
+# yt-dlp: installed from master (not a pinned release) because scraper tools
+# need fast turnaround when platforms change their APIs. Rebuilding the image
+# picks up fixes within hours instead of waiting for a release. The tradeoff
+# is no reproducibility, but this bot breaks when extractors go stale, so
+# staying current outweighs pinning.
+# gallery-dl: pinned to 1.32.4 — version 1.32.9+ broke TikTok extraction.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/* \

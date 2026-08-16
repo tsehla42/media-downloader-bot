@@ -11,6 +11,7 @@ from messages import MSG_FETCH_FAILED
 MAX_FILE_SIZE_MB = 50
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+TIKTOK_REFERER = "https://www.tiktok.com/"
 
 # Format selector matching download_video() — used by get_metadata() for
 # accurate pre-download size estimates (avoids rejecting videos whose
@@ -81,17 +82,20 @@ def _find_gallery_dl() -> str | None:
     return None
 
 
-def get_metadata(url: str, format_selector: str | None = None) -> dict | None:
+def get_metadata(url: str, format_selector: str | None = None, referer: str = "") -> dict | None:
     """Get video metadata via yt-dlp --dump-json.
 
     Args:
         format_selector: Optional yt-dlp -f flag. When set, metadata reflects
             the size of the format that will actually be downloaded (important
             for YouTube where download_video() forces MP4, not bestvideo).
+        referer: Optional Referer header (e.g. for TikTok anti-bot bypass).
     """
     ytdlp = _find_ytdlp()
     try:
         cmd = [ytdlp, "--dump-json", "--no-download", "--no-playlist", "--user-agent", USER_AGENT]
+        if referer:
+            cmd.extend(["--referer", referer])
         if format_selector:
             cmd.extend(["-f", format_selector])
         cmd.append(url)
@@ -186,6 +190,7 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     extra_args = []
     if platform == "tiktok":
         extra_args.extend(["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"])
+        extra_args.extend(["--referer", TIKTOK_REFERER])
 
     logger.info("download_video: running yt-dlp", extra=extra)
     result = subprocess.run(
