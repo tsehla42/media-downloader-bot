@@ -7,11 +7,9 @@ import sys
 
 from logging_config import details_logger as logger, get_current_request_id
 from messages import MSG_FETCH_FAILED
+from platform_args import USER_AGENT, COMMON_YTDL_ARGS, TIKTOK_REFERER
 
 MAX_FILE_SIZE_MB = 50
-
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
-TIKTOK_REFERER = "https://www.tiktok.com/"
 
 # Format selector matching download_video() — used by get_metadata() for
 # accurate pre-download size estimates (avoids rejecting videos whose
@@ -91,16 +89,15 @@ def get_metadata(url: str, format_selector: str | None = None, referer: str = ""
             for YouTube where download_video() forces MP4, not bestvideo).
         referer: Optional Referer header (e.g. for TikTok anti-bot bypass).
     """
-    ytdlp = _find_ytdlp()
     try:
-        cmd = [ytdlp, "--dump-json", "--no-download", "--no-playlist", "--user-agent", USER_AGENT]
+        args = ["--dump-json", "--no-download", *COMMON_YTDL_ARGS]
         if referer:
-            cmd.extend(["--referer", referer])
+            args.extend(["--referer", referer])
         if format_selector:
-            cmd.extend(["-f", format_selector])
-        cmd.append(url)
+            args.extend(["-f", format_selector])
+        args.append(url)
         result = subprocess.run(
-            cmd,
+            [_find_ytdlp(), *args],
             capture_output=True,
             text=True,
             timeout=60,
@@ -181,33 +178,30 @@ def _ensure_faststart(filepath: str) -> str | None:
     return None
 
 
-def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_MB, platform: str = "") -> bool:
-    """Download video, retrying with lower quality if too large."""
-    ytdlp = _find_ytdlp()
-    max_bytes = max_size_mb * 1024 * 1024
-    extra = _log_extra(url, platform)
-
-    extra_args = []
-    if platform == "tiktok":
-        extra_args.extend(["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"])
-        extra_args.extend(["--referer", TIKTOK_REFERER])
-
-    logger.info("download_video: running yt-dlp", extra=extra)
-    result = subprocess.run(
-        [
-            ytdlp,
-            "-f", f"best[ext=mp4][filesize<{max_bytes}]/best[ext=mp4]/best[filesize<{max_bytes}]/best",
-            "--merge-output-format", "mp4",
-            "-o", output_path,
-            "--no-playlist",
-            "--user-agent", USER_AGENT,
-            *extra_args,
-            url,
-        ],
+def _run_ytdlp(args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
+    """Run yt-dlp with common flags. Returns CompletedProcess."""
+    return subprocess.run(
+        [_find_ytdlp(), *COMMON_YTDL_ARGS, *args],
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=timeout,
     )
+
+
+def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_MB, platform: str = "") -> bool:
+    """Download video, retrying with lower quality if too large."""
+    max_bytes = max_size_mb * 1024 * 1024
+    extra = _log_extra(url, platform)
+    platform_args = ["--referer", TIKTOK_REFERER] if platform == "tiktok" else []
+
+    logger.info("download_video: running yt-dlp", extra=extra)
+    result = _run_ytdlp([
+        "-f", f"best[ext=mp4][filesize<{max_bytes}]/best[ext=mp4]/best[filesize<{max_bytes}]/best",
+        "--merge-output-format", "mp4",
+        "-o", output_path,
+        *platform_args,
+        url,
+    ])
 
     if result.returncode == 0:
         _apply_faststart(output_path, extra)
@@ -218,20 +212,13 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     extra["yt_dlp_stderr"] = stderr
     logger.info("download_video: retrying with lower quality", extra=extra)
 
-    result = subprocess.run(
-        [
-            ytdlp,
-            "-f", f"worst[ext=mp4][filesize<{max_bytes}]/worst[ext=mp4]/worst[filesize<{max_bytes}]/worst",
-            "--merge-output-format", "mp4",
-            "-o", output_path,
-            "--no-playlist",
-            "--user-agent", USER_AGENT,
-            url,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    result = _run_ytdlp([
+        "-f", f"worst[ext=mp4][filesize<{max_bytes}]/worst[ext=mp4]/worst[filesize<{max_bytes}]/worst",
+        "--merge-output-format", "mp4",
+        "-o", output_path,
+        *platform_args,
+        url,
+    ])
 
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
@@ -267,23 +254,14 @@ def _apply_faststart(output_path: str, extra: dict) -> None:
 
 def download_audio(url: str, output_path: str) -> bool:
     """Extract audio as MP3."""
-    ytdlp = _find_ytdlp()
     extra = _log_extra(url)
     logger.info("download_audio: running yt-dlp", extra=extra)
-    result = subprocess.run(
-        [
-            ytdlp,
-            "--extract-audio",
-            "--audio-format", "mp3",
-            "-o", output_path,
-            "--no-playlist",
-            "--user-agent", USER_AGENT,
-            url,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    result = _run_ytdlp([
+        "--extract-audio",
+        "--audio-format", "mp3",
+        "-o", output_path,
+        url,
+    ])
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
         extra["yt_dlp_stderr"] = stderr
@@ -306,21 +284,13 @@ def download_images(url: str, output_dir: str) -> list[str]:
         return images
 
     # Fallback: yt-dlp can extract thumbnails from video posts
-    ytdlp = _find_ytdlp()
     os.makedirs(output_dir, exist_ok=True)
-    result = subprocess.run(
-        [
-            ytdlp,
-            "-o", f"{output_dir}/%(id)s.%(ext)s",
-            "--write-thumbnail",
-            "--no-download",
-            "--user-agent", USER_AGENT,
-            url,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    result = _run_ytdlp([
+        "-o", f"{output_dir}/%(id)s.%(ext)s",
+        "--write-thumbnail",
+        "--no-download",
+        url,
+    ], timeout=60)
     if result.returncode != 0:
         return []
     return sorted(glob.glob(f"{output_dir}/*.[jp][pn]g") + glob.glob(f"{output_dir}/*.webp"))

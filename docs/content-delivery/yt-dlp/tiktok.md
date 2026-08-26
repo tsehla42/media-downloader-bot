@@ -11,11 +11,13 @@ TikTok video download handling.
 ## Download Flow
 
 1. Detect platform as `tiktok`
-2. Fetch metadata via `get_metadata()` to check file extension
+2. Fetch metadata via `get_metadata()` with `--referer` (WAF bypass) to check file extension
 3. If metadata indicates photo post (ext in jpg/jpeg/png/webp): try gallery-dl images first
-4. If not a photo post (or gallery-dl fails): try yt-dlp video download
+4. If not a photo post (or gallery-dl fails): try yt-dlp video download via `_run_ytdlp()`
 5. If video download fails: fallback to gallery-dl images
 6. Send to user
+
+The referer header (`https://www.tiktok.com/`) is defined in `src/platform_args.py` as `TIKTOK_REFERER` and applied to all TikTok yt-dlp calls. This bypasses TikTok's Akamai WAF challenge.
 
 ## Three-Stage Process
 
