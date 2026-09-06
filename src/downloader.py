@@ -8,6 +8,7 @@ import sys
 from logging_config import details_logger as logger, get_current_request_id
 from messages import MSG_FETCH_FAILED
 from platform_args import USER_AGENT, COMMON_YTDL_ARGS, TIKTOK_REFERER
+from config import TIKTOK_COOKIES_PATH
 
 MAX_FILE_SIZE_MB = 50
 
@@ -80,7 +81,7 @@ def _find_gallery_dl() -> str | None:
     return None
 
 
-def get_metadata(url: str, format_selector: str | None = None, referer: str = "") -> dict | None:
+def get_metadata(url: str, format_selector: str | None = None, referer: str = "", cookies: str = "") -> dict | None:
     """Get video metadata via yt-dlp --dump-json.
 
     Args:
@@ -88,11 +89,14 @@ def get_metadata(url: str, format_selector: str | None = None, referer: str = ""
             the size of the format that will actually be downloaded (important
             for YouTube where download_video() forces MP4, not bestvideo).
         referer: Optional Referer header (e.g. for TikTok anti-bot bypass).
+        cookies: Optional path to cookies file (Netscape format).
     """
     try:
         args = ["--dump-json", "--no-download", *COMMON_YTDL_ARGS]
         if referer:
             args.extend(["--referer", referer])
+        if cookies and os.path.isfile(cookies):
+            args.extend(["--cookies", cookies])
         if format_selector:
             args.extend(["-f", format_selector])
         args.append(url)
@@ -193,6 +197,8 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     max_bytes = max_size_mb * 1024 * 1024
     extra = _log_extra(url, platform)
     platform_args = ["--referer", TIKTOK_REFERER] if platform == "tiktok" else []
+    if platform == "tiktok" and TIKTOK_COOKIES_PATH and os.path.isfile(TIKTOK_COOKIES_PATH):
+        platform_args.extend(["--cookies", TIKTOK_COOKIES_PATH])
 
     logger.info("download_video: running yt-dlp", extra=extra)
     result = _run_ytdlp([

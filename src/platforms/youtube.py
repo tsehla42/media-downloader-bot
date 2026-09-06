@@ -163,7 +163,7 @@ async def ytmusic_callback(update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         tmp_id, output_path, base = make_video_tmp_path()
 
-        reply_params = {"message_id": msg_id}
+        reply_params = {"message_id": msg_id, "allow_sending_without_reply": True}
 
         try:
             if choice == "audio":

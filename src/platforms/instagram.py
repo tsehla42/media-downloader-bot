@@ -21,7 +21,7 @@ async def handle_instagram(update, context, url: str) -> bool:
         _log.info("instagram: stories URL without cookies, skipping", extra={"url": url})
         return False
 
-    reply_params = {"message_id": update.message.message_id}
+    reply_params = {"message_id": update.message.message_id, "allow_sending_without_reply": True}
     base = None
 
     try:

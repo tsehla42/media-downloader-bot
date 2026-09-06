@@ -194,7 +194,7 @@ async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 @with_request_logging
 async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    reply_params = {"message_id": update.message.message_id}
+    reply_params = {"message_id": update.message.message_id, "allow_sending_without_reply": True}
 
     if await reject_if_unauthorized(update, "/audio", reply_parameters=reply_params, group_silent=True):
         context.user_data["_request_success"] = False
@@ -301,9 +301,9 @@ async def _download_and_send(
     from config import MAX_FILE_SIZE
 
     if reply_to_message_id:
-        reply_params = {"message_id": reply_to_message_id}
+        reply_params = {"message_id": reply_to_message_id, "allow_sending_without_reply": True}
     else:
-        reply_params = {"message_id": update.message.message_id}
+        reply_params = {"message_id": update.message.message_id, "allow_sending_without_reply": True}
 
     platform = detect_platform(url)
     context.user_data["_platform"] = platform or ""
@@ -465,7 +465,7 @@ async def handle_gallery_dl_fallback(update: Update, context: ContextTypes.DEFAU
 
     Returns True if content was sent, False otherwise.
     """
-    reply_params = {"message_id": update.message.message_id}
+    reply_params = {"message_id": update.message.message_id, "allow_sending_without_reply": True}
 
     # Set platform from URL domain for logging
     from urllib.parse import urlparse
@@ -537,7 +537,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not update.message or not update.message.text:
         return
 
-    if await reject_if_unauthorized(update, "url", reply_parameters={"message_id": update.message.message_id}, group_silent=True):
+    if await reject_if_unauthorized(update, "url", reply_parameters={"message_id": update.message.message_id, "allow_sending_without_reply": True}, group_silent=True):
         return
 
     # Unauthorized user replying to bot message in a group — silently ignore
@@ -613,7 +613,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         if not is_group_chat(update):
             await update.message.reply_text(
                 MSG_INVALID_URL,
-                reply_parameters={"message_id": update.message.message_id},
+                reply_parameters={"message_id": update.message.message_id, "allow_sending_without_reply": True},
             )
         return
 
@@ -671,12 +671,12 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             context.user_data["_skip_reason"] = "fetch_failed"
             await update.message.reply_text(
                 MSG_UNSUPPORTED_PLATFORM,
-                reply_parameters={"message_id": update.message.message_id},
+                reply_parameters={"message_id": update.message.message_id, "allow_sending_without_reply": True},
             )
     elif unsupported_urls and not is_group_chat(update) and not youtube_urls and not other_ytdlp_urls and not gallery_dl_urls:
         # All URLs are unsupported
         context.user_data["_skip_reason"] = "unsupported"
         await update.message.reply_text(
             MSG_UNSUPPORTED_PLATFORM,
-            reply_parameters={"message_id": update.message.message_id},
+            reply_parameters={"message_id": update.message.message_id, "allow_sending_without_reply": True},
         )

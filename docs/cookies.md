@@ -1,6 +1,52 @@
-# Instagram Cookie Refresh System
+# Cookie System
+
+The bot supports cookies for both Instagram and TikTok to enable authenticated downloads.
+
+## Instagram Cookie Refresh System
 
 Instagram image downloads via gallery-dl require authentication cookies. The bot includes a full cookie refresh system that handles login, session persistence, staleness checking, and automated renewal via cron.
+
+## TikTok Cookies
+
+TikTok requires authentication for age-restricted and login-gated content. Unlike Instagram, TikTok cookies are manually exported from a browser and refreshed periodically.
+
+### Setup
+
+1. Log into TikTok in a desktop browser (Chrome, Firefox, etc.)
+2. Install "Get cookies.txt LOCALLY" extension ([Chrome](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc))
+3. Export cookies for `tiktok.com` as Netscape format
+4. Place file as `tiktok-cookies.txt` in project root
+5. Set `TIKTOK_COOKIES_PATH=tiktok-cookies.txt` in `.env` (optional, default is correct)
+
+### How It Works
+
+- `get_metadata()` receives `cookies=TIKTOK_COOKIES_PATH` for TikTok URLs
+- `download_video()` receives `--cookies` flag when `platform="tiktok"`
+- `download_gallery_dl_images()` receives cookies for TikTok photo posts
+- Cookie file is mounted as writable volume (yt-dlp writes back to update cookies)
+
+### Cookie Expiration
+
+Cookies expire after ~30 days. When expired, TikTok downloads will fail with auth errors. Refresh by re-exporting from browser.
+
+### Setup
+
+1. Export cookies from browser (see above)
+2. Place `tiktok-cookies.txt` in project root
+3. Rebuild and restart:
+
+```bash
+docker compose up -d --build
+```
+
+The container picks up the new file via volume mount in `docker-compose.yml`:
+
+```yaml
+volumes:
+  - ./tiktok-cookies.txt:/usr/src/app/tiktok-cookies.txt
+```
+
+Note: Unlike Instagram cookies, TikTok cookies are mounted as **writable** (not `:ro`) because yt-dlp writes back to update cookies.
 
 ## Architecture
 

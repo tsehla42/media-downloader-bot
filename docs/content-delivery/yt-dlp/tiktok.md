@@ -11,13 +11,36 @@ TikTok video download handling.
 ## Download Flow
 
 1. Detect platform as `tiktok`
-2. Fetch metadata via `get_metadata()` with `--referer` (WAF bypass) to check file extension
-3. If metadata indicates photo post (ext in jpg/jpeg/png/webp): try gallery-dl images first
-4. If not a photo post (or gallery-dl fails): try yt-dlp video download via `_run_ytdlp()`
-5. If video download fails: fallback to gallery-dl images
+2. Fetch metadata via `get_metadata()` with `--referer` (WAF bypass) and `--cookies` (auth) to check file extension
+3. If metadata indicates photo post (ext in jpg/jpeg/png/webp): try gallery-dl images first (with cookies)
+4. If not a photo post (or gallery-dl fails): try yt-dlp video download via `_run_ytdlp()` (with cookies)
+5. If video download fails: fallback to gallery-dl images (with cookies)
 6. Send to user
 
 The referer header (`https://www.tiktok.com/`) is defined in `src/platform_args.py` as `TIKTOK_REFERER` and applied to all TikTok yt-dlp calls. This bypasses TikTok's Akamai WAF challenge.
+
+## TikTok Cookies
+
+TikTok requires authentication for age-restricted and login-gated content. The bot supports browser-exported Netscape cookies (`tiktok-cookies.txt`) passed to yt-dlp and gallery-dl.
+
+### Setup
+
+1. Log into TikTok in a desktop browser (Chrome, Firefox, etc.)
+2. Install "Get cookies.txt LOCALLY" extension
+3. Export cookies for `tiktok.com` as Netscape format
+4. Place file as `tiktok-cookies.txt` in project root
+5. Set `TIKTOK_COOKIES_PATH=tiktok-cookies.txt` in `.env` (optional, default is correct)
+
+### How It Works
+
+- `get_metadata()` receives `cookies=TIKTOK_COOKIES_PATH` for TikTok URLs
+- `download_video()` receives `--cookies` flag when `platform="tiktok"`
+- `download_gallery_dl_images()` receives cookies for TikTok photo posts
+- Cookie file is mounted as writable volume (yt-dlp writes back to update cookies)
+
+### Cookie Expiration
+
+Cookies expire after ~30 days. When expired, TikTok downloads will fail with auth errors. Refresh by re-exporting from browser.
 
 ## Three-Stage Process
 
@@ -25,27 +48,27 @@ The referer header (`https://www.tiktok.com/`) is defined in `src/platform_args.
 # src/platforms/tiktok.py
 async def handle_tiktok(update, context, url: str) -> bool:
     """Handle TikTok URL: check metadata for photo posts, fallback to gallery-dl."""
-    reply_params = {"message_id": update.message.message_id}
+    reply_params = {"message_id": update.message.message_id, "allow_sending_without_reply": True}
 
-    # Stage 1: Check metadata for photo posts
-    metadata = get_metadata(url)
+    # Stage 1: Check metadata for photo posts (with cookies)
+    metadata = get_metadata(url, referer=TIKTOK_REFERER, cookies=TIKTOK_COOKIES_PATH)
     if metadata:
         ext = (metadata.get("ext") or "").lower()
         if ext in IMAGE_EXTENSIONS:  # {"jpg", "jpeg", "png", "webp"}
-            images = download_gallery_dl_images(url, out_dir, "")
+            images = download_gallery_dl_images(url, out_dir, TIKTOK_COOKIES_PATH)
             if images:
                 await send_images(update.message, images, reply_params)
                 return True
 
-    # Stage 2: Try video download via yt-dlp
+    # Stage 2: Try video download via yt-dlp (with cookies)
     success = download_video(url, output_path, MAX_FILE_SIZE, platform="tiktok")
     if success:
         # Find downloaded file and send as video
         # ...
         return True
 
-    # Stage 3: Fallback to gallery-dl for images
-    images = download_gallery_dl_images(url, out_dir, "")
+    # Stage 3: Fallback to gallery-dl for images (with cookies)
+    images = download_gallery_dl_images(url, out_dir, TIKTOK_COOKIES_PATH)
     if images:
         await send_images(update.message, images, reply_params)
         return True
@@ -106,6 +129,8 @@ Some TikTok videos are gated behind "This post may not be comfortable for some a
 - **Group chat (reply-to-retry)**: message shown
 - **Guest mode**: message shown via `answer_guest_query()`
 
+With TikTok cookies configured, age-restricted content can be downloaded directly.
+
 ### Download Failed
 - Try gallery-dl fallback
 - If fallback fails, send error
@@ -118,3 +143,4 @@ Some TikTok videos are gated behind "This post may not be comfortable for some a
 
 - [yt-dlp Integration](README.md) - General yt-dlp docs
 - [gallery-dl Fallback](../gallery-dl/fallback-strategy.md) - Fallback logic
+- [Cookies](../../cookies.md) - TikTok and Instagram cookie setup

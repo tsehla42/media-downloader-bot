@@ -47,7 +47,7 @@ async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Handle /caption command to toggle caption preferences."""
     if await reject_if_unauthorized(
         update, "/caption",
-        reply_parameters={"message_id": update.message.message_id},
+        reply_parameters={"message_id": update.message.message_id, "allow_sending_without_reply": True},
     ):
         return
 
@@ -58,18 +58,18 @@ async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         _user_caption_prefs[user_id] = False
         await update.message.reply_text(
             MSG_CAPTION_ENABLED,
-            reply_parameters={"message_id": update.message.message_id},
+            reply_parameters={"message_id": update.message.message_id, "allow_sending_without_reply": True},
         )
     elif text in ("off", "0", "false", "no"):
         _user_caption_prefs[user_id] = True
         await update.message.reply_text(
             MSG_CAPTION_DISABLED,
-            reply_parameters={"message_id": update.message.message_id},
+            reply_parameters={"message_id": update.message.message_id, "allow_sending_without_reply": True},
         )
     else:
         current = _user_caption_prefs.get(user_id, True)
         state = "OFF (no captions)" if current else "ON (captions shown)"
         await update.message.reply_text(
             MSG_CAPTION_STATUS.format(state=state),
-            reply_parameters={"message_id": update.message.message_id},
+            reply_parameters={"message_id": update.message.message_id, "allow_sending_without_reply": True},
         )

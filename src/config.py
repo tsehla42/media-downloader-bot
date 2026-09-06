@@ -67,6 +67,9 @@ IG_PASSWORD = os.environ.get("IG_PASSWORD", "")
 IG_COOKIES_PATH = os.environ.get("IG_COOKIES_PATH", "ig-cookies.txt")
 IG_SESSION_PATH = os.environ.get("IG_SESSION_PATH", "ig-session.json")
 
+# TikTok cookies (Netscape format, exported from browser)
+TIKTOK_COOKIES_PATH = os.environ.get("TIKTOK_COOKIES_PATH", "tiktok-cookies.txt")
+
 MODE = os.environ.get("MODE", "development")
 LOG_OUTPUT = os.environ.get("LOG_OUTPUT", "both")
 LOG_DIR = os.environ.get("LOG_DIR", "logs")

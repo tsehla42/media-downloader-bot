@@ -2,7 +2,7 @@
 
 import os
 
-from config import MAX_FILE_SIZE
+from config import MAX_FILE_SIZE, TIKTOK_COOKIES_PATH
 from downloader import download_video, download_gallery_dl_images, get_metadata
 from platform_args import TIKTOK_REFERER
 from telegram_utils import send_images
@@ -17,19 +17,19 @@ async def handle_tiktok(update, context, url: str) -> bool:
 
     Returns True if content was sent successfully, False otherwise.
     """
-    reply_params = {"message_id": update.message.message_id}
+    reply_params = {"message_id": update.message.message_id, "allow_sending_without_reply": True}
     base = None
 
     try:
         # Best-effort: check metadata to detect photo posts early
-        metadata = get_metadata(url, referer=TIKTOK_REFERER)
+        metadata = get_metadata(url, referer=TIKTOK_REFERER, cookies=TIKTOK_COOKIES_PATH)
         if metadata:
             ext = (metadata.get("ext") or "").lower()
             if ext in IMAGE_EXTENSIONS:
                 _log.info("tiktok: metadata indicates photo post (ext=%s), trying gallery-dl", ext)
                 out_dir = make_tmp_dir()
                 try:
-                    images = download_gallery_dl_images(url, out_dir, "")
+                    images = download_gallery_dl_images(url, out_dir, TIKTOK_COOKIES_PATH)
                     if images:
                         total_size = await send_images(update.message, images, reply_params)
                         context.user_data["_content_type"] = "image"
@@ -64,7 +64,7 @@ async def handle_tiktok(update, context, url: str) -> bool:
         # Fallback: try gallery-dl for photo posts
         out_dir = make_tmp_dir()
         try:
-            images = download_gallery_dl_images(url, out_dir, "")
+            images = download_gallery_dl_images(url, out_dir, TIKTOK_COOKIES_PATH)
             if images:
                 total_size = await send_images(update.message, images, reply_params)
                 context.user_data["_content_type"] = "image"

@@ -81,7 +81,7 @@ async def test_handle_url_rejects_unknown_platform(update, context):
         # Verify reply_parameters are included
         kwargs = update.message.reply_text.call_args[1]
         assert "reply_parameters" in kwargs
-        assert kwargs["reply_parameters"] == {"message_id": update.message.message_id}
+        assert kwargs["reply_parameters"] == {"message_id": update.message.message_id, "allow_sending_without_reply": True}
 
 
 @pytest.mark.asyncio
@@ -112,7 +112,7 @@ async def test_download_and_send_replies_with_video():
 
         update.message.reply_video.assert_called_once()
         kwargs = update.message.reply_video.call_args[1]
-        assert kwargs["reply_parameters"] == {"message_id": 99}
+        assert kwargs["reply_parameters"] == {"message_id": 99, "allow_sending_without_reply": True}
 
 
 @pytest.mark.asyncio
@@ -172,7 +172,7 @@ async def test_download_and_send_logs_error_on_exception():
         update.message.reply_text.assert_called_once()
         kwargs = update.message.reply_text.call_args[1]
         assert "reply_parameters" in kwargs
-        assert kwargs["reply_parameters"] == {"message_id": 99}
+        assert kwargs["reply_parameters"] == {"message_id": 99, "allow_sending_without_reply": True}
 
 
 @pytest.mark.asyncio
@@ -190,7 +190,7 @@ async def test_download_and_send_unsupported_platform():
         text = update.message.reply_text.call_args[0][0]
         assert "Unsupported" in text
         kwargs = update.message.reply_text.call_args[1]
-        assert kwargs["reply_parameters"] == {"message_id": 42}
+        assert kwargs["reply_parameters"] == {"message_id": 42, "allow_sending_without_reply": True}
 
 
 @pytest.mark.asyncio
@@ -209,7 +209,7 @@ async def test_download_and_send_metadata_failure():
         text = update.message.reply_text.call_args[0][0]
         assert "Could not fetch post" in text
         kwargs = update.message.reply_text.call_args[1]
-        assert kwargs["reply_parameters"] == {"message_id": 42}
+        assert kwargs["reply_parameters"] == {"message_id": 42, "allow_sending_without_reply": True}
 
 
 @pytest.mark.asyncio
@@ -307,7 +307,7 @@ async def test_audio_command_uses_title_for_filename():
     update.message.reply_audio.assert_called_once()
     kwargs = update.message.reply_audio.call_args[1]
     assert kwargs["title"] == "My Test Song"
-    assert kwargs["reply_parameters"] == {"message_id": 42}
+    assert kwargs["reply_parameters"] == {"message_id": 42, "allow_sending_without_reply": True}
 
 
 @pytest.mark.asyncio
@@ -340,7 +340,7 @@ async def test_audio_command_no_metadata_omits_title():
     update.message.reply_audio.assert_called_once()
     kwargs = update.message.reply_audio.call_args[1]
     assert "title" not in kwargs
-    assert kwargs["reply_parameters"] == {"message_id": 42}
+    assert kwargs["reply_parameters"] == {"message_id": 42, "allow_sending_without_reply": True}
 
 
 @pytest.mark.asyncio
@@ -355,7 +355,7 @@ async def test_handle_url_no_urls_found(update, context):
         text = update.message.reply_text.call_args[0][0]
         assert "valid URL" in text
         kwargs = update.message.reply_text.call_args[1]
-        assert kwargs["reply_parameters"] == {"message_id": update.message.message_id}
+        assert kwargs["reply_parameters"] == {"message_id": update.message.message_id, "allow_sending_without_reply": True}
 
 
 @pytest.mark.asyncio
@@ -921,7 +921,7 @@ async def test_download_and_send_tiktok_login_required_reply_to_retry():
     text = update.message.reply_text.call_args[0][0]
     assert "restricted" in text
     kwargs = update.message.reply_text.call_args[1]
-    assert kwargs["reply_parameters"] == {"message_id": 100}
+    assert kwargs["reply_parameters"] == {"message_id": 100, "allow_sending_without_reply": True}
 
 
 @pytest.mark.asyncio
@@ -995,7 +995,7 @@ async def test_download_and_send_instagram_login_required_reply_to_retry():
     text = update.message.reply_text.call_args[0][0]
     assert "restricted" in text
     kwargs = update.message.reply_text.call_args[1]
-    assert kwargs["reply_parameters"] == {"message_id": 100}
+    assert kwargs["reply_parameters"] == {"message_id": 100, "allow_sending_without_reply": True}
 
 
 @pytest.mark.asyncio
@@ -1164,7 +1164,7 @@ async def test_download_and_send_reply_to_message_id():
 
     update.message.reply_text.assert_called_once()
     kwargs = update.message.reply_text.call_args[1]
-    assert kwargs["reply_parameters"] == {"message_id": 99}
+    assert kwargs["reply_parameters"] == {"message_id": 99, "allow_sending_without_reply": True}
 
 
 @pytest.mark.asyncio
@@ -1300,7 +1300,7 @@ async def test_handle_url_reply_to_retry_downloads_on_bot_mention():
     update.message.reply_video.assert_called_once()
     # Should reply to original message (100), not the reply (200)
     kwargs = update.message.reply_video.call_args[1]
-    assert kwargs["reply_parameters"] == {"message_id": 100}
+    assert kwargs["reply_parameters"] == {"message_id": 100, "allow_sending_without_reply": True}
 
 
 @pytest.mark.asyncio
@@ -1373,7 +1373,7 @@ async def test_handle_url_reply_shows_limit_for_large_youtube():
     assert "50MB" in text
     # Should reply to original message
     kwargs = update.message.reply_text.call_args[1]
-    assert kwargs["reply_parameters"] == {"message_id": 100}
+    assert kwargs["reply_parameters"] == {"message_id": 100, "allow_sending_without_reply": True}
 
 
 @pytest.mark.asyncio
@@ -1420,7 +1420,7 @@ async def test_handle_url_reply_rejects_unauthorized():
 
     mock_reject.assert_called_once_with(
         update, "url",
-        reply_parameters={"message_id": 200},
+        reply_parameters={"message_id": 200, "allow_sending_without_reply": True},
         group_silent=True,
     )
 
@@ -2015,7 +2015,7 @@ class TestHandlerAuth:
 
             mock_reject.assert_called_once_with(
                 update, "url",
-                reply_parameters={"message_id": 1},
+                reply_parameters={"message_id": 1, "allow_sending_without_reply": True},
                 group_silent=True,
             )
 
@@ -2063,7 +2063,7 @@ class TestHandlerAuth:
 
             mock_reject.assert_called_once_with(
                 update, "/audio",
-                reply_parameters={"message_id": 1},
+                reply_parameters={"message_id": 1, "allow_sending_without_reply": True},
                 group_silent=True,
             )
 
@@ -2279,7 +2279,7 @@ class TestMyChatMemberHandler:
 
             mock_reject.assert_called_once_with(
                 update, "/audio",
-                reply_parameters={"message_id": 1},
+                reply_parameters={"message_id": 1, "allow_sending_without_reply": True},
                 group_silent=True,
             )
             update.message.reply_text.assert_not_called()

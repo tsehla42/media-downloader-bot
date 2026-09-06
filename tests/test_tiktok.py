@@ -121,8 +121,8 @@ async def test_handle_tiktok_cleans_up_on_exception(update, context):
 
 
 @pytest.mark.asyncio
-async def test_handle_tiktok_passes_empty_cookies(update, context):
-    """handle_tiktok passes empty string for cookies (no auth needed)."""
+async def test_handle_tiktok_passes_cookies(update, context):
+    """handle_tiktok passes TIKTOK_COOKIES_PATH for gallery-dl calls."""
     with patch("platforms.tiktok.download_video", return_value=False), \
          patch("platforms.tiktok.download_gallery_dl_images", return_value=[]) as mock_dl, \
          patch("platforms.tiktok.send_images"), \
@@ -132,7 +132,7 @@ async def test_handle_tiktok_passes_empty_cookies(update, context):
 
     mock_dl.assert_called_once()
     args = mock_dl.call_args
-    assert args[0][2] == ""  # cookies parameter
+    assert args[0][2] == "tiktok-cookies.txt"  # cookies parameter (default from config)
 
 
 @pytest.mark.asyncio

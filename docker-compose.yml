@@ -12,6 +12,7 @@ services:
       - bot-cache:/usr/src/app/data
       - ./ig-cookies.txt:/usr/src/app/ig-cookies.txt:ro
       - ./ig-session.json:/usr/src/app/ig-session.json
+      - ./tiktok-cookies.txt:/usr/src/app/tiktok-cookies.txt
       - ./allowed-users.json:/usr/src/app/allowed-users.json:ro
       - ./logs:/usr/src/app/logs
     environment:

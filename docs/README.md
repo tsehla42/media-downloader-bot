@@ -33,6 +33,7 @@ Loads settings from `.env` via python-dotenv. Exports constants:
 - `IG_PASSWORD` - Instagram account password for cookie refresh via instagrapi
 - `IG_COOKIES_PATH` - Path to Netscape cookies.txt for gallery-dl Instagram auth (default: ig-cookies.txt)
 - `IG_SESSION_PATH` - Path to instagrapi session JSON (default: ig-session.json)
+- `TIKTOK_COOKIES_PATH` - Path to Netscape cookies.txt for TikTok auth (default: tiktok-cookies.txt)
 - `GUEST_MODE_ENABLED` - Enable Bot API 10.0 guest mode (default: false)
 - `STORAGE_CHANNEL_ID` - Private channel ID for guest mode file storage (bot must be admin). Files uploaded here to get `file_id`s for InlineQueryResult.
 - `MODE` - Environment mode: "development" (default) or "production". Determines log file name.
@@ -108,8 +109,8 @@ Instagram cookie refresh via instagrapi:
 ### downloader.py
 Wraps yt-dlp and gallery-dl binary calls via subprocess:
 - `_find_ytdlp()` / `_find_gallery_dl()` - Locate binaries
-- `get_metadata(url, format_selector=None)` - Runs `yt-dlp --dump-json --no-playlist` (60s timeout). Optional `format_selector` param passes `-f` flag for accurate size estimates (used for YouTube where `download_video()` forces MP4). Logs stderr on failure. Raises `DownloadAuthRequired` for age-restricted content.
-- `download_video(url, path, max_size, platform)` - Downloads video, retries with lower quality on failure
+- `get_metadata(url, format_selector=None, referer="", cookies="")` - Runs `yt-dlp --dump-json --no-playlist` (60s timeout). Optional `format_selector` param passes `-f` flag for accurate size estimates (used for YouTube where `download_video()` forces MP4). Optional `referer` and `cookies` params for platform-specific auth. Logs stderr on failure. Raises `DownloadAuthRequired` for age-restricted content.
+- `download_video(url, path, max_size, platform)` - Downloads video, retries with lower quality on failure. When `platform="tiktok"`, adds referer header and cookies.
 - `download_audio(url, path)` - Extracts audio as MP3
 - `download_images(url, dir)` - Downloads carousel/gallery images via gallery-dl
 - `download_gallery_dl_images(url, dir, cookies)` - Downloads images using gallery-dl
@@ -126,9 +127,10 @@ Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloa
 ### guest.py
 Bot API 10.0 guest mode handler, depends on auth, config, downloader, platforms, utils, logging_config, httpx, cache:
 - `handle_guest(update, context)` - Main handler for `guest_message` updates. Identifies caller via `guest_msg.from_user` (Telegram sends `from`, ptb maps to `from_user`). Auth check via `is_user_allowed()`. Unauthorized users get "You are not authorized" once via `answer_guest_query`, then silently ignored (uses `was_notified_guest()`/`mark_notified_guest()`). Logs unauthorized access to service.jsonl. Reply to bot message without URL is silently ignored. Reply to bot message with no text shows media type (e.g. `[photo]`) in logs. Extracts URLs from tag text OR replied-to message. Platform set from `extract_domain(url)` when `detect_platform()` returns None (for gallery-dl supported sites). Routes to download pipeline.
+- `_safe_answer_guest_query(bot, guest_query_id, result)` - Wrapper around `answer_guest_query()` that catches `BadRequest` when user deletes their message before bot answers. Logs gracefully instead of throwing unhandled exception.
 - `_download_and_build_result(url, platform)` - Checks cache first (via `cache.get_cached()`). On cache hit, returns cached `file_id` instantly. On miss, routes to platform-specific download: YouTube, TikTok, Instagram, or gallery-dl fallback. For TikTok, fetches metadata before download to get video ID for short URL deduplication. Stores result in cache after successful download.
 - `_download_youtube(url)` - Downloads YouTube video, uploads to storage channel, returns `_video_result()`
-- `_download_media_result(url, platform)` - Downloads TikTok/Instagram content (video -> gallery-dl images -> gallery-dl video)
+- `_download_media_result(url, platform)` - Downloads TikTok/Instagram content (video -> gallery-dl images -> gallery-dl video). For TikTok, passes `platform="tiktok"` to `download_video()` for referer+cookies, and passes cookies+referer to `get_metadata()`.
 - `_gallery_dl_result(url)` - gallery-dl fallback for unsupported platforms (tries images, then video)
 - `_upload_to_telegram(file_path, media_type)` - Uploads local file to storage channel via httpx, returns `file_id`. Handles Telegram's photo response as list of PhotoSize objects (returns file_id from largest size).
 - `_text_result(text)` / `_video_result(file_id)` / `_photo_result(file_id)` / `_media_group_result(file_ids)` - Build InlineQueryResult as raw dicts. Uses `video_file_id`/`photo_file_id` directly (not ptb classes) to avoid placeholder URL issues. Media group returns first photo only (inline results don't support groups).

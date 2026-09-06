@@ -13,10 +13,12 @@ import uuid
 
 import httpx
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from auth import is_user_allowed, was_notified_guest, mark_notified_guest
-from config import MAX_FILE_SIZE, IG_COOKIES_PATH, STORAGE_CHANNEL_ID
+from config import MAX_FILE_SIZE, IG_COOKIES_PATH, TIKTOK_COOKIES_PATH, STORAGE_CHANNEL_ID
+from platform_args import TIKTOK_REFERER
 from utils import find_downloaded_file, cleanup_video_files, make_video_tmp_path, make_tmp_dir
 from logging_config import (
     details_logger,
@@ -61,6 +63,21 @@ MEDIA_TYPES = {
 
 # Telegram Bot API base URL for file uploads
 _API_BASE = "https://api.telegram.org/bot{token}/{method}"
+
+
+async def _safe_answer_guest_query(bot, guest_query_id: str, result) -> bool:
+    """Answer guest query, handling deleted message gracefully.
+
+    Returns True if answered successfully, False if message was deleted.
+    """
+    try:
+        await bot.answer_guest_query(guest_query_id, result=result)
+        return True
+    except BadRequest as e:
+        if "message" in str(e).lower() and "not found" in str(e).lower():
+            details_logger.info("guest: message deleted before answer_guest_query could be sent")
+            return False
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +251,7 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     try:
         result, content_type, file_size_mb, cache_hit = await _download_and_build_result(url, platform)
-        await context.bot.answer_guest_query(guest_query_id, result=result)
+        await _safe_answer_guest_query(context.bot, guest_query_id, result)
 
         duration_ms = int((time.time() - start_time) * 1000)
         log_guest_request_completed(
@@ -270,9 +287,10 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             chat_owner_username=chat_owner_username,
             forwarded=forwarded,
         )
-        await context.bot.answer_guest_query(
+        await _safe_answer_guest_query(
+            context.bot,
             guest_query_id,
-            result=_text_result(e.user_message),
+            _text_result(e.user_message),
         )
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
@@ -290,9 +308,10 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             chat_owner_username=chat_owner_username,
             forwarded=forwarded,
         )
-        await context.bot.answer_guest_query(
+        await _safe_answer_guest_query(
+            context.bot,
             guest_query_id,
-            result=_text_result(MSG_DOWNLOAD_FAILED),
+            _text_result(MSG_DOWNLOAD_FAILED),
         )
 
 
@@ -326,7 +345,7 @@ async def _download_and_build_result(url: str, platform: str | None) -> tuple[di
         result, content_type, file_size_mb = await _download_youtube(url)
     elif platform == "tiktok":
         # Fetch metadata first to get video ID for short URLs
-        metadata = await asyncio.to_thread(get_metadata, url)
+        metadata = await asyncio.to_thread(get_metadata, url, None, TIKTOK_REFERER, TIKTOK_COOKIES_PATH)
         result, content_type, file_size_mb = await _download_media_result(url, "tiktok")
     elif platform == "instagram":
         result, content_type, file_size_mb = await _download_media_result(url, "instagram")
@@ -396,7 +415,7 @@ async def _download_media_result(url: str, platform: str) -> tuple[dict, str, fl
         # Try video download first
         video_path = os.path.join(output_dir, f"{platform}.mp4")
         try:
-            success = await asyncio.to_thread(download_video, url, video_path)
+            success = await asyncio.to_thread(download_video, url, video_path, MAX_FILE_SIZE, platform)
         except DownloadAuthRequired:
             return _text_result(MSG_LOGIN_REQUIRED), None, None
         if success:
@@ -408,7 +427,12 @@ async def _download_media_result(url: str, platform: str) -> tuple[dict, str, fl
             raise ValueError(MSG_GUEST_UPLOAD_FAILED)
 
         # Try image/gallery-dl fallback
-        cookies = IG_COOKIES_PATH if platform == "instagram" else ""
+        if platform == "instagram":
+            cookies = IG_COOKIES_PATH
+        elif platform == "tiktok":
+            cookies = TIKTOK_COOKIES_PATH
+        else:
+            cookies = ""
         images = await asyncio.to_thread(download_gallery_dl_images, url, output_dir, cookies)
         if images:
             file_ids = []

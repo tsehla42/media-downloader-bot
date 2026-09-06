@@ -20,6 +20,7 @@ venv/
 cookies.txt
 ig-cookies.txt
 ig-session.json
+tiktok-cookies.txt
 allowed-users.json
 src/gallery_dl_domains.py
 src/ytdlp_domains.py
