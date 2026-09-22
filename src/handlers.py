@@ -5,7 +5,7 @@ import uuid
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import DOWNLOAD_DIR
+from config import DOWNLOAD_DIR, BOT_ADMIN_IDS
 from utils import is_valid_url, extract_urls, cleanup_file, cleanup_dir
 
 
@@ -179,8 +179,28 @@ async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # Bot added to chat (non-admin, e.g. added as regular member)
     if old_status in ("left", "kicked") and not is_private_chat(chat):
-        # Check if user is admin - if not, reject and leave
-        if not is_bot_admin(from_user.id):
+        # If no bot admins configured, allow anyone to add
+        if not BOT_ADMIN_IDS:
+            log_bot_added_to_chat(chat, from_user)
+            return
+
+        # Bot admin can always add
+        if is_bot_admin(from_user.id):
+            log_bot_added_to_chat(chat, from_user)
+            return
+
+        # Check if at least one bot admin is already in the group
+        async def _any_bot_admin_in_group() -> bool:
+            for admin_id in BOT_ADMIN_IDS:
+                try:
+                    member = await context.bot.getChatMember(chat.id, admin_id)
+                    if member.status in ("administrator", "member"):
+                        return True
+                except Exception:
+                    continue
+            return False
+
+        if not await _any_bot_admin_in_group():
             log_bot_rejected_group_addition(chat, from_user)
             await context.bot.send_message(
                 chat.id,
@@ -188,6 +208,37 @@ async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_T
             )
             await context.bot.leave_chat(chat.id)
             return
+
+        # Anonymous admin — bot admin presence is sufficient trust
+        if getattr(from_user, "username", None) == "GroupAnonymousBot":
+            log_bot_added_to_chat(chat, from_user)
+            return
+
+        # Allowed user can always add
+        if _is_allowed(from_user.id):
+            log_bot_added_to_chat(chat, from_user)
+            return
+
+        # Real user: must be group admin with invite rights
+        try:
+            adder_member = await context.bot.getChatMember(chat.id, from_user.id)
+            if adder_member.status != "administrator" or not getattr(adder_member, "can_invite_users", False):
+                log_bot_rejected_group_addition(chat, from_user)
+                await context.bot.send_message(
+                    chat.id,
+                    MSG_ONLY_ADMINS_CAN_ADD,
+                )
+                await context.bot.leave_chat(chat.id)
+                return
+        except Exception:
+            log_bot_rejected_group_addition(chat, from_user)
+            await context.bot.send_message(
+                chat.id,
+                MSG_ONLY_ADMINS_CAN_ADD,
+            )
+            await context.bot.leave_chat(chat.id)
+            return
+
         log_bot_added_to_chat(chat, from_user)
         return
 

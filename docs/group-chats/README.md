@@ -8,7 +8,7 @@ The bot can be added to Telegram groups and supergroups to download media for al
 
 ## Key Concepts
 
-- Bot must be added by a bot admin (if `BOT_ADMIN_IDS` is configured)
+- Bot can be added by: bot admins, group admins with invite rights (if a bot admin is in the group), anonymous admins (if a bot admin is in the group), or allowed users (`ALLOWED_USER_IDS`)
 - Bot can be disabled in groups via `ALLOWED_GROUP_IDS`
 - Guest mode allows users to mention bot without it being a member
 - Bot only receives messages that mention it or replies to its messages (unless privacy mode is disabled)
@@ -16,9 +16,9 @@ The bot can be added to Telegram groups and supergroups to download media for al
 ## Security
 
 ### Bot Admin Checks
-- When bot is added to a group, `my_chat_member_handler` checks if the user who added it is a bot admin
-- If not admin, bot rejects the addition and leaves
-- See [Admin Controls](admin-controls.md) for details
+- When bot is added to a group, `my_chat_member_handler` checks multiple conditions
+- Bot admin can always add; anonymous admin and allowed users can add if a bot admin is in the group; group admins with invite rights can add if a bot admin is in the group
+- See [Admin Controls](admin-controls.md) for the full flow
 
 ### Group Allowlists
 - `ALLOWED_GROUP_IDS` env var restricts which groups the bot can be in

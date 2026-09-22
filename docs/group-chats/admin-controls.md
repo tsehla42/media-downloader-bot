@@ -19,35 +19,54 @@ When bot is added to a group:
 
 1. `my_chat_member_handler` receives `ChatMemberUpdated`
 2. Checks if `new_chat_member.status` is "member" (bot added)
-3. Checks if `from_user.id` is in `BOT_ADMIN_IDS`
-4. If admin: log `bot_added_to_chat` event, allow
-5. If not admin: log `bot_rejected_group_addition` event, reject, leave group
+3. If no `BOT_ADMIN_IDS` configured: allow (empty = anyone can add)
+4. If `from_user.id` is in `BOT_ADMIN_IDS`: allow (bot admin can always add)
+5. Check if at least one bot admin is already in the group via `getChatMember`
+   - If no bot admin in group: reject, leave
+6. If `from_user.username` is "GroupAnonymousBot" (anonymous admin): allow (bot admin presence is sufficient)
+7. If `from_user` is in `ALLOWED_USER_IDS`: allow (trusted user, skip group admin check)
+8. Check if `from_user` is a group admin with `can_invite_users` via `getChatMember`
+   - If not admin or no invite rights: reject, leave
+9. Allow — log `bot_added_to_chat` event
 
 ## Implementation
 
 ```python
-# src/handlers.py
-async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle bot added/removed from chats."""
-    chat_member = update.my_chat_member
-    if chat_member.new_chat_member.status == "member":
-        # Bot was added to a group
-        from_user = chat_member.from_user
-        if not is_bot_admin(from_user.id):
-            # Reject - not admin
-            service_logger.warning("Bot rejected group addition", extra={
-                "event": "bot_rejected_group_addition",
-                "chat_id": chat_member.chat.id,
-                "added_by": {"id": from_user.id, "name": from_user.full_name}
-            })
-            await context.bot.leave_chat(chat_member.chat.id)
-            return
-        # Admin - allow
-        service_logger.info("Bot added to group", extra={
-            "event": "bot_added_to_chat",
-            "chat_id": chat_member.chat.id,
-            "added_by": {"id": from_user.id, "name": from_user.full_name}
-        })
+# src/handlers.py (simplified)
+async def my_chat_member_handler(update, context):
+    # If no bot admins configured, allow anyone
+    if not BOT_ADMIN_IDS:
+        log_bot_added_to_chat(chat, from_user)
+        return
+
+    # Bot admin can always add
+    if is_bot_admin(from_user.id):
+        log_bot_added_to_chat(chat, from_user)
+        return
+
+    # Check if at least one bot admin is in the group
+    if not await _any_bot_admin_in_group():
+        # Reject — no bot admin present
+        await context.bot.leave_chat(chat.id)
+        return
+
+    # Anonymous admin — bot admin presence is sufficient
+    if from_user.username == "GroupAnonymousBot":
+        log_bot_added_to_chat(chat, from_user)
+        return
+
+    # Allowed user — trusted, skip group admin check
+    if _is_allowed(from_user.id):
+        log_bot_added_to_chat(chat, from_user)
+        return
+
+    # Must be group admin with invite rights
+    adder_member = await context.bot.getChatMember(chat.id, from_user.id)
+    if adder_member.status != "administrator" or not adder_member.can_invite_users:
+        await context.bot.leave_chat(chat.id)
+        return
+
+    log_bot_added_to_chat(chat, from_user)
 ```
 
 ## Events

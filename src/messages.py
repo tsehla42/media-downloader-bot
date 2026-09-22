@@ -64,7 +64,7 @@ MSG_HELP = (
 )
 
 # Group admin
-MSG_ONLY_ADMINS_CAN_ADD = "Only bot admins can add me to groups"
+MSG_ONLY_ADMINS_CAN_ADD = "Not everyone can add me to groups💋"
 
 # Guest mode
 MSG_GUEST_DOWNLOAD_FAILED = "Download failed: {error}"

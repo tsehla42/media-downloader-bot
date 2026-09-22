@@ -618,7 +618,8 @@ async def test_my_chat_member_handler_bot_added():
     context = MagicMock()
 
     with patch("handlers.log_bot_added_to_chat") as mock_log, \
-         patch("handlers.is_bot_admin", return_value=True):
+         patch("handlers.is_bot_admin", return_value=True), \
+         patch("handlers.BOT_ADMIN_IDS", {123456}):
         await my_chat_member_handler(update, context)
         mock_log.assert_called_once()
 
@@ -2170,7 +2171,7 @@ class TestHandlerAuth:
 class TestMyChatMemberHandler:
     @pytest.mark.asyncio
     async def test_bot_added_by_admin(self):
-        """Bot added by admin should stay and log."""
+        """Bot added by bot admin should stay and log."""
         from handlers import my_chat_member_handler
 
         update = MagicMock(spec=Update)
@@ -2189,14 +2190,15 @@ class TestMyChatMemberHandler:
         context.bot.leave_chat = AsyncMock()
 
         with patch('handlers.is_bot_admin', return_value=True), \
+             patch('handlers.BOT_ADMIN_IDS', {999999}), \
              patch('handlers.log_bot_added_to_chat'):
             await my_chat_member_handler(update, context)
 
             context.bot.leave_chat.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_bot_added_by_non_admin(self):
-        """Bot added by non-admin should leave."""
+    async def test_bot_added_by_non_admin_no_bot_admin_in_group(self):
+        """Bot added by non-admin when no bot admin is in the group should leave."""
         from handlers import my_chat_member_handler
 
         update = MagicMock(spec=Update)
@@ -2212,14 +2214,285 @@ class TestMyChatMemberHandler:
         update.my_chat_member.from_user = MagicMock(spec=User)
         update.my_chat_member.from_user.id = 123456
         update.my_chat_member.from_user.first_name = "Test"
-        update.message = MagicMock()
-        update.message.reply_text = AsyncMock()
 
         context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
         context.bot.leave_chat = AsyncMock()
         context.bot.send_message = AsyncMock()
 
-        with patch('handlers.is_bot_admin', return_value=False):
+        # getChatMember returns "left" for all bot admin IDs
+        left_member = MagicMock()
+        left_member.status = "left"
+        context.bot.getChatMember = AsyncMock(return_value=left_member)
+
+        with patch('handlers.is_bot_admin', return_value=False), \
+             patch('handlers.BOT_ADMIN_IDS', {111, 222}):
+            await my_chat_member_handler(update, context)
+
+            context.bot.leave_chat.assert_called_once_with(123456)
+            context.bot.send_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_bot_added_by_group_admin_with_bot_admin_in_group(self):
+        """Group admin with invite rights can add bot when a bot admin is in the group."""
+        from handlers import my_chat_member_handler
+
+        update = MagicMock(spec=Update)
+        update.my_chat_member = MagicMock(spec=ChatMemberUpdated)
+        update.my_chat_member.chat = MagicMock(spec=Chat)
+        update.my_chat_member.chat.type = "supergroup"
+        update.my_chat_member.chat.id = 123456
+        update.my_chat_member.old_chat_member = MagicMock()
+        update.my_chat_member.old_chat_member.status = "left"
+        update.my_chat_member.new_chat_member = MagicMock()
+        update.my_chat_member.new_chat_member.status = "member"
+        update.my_chat_member.from_user = MagicMock(spec=User)
+        update.my_chat_member.from_user.id = 123456
+        update.my_chat_member.from_user.first_name = "Test"
+
+        context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+        context.bot.leave_chat = AsyncMock()
+        context.bot.send_message = AsyncMock()
+
+        # First call: getChatMember for bot admin (in group)
+        # Second call: getChatMember for adder (group admin with invite rights)
+        bot_admin_member = MagicMock()
+        bot_admin_member.status = "administrator"
+        adder_member = MagicMock()
+        adder_member.status = "administrator"
+        adder_member.can_invite_users = True
+        context.bot.getChatMember = AsyncMock(side_effect=[bot_admin_member, adder_member])
+
+        with patch('handlers.is_bot_admin', return_value=False), \
+             patch('handlers.BOT_ADMIN_IDS', {111}), \
+             patch('handlers.log_bot_added_to_chat'):
+            await my_chat_member_handler(update, context)
+
+            context.bot.leave_chat.assert_not_called()
+            context.bot.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bot_added_by_non_admin_without_invite_rights(self):
+        """Non-admin user without invite rights should be rejected even with bot admin in group."""
+        from handlers import my_chat_member_handler
+
+        update = MagicMock(spec=Update)
+        update.my_chat_member = MagicMock(spec=ChatMemberUpdated)
+        update.my_chat_member.chat = MagicMock(spec=Chat)
+        update.my_chat_member.chat.type = "supergroup"
+        update.my_chat_member.chat.id = 123456
+        update.my_chat_member.chat.title = "Test Group"
+        update.my_chat_member.old_chat_member = MagicMock()
+        update.my_chat_member.old_chat_member.status = "left"
+        update.my_chat_member.new_chat_member = MagicMock()
+        update.my_chat_member.new_chat_member.status = "member"
+        update.my_chat_member.from_user = MagicMock(spec=User)
+        update.my_chat_member.from_user.id = 123456
+        update.my_chat_member.from_user.first_name = "Test"
+
+        context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+        context.bot.leave_chat = AsyncMock()
+        context.bot.send_message = AsyncMock()
+
+        # Bot admin is in group, but adder is a regular member (not admin)
+        bot_admin_member = MagicMock()
+        bot_admin_member.status = "administrator"
+        adder_member = MagicMock()
+        adder_member.status = "member"
+        context.bot.getChatMember = AsyncMock(side_effect=[bot_admin_member, adder_member])
+
+        with patch('handlers.is_bot_admin', return_value=False), \
+             patch('handlers._is_allowed', return_value=False), \
+             patch('handlers.BOT_ADMIN_IDS', {111}):
+            await my_chat_member_handler(update, context)
+
+            context.bot.leave_chat.assert_called_once_with(123456)
+            context.bot.send_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_bot_added_by_allowed_user_not_admin(self):
+        """Allowed user who is not a group admin can add bot when bot admin is in group."""
+        from handlers import my_chat_member_handler
+
+        update = MagicMock(spec=Update)
+        update.my_chat_member = MagicMock(spec=ChatMemberUpdated)
+        update.my_chat_member.chat = MagicMock(spec=Chat)
+        update.my_chat_member.chat.type = "supergroup"
+        update.my_chat_member.chat.id = 123456
+        update.my_chat_member.old_chat_member = MagicMock()
+        update.my_chat_member.old_chat_member.status = "left"
+        update.my_chat_member.new_chat_member = MagicMock()
+        update.my_chat_member.new_chat_member.status = "member"
+        update.my_chat_member.from_user = MagicMock(spec=User)
+        update.my_chat_member.from_user.id = 555555
+        update.my_chat_member.from_user.first_name = "Trusted"
+
+        context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+        context.bot.leave_chat = AsyncMock()
+
+        bot_admin_member = MagicMock()
+        bot_admin_member.status = "administrator"
+        context.bot.getChatMember = AsyncMock(return_value=bot_admin_member)
+
+        with patch('handlers.is_bot_admin', return_value=False), \
+             patch('handlers._is_allowed', return_value=True), \
+             patch('handlers.BOT_ADMIN_IDS', {111}), \
+             patch('handlers.log_bot_added_to_chat'):
+            await my_chat_member_handler(update, context)
+
+            context.bot.leave_chat.assert_not_called()
+            # getChatMember called once for bot admin check, but NOT for adder's group admin check
+            assert context.bot.getChatMember.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_bot_added_by_allowed_user_no_bot_admin_in_group(self):
+        """Allowed user but no bot admin in group — still rejected."""
+        from handlers import my_chat_member_handler
+
+        update = MagicMock(spec=Update)
+        update.my_chat_member = MagicMock(spec=ChatMemberUpdated)
+        update.my_chat_member.chat = MagicMock(spec=Chat)
+        update.my_chat_member.chat.type = "supergroup"
+        update.my_chat_member.chat.id = 123456
+        update.my_chat_member.chat.title = "Test Group"
+        update.my_chat_member.old_chat_member = MagicMock()
+        update.my_chat_member.old_chat_member.status = "left"
+        update.my_chat_member.new_chat_member = MagicMock()
+        update.my_chat_member.new_chat_member.status = "member"
+        update.my_chat_member.from_user = MagicMock(spec=User)
+        update.my_chat_member.from_user.id = 555555
+        update.my_chat_member.from_user.first_name = "Trusted"
+
+        context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+        context.bot.leave_chat = AsyncMock()
+        context.bot.send_message = AsyncMock()
+
+        left_member = MagicMock()
+        left_member.status = "left"
+        context.bot.getChatMember = AsyncMock(return_value=left_member)
+
+        with patch('handlers.is_bot_admin', return_value=False), \
+             patch('handlers._is_allowed', return_value=True), \
+             patch('handlers.BOT_ADMIN_IDS', {111}):
+            await my_chat_member_handler(update, context)
+
+            context.bot.leave_chat.assert_called_once_with(123456)
+            context.bot.send_message.assert_called_once()
+        """Anonymous admin can add bot when a bot admin is in the group."""
+        from handlers import my_chat_member_handler
+
+        update = MagicMock(spec=Update)
+        update.my_chat_member = MagicMock(spec=ChatMemberUpdated)
+        update.my_chat_member.chat = MagicMock(spec=Chat)
+        update.my_chat_member.chat.type = "supergroup"
+        update.my_chat_member.chat.id = 123456
+        update.my_chat_member.old_chat_member = MagicMock()
+        update.my_chat_member.old_chat_member.status = "left"
+        update.my_chat_member.new_chat_member = MagicMock()
+        update.my_chat_member.new_chat_member.status = "member"
+        update.my_chat_member.from_user = MagicMock(spec=User)
+        update.my_chat_member.from_user.id = 1087968824
+        update.my_chat_member.from_user.username = "GroupAnonymousBot"
+
+        context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+        context.bot.leave_chat = AsyncMock()
+
+        bot_admin_member = MagicMock()
+        bot_admin_member.status = "administrator"
+        context.bot.getChatMember = AsyncMock(return_value=bot_admin_member)
+
+        with patch('handlers.is_bot_admin', return_value=False), \
+             patch('handlers.BOT_ADMIN_IDS', {111}), \
+             patch('handlers.log_bot_added_to_chat'):
+            await my_chat_member_handler(update, context)
+
+            context.bot.leave_chat.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bot_added_by_anonymous_admin_no_bot_admin_in_group(self):
+        """Anonymous admin cannot add bot when no bot admin is in the group."""
+        from handlers import my_chat_member_handler
+
+        update = MagicMock(spec=Update)
+        update.my_chat_member = MagicMock(spec=ChatMemberUpdated)
+        update.my_chat_member.chat = MagicMock(spec=Chat)
+        update.my_chat_member.chat.type = "supergroup"
+        update.my_chat_member.chat.id = 123456
+        update.my_chat_member.chat.title = "Test Group"
+        update.my_chat_member.old_chat_member = MagicMock()
+        update.my_chat_member.old_chat_member.status = "left"
+        update.my_chat_member.new_chat_member = MagicMock()
+        update.my_chat_member.new_chat_member.status = "member"
+        update.my_chat_member.from_user = MagicMock(spec=User)
+        update.my_chat_member.from_user.id = 1087968824
+        update.my_chat_member.from_user.username = "GroupAnonymousBot"
+
+        context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+        context.bot.leave_chat = AsyncMock()
+        context.bot.send_message = AsyncMock()
+
+        left_member = MagicMock()
+        left_member.status = "left"
+        context.bot.getChatMember = AsyncMock(return_value=left_member)
+
+        with patch('handlers.is_bot_admin', return_value=False), \
+             patch('handlers.BOT_ADMIN_IDS', {111}):
+            await my_chat_member_handler(update, context)
+
+            context.bot.leave_chat.assert_called_once_with(123456)
+            context.bot.send_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_bot_added_no_bot_admin_ids_configured(self):
+        """When no BOT_ADMIN_IDS configured, anyone can add bot."""
+        from handlers import my_chat_member_handler
+
+        update = MagicMock(spec=Update)
+        update.my_chat_member = MagicMock(spec=ChatMemberUpdated)
+        update.my_chat_member.chat = MagicMock(spec=Chat)
+        update.my_chat_member.chat.type = "supergroup"
+        update.my_chat_member.chat.id = 123456
+        update.my_chat_member.old_chat_member = MagicMock()
+        update.my_chat_member.old_chat_member.status = "left"
+        update.my_chat_member.new_chat_member = MagicMock()
+        update.my_chat_member.new_chat_member.status = "member"
+        update.my_chat_member.from_user = MagicMock(spec=User)
+        update.my_chat_member.from_user.id = 999999
+
+        context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+        context.bot.leave_chat = AsyncMock()
+
+        with patch('handlers.BOT_ADMIN_IDS', set()), \
+             patch('handlers.log_bot_added_to_chat'):
+            await my_chat_member_handler(update, context)
+
+            context.bot.leave_chat.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bot_added_getChatMember_fails(self):
+        """When getChatMember throws, reject addition."""
+        from handlers import my_chat_member_handler
+
+        update = MagicMock(spec=Update)
+        update.my_chat_member = MagicMock(spec=ChatMemberUpdated)
+        update.my_chat_member.chat = MagicMock(spec=Chat)
+        update.my_chat_member.chat.type = "supergroup"
+        update.my_chat_member.chat.id = 123456
+        update.my_chat_member.chat.title = "Test Group"
+        update.my_chat_member.old_chat_member = MagicMock()
+        update.my_chat_member.old_chat_member.status = "left"
+        update.my_chat_member.new_chat_member = MagicMock()
+        update.my_chat_member.new_chat_member.status = "member"
+        update.my_chat_member.from_user = MagicMock(spec=User)
+        update.my_chat_member.from_user.id = 123456
+        update.my_chat_member.from_user.first_name = "Test"
+
+        context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+        context.bot.leave_chat = AsyncMock()
+        context.bot.send_message = AsyncMock()
+        context.bot.getChatMember = AsyncMock(side_effect=Exception("API error"))
+
+        with patch('handlers.is_bot_admin', return_value=False), \
+             patch('handlers.BOT_ADMIN_IDS', {111}):
             await my_chat_member_handler(update, context)
 
             context.bot.leave_chat.assert_called_once_with(123456)

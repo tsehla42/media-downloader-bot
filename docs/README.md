@@ -118,7 +118,7 @@ Wraps yt-dlp and gallery-dl binary calls via subprocess:
 
 ### handlers.py
 Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloader, logging_config:
-- `my_chat_member_handler(update, context)` - Handles bot membership changes. When bot added to group: checks `is_bot_admin(from_user.id)` -> admin: log + allow; non-admin: `log_bot_rejected_group_addition` + reject message + leave. Also handles removed/promoted/demoted/blocked events.
+- `my_chat_member_handler(update, context)` - Handles bot membership changes. When bot added to group: checks bot admin → allow; no bot admin in group → reject; anonymous admin → allow if bot admin present; allowed user → allow; group admin with invite rights → allow; otherwise reject + leave. Also handles removed/promoted/demoted/blocked events.
 - `audio_command(update, context)` - Download as MP3 (uses notification tracking for unauthorized users)
 - `_download_and_send(update, context, url, silent, reply_to_message_id)` - Orchestrates download with YouTube size check, error suppression, and `skip_reason` tracking (`unsupported`, `size_limit`, `auth_required`, `metadata_failed`, `fetch_failed`, `download_failed`)
 - `handle_gallery_dl_fallback(update, context, url)` - Tries gallery-dl for unsupported platforms (images then video), silent on failure

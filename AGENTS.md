@@ -134,7 +134,7 @@ media-downloader-bot/
 11. Intermediate download steps (yt-dlp calls, retries, gallery-dl attempts) logged to `request-details.jsonl` via `details_logger`
 12. Bot start/stop, chat membership, new user events logged to `service.jsonl` via `service_logger`
 13. `my_chat_member_handler` (registered via `ChatMemberHandler`):
-    - Bot added to group: checks `is_bot_admin(from_user.id)` → admin: log + allow; non-admin: `log_bot_rejected_group_addition` + reject + leave
+    - Bot added to group: checks bot admin → allow; no bot admin in group → reject; anonymous admin → allow if bot admin present; allowed user → allow; group admin with invite rights → allow; otherwise reject + leave
     - Bot removed/promoted/demoted: logged to service.jsonl
     - User blocks bot (private chat): logged as `user_blocked_bot`
 14. **Guest mode** (`GUEST_MODE_ENABLED=true`): User mentions `@botname` in any chat → Telegram sends `guest_message` update → `guest.handle_guest()`:
@@ -166,9 +166,9 @@ media-downloader-bot/
 - **Stateless bot** - No database. Temp files cleaned after upload. Notification tracking (`_already_told_users`) resets on restart.
 - **Auto best quality** - Downloads best quality under 50MB Telegram limit, retries with worst on failure.
 - **User allowlist** - IDs merged from `allowed-users.json` (array of objects with `id` field) + `ALLOWED_USER_IDS` env var. If no sources configured = allow all. If sources configured but user not in list = deny.
-- **Bot admins** - `BOT_ADMIN_IDS` env var (comma-separated). Admins can add bot to groups. Empty = anyone can add.
+- **Bot admins** - `BOT_ADMIN_IDS` env var (comma-separated). Admins can always add bot to groups. Empty = anyone can add.
 - **Unauthorized user handling** - First attempt: "You are not authorized" + log `unauthorized_access` event. Subsequent attempts: silently ignored (in-memory sets, resets on restart). P2P and guest mode track separately — a user told in P2P can still use guest mode and vice versa. Guest mode only shows auth message when URL is present; without URL, unauthorized users are silently ignored.
-- **Group security** - Only bot admins can add bot to groups (checked in `my_chat_member_handler`). Non-admin additions rejected with message + bot leaves.
+- **Group security** - Relaxed group addition: bot admins can always add; anonymous admins and allowed users can add if a bot admin is in the group; group admins with invite rights can add if a bot admin is in the group. No bot admin in group → reject.
 - **Structured logging** - Four JSON log files: `requests.jsonl` (request lifecycle), `request-details.jsonl` (intermediate download steps), `service.jsonl` (bot events), `errors.jsonl` (unhandled exceptions with error_id). `_enrich_chat()` normalizes chat dicts with name/username. Filter-based routing by logger name. Zero external dependencies.
 - **User-facing messages** - All `reply_text()` and `_text_result()` strings centralized in `src/messages.py` as `MSG_*` constants. No inline string literals in handlers.
 - **DownloadAuthRequired** - Custom exception raised by `download_video()` or `get_metadata()` when yt-dlp reports content requires login (e.g. age-restricted YouTube, TikTok login-gated). Caught at orchestrator level (`_download_and_send`, `_download_media_result`), not inside platform handlers. Sets `skip_reason: "auth_required"` in logs. Shows "This content is restricted. Login required to access" to user.
