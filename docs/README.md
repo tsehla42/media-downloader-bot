@@ -527,14 +527,14 @@ cat logs/service.jsonl | jq 'select(.event == "bot_rejected_group_addition")'
 
 ## Why Subprocess (not Python import)?
 
-- yt-dlp can be upgraded independently (`pip install -U yt-dlp`)
+- yt-dlp can be upgraded independently (`uv lock --upgrade-package yt-dlp && uv sync`)
 - No version coupling between bot code and yt-dlp
 - Easier to debug (can run yt-dlp commands manually)
 - Matches how all successful yt-dlp wrappers work (Seal, VidBee, etc.)
 
 ## Deployment
 
-**Image:** Multi-stage build -- build stage compiles Python deps, runtime stage is Python 3.12-slim with yt-dlp, gallery-dl, ffmpeg, and deno (JS runtime).
+**Image:** Multi-stage build -- build stage installs locked dependencies into a uv-managed `.venv`, runtime stage is Python 3.14-slim with yt-dlp, gallery-dl, ffmpeg, and deno (JS runtime).
 
 **Container:**
 - Runs as non-root `appuser`
@@ -579,7 +579,7 @@ Two separate bot instances run in parallel for development and production:
 Both bots share the same group chats and test topics. This lets you test changes locally before pushing to production -- send the same URL to both bots and compare behavior.
 
 **Typical workflow:**
-1. Make changes locally, run `python -m pytest tests/ -v`
+1. Make changes locally, run `uv run pytest tests/ -v`
 2. Rebuild dev bot: `docker compose up -d --build`
 3. Test in shared group -- both bots receive the same messages
 4. If dev bot works correctly, push and deploy to prod

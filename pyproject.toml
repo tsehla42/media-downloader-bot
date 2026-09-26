@@ -1,0 +1,25 @@
+[project]
+name = "media-downloader-bot"
+version = "1.1.1"
+description = "Telegram bot that downloads videos and images from YouTube, TikTok, Instagram, and 100+ other services"
+requires-python = ">=3.14"
+dependencies = [
+    "python-telegram-bot",
+    "python-dotenv>=1.0.0",
+    "httpx",
+    "gallery-dl==1.32.4",
+    "instagrapi",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "yt-dlp",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+python-telegram-bot = { git = "https://github.com/python-telegram-bot/python-telegram-bot.git", branch = "master" }

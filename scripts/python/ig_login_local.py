@@ -6,8 +6,8 @@ host (not inside Docker). The generated files are mounted into the
 container via docker-compose volumes.
 
 Usage:
-    pip install instagrapi python-dotenv
-    python scripts/ig_login_local.py
+    uv sync
+    uv run python scripts/python/ig_login_local.py
 
 Reads IG_USERNAME and IG_PASSWORD from .env (project root).
 Outputs: ig-cookies.txt and ig-session.json in the project root.
@@ -44,7 +44,7 @@ try:
     from instagrapi import Client
     from instagrapi.mixins.challenge import ChallengeChoice
 except ImportError:
-    print("ERROR: instagrapi not installed. Run: pip install instagrapi")
+    print("ERROR: instagrapi not installed. Run: uv sync")
     sys.exit(1)
 
 

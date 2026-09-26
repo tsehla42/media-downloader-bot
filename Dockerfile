@@ -1,21 +1,24 @@
 # syntax=docker/dockerfile:1
 
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION=3.14
 
 ########## Build Stage ##########
 FROM python:${PYTHON_VERSION}-slim AS build
 
 WORKDIR /usr/src/app
 
-# Install system deps for building
+# Install system deps for building (git: python-telegram-bot git dependency)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps
-COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Install locked Python deps into /usr/src/app/.venv
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-cache
 
 ########## Runtime Stage ##########
 FROM python:${PYTHON_VERSION}-slim
@@ -40,8 +43,12 @@ COPY --from=denoland/deno:latest --chmod=755 /usr/bin/deno /usr/bin/deno
 
 WORKDIR /usr/src/app
 
-# Copy installed deps from build stage
-COPY --from=build /install /usr/local
+# Copy locked deps (.venv) from build stage
+COPY --from=build /usr/src/app/.venv /usr/src/app/.venv
+
+# venv first on PATH: python/pytest/gallery-dl resolve to the venv,
+# yt-dlp falls through to the system install above
+ENV PATH="/usr/src/app/.venv/bin:$PATH"
 
 # Copy application code
 COPY src/ ./src/

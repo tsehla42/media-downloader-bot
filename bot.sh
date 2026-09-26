@@ -31,7 +31,7 @@ run_deploy()   { bash "${SHELL_DIR}/deploy.sh" "$@"; }
 run_update()   { bash "${SHELL_DIR}/update.sh" "$@"; }
 run_dev()      { clear && bash "${SHELL_DIR}/compose.sh" "$@" && docker logs media-downloader-bot -f; }
 run_dev_stop() { bash "${SHELL_DIR}/dev-stop.sh" "$@"; }
-run_refresh()  { python "${SCRIPT_DIR}/scripts/python/ig_login_local.py" "$@"; }
+run_refresh()  { uv run --project "${SCRIPT_DIR}" python "${SCRIPT_DIR}/scripts/python/ig_login_local.py" "$@"; }
 run_pull()     { bash "${SHELL_DIR}/pull-logs.sh" "$@"; }
 run_version()  { bash "${SHELL_DIR}/version.sh" "$@"; }
 

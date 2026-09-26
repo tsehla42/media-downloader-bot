@@ -64,7 +64,7 @@ def get_gallery_dl_domains() -> frozenset[str]:
 ### Generating Domain List
 
 ```bash
-python scripts/python/generate_gallery_dl_domains.py
+uv run python scripts/python/generate_gallery_dl_domains.py
 ```
 
 This fetches the list from gallery-dl and writes to `src/gallery_dl_domains.py`.

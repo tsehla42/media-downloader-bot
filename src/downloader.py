@@ -62,7 +62,7 @@ def _find_ytdlp() -> str:
     path = shutil.which("yt-dlp")
     if not path:
         raise FileNotFoundError(
-            "yt-dlp not found. Install with: pip install yt-dlp"
+            "yt-dlp not found. Install with: uv sync"
         )
     return path
 

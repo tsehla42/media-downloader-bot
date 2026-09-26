@@ -6,7 +6,7 @@ Entry point for AI agents working on this project. Start here to understand the 
 
 A Telegram bot that downloads videos and images from YouTube, TikTok, and Instagram. Users paste a URL, get the media back. Also silently attempts gallery-dl for 100+ other services (Pinterest, Pixiv, X, Reddit, DeviantArt, etc.) — works as a best-effort fallback.
 
-**Tech stack:** Python 3.12+, python-telegram-bot, yt-dlp (subprocess), gallery-dl (subprocess), pytest
+**Tech stack:** Python 3.14+, uv, python-telegram-bot, yt-dlp (subprocess), gallery-dl (subprocess), pytest
 
 ## Documentation
 
@@ -68,9 +68,11 @@ media-downloader-bot/
 │   ├── README.md       # Project overview
 │   └── README.md       # Module responsibilities and data flow
 ├── logs/               # Persistent log files (gitignored, mounted as volume)
-├── requirements.txt    # Dependencies
+├── pyproject.toml      # Project metadata, version, dependencies (uv)
+├── uv.lock             # Locked dependency versions
+├── .python-version     # Python version pin for uv (3.14)
 ├── .env.example        # Config template
-├── Dockerfile          # Multi-stage build (Python 3.12-slim, yt-dlp, gallery-dl, ffmpeg, deno JS runtime)
+├── Dockerfile          # Multi-stage build (Python 3.14-slim, yt-dlp, gallery-dl, ffmpeg, deno JS runtime)
 ├── docker-compose.yml  # Container orchestration with volume mounts
 ├── .dockerignore       # Excludes .venv, __pycache__, logs, cookies.txt from build
 └── conftest.py         # Adds src/ to Python path for tests
@@ -168,7 +170,8 @@ media-downloader-bot/
 - **User-facing messages** - All `reply_text()` and `_text_result()` strings centralized in `src/messages.py` as `MSG_*` constants. No inline string literals in handlers.
 - **DownloadAuthRequired** - Custom exception raised by `download_video()` or `get_metadata()` when yt-dlp reports content requires login (e.g. age-restricted YouTube, TikTok login-gated). Caught at orchestrator level (`_download_and_send`, `_download_media_result`), not inside platform handlers. Sets `skip_reason: "auth_required"` in logs. Shows "This content is restricted. Login required to access" to user.
 - **DownloadError** - Custom exception for transient download failures (e.g. gallery-dl timeout). Carries `user_message` (safe for users, from MSG_* constants) and `raw_error` (technical details for logging to request-details.jsonl). Caught at orchestrator level (`_download_and_send`, `handle_guest`), not inside platform handlers. Ensures consistent error messages across P2P, group, and guest contexts.
-- **Docker deployment** - Multi-stage build with yt-dlp, gallery-dl, ffmpeg, and deno (JS runtime for yt-dlp YouTube extraction). Persistent logs via volume mount to `./logs/`. `allowed-users.json` mounted read-only.
+- **uv dependency management** - `pyproject.toml` + `uv.lock` (committed) replace `requirements.txt`. Runtime deps in `[project] dependencies`, dev tools (pytest, pytest-asyncio, yt-dlp) in the `dev` group. Project version lives in `pyproject.toml` (`uv version --bump patch`; `./bot.sh version` reads it). Local commands run via `uv run …`. Add/update deps with `uv add`/`uv lock --upgrade-package <name>`.
+- **Docker deployment** - Multi-stage build with yt-dlp, gallery-dl, ffmpeg, and deno (JS runtime for yt-dlp YouTube extraction). Build stage runs `uv sync --frozen --no-dev` into a `.venv` copied to the runtime; runtime stage pip-installs yt-dlp (from master) and gallery-dl (pinned) separately. Persistent logs via volume mount to `./logs/`. `allowed-users.json` mounted read-only.
 - **Platform separation** - Each platform (YouTube, TikTok, Instagram) has its own module with isolated download logic.
 - **Guest mode (Bot API 10.0)** - Users mention `@botname` in any chat to download media. Uses `guest_message` updates + `answerGuestQuery()`. Files uploaded to a private storage channel to get `file_id`s for InlineQueryResult. Guest handler registered before text handler to prevent `filters.TEXT` from consuming guest updates.
 - **InlineQueryResult as raw dicts** - ptb's `InlineQueryResultVideo`/`Photo` constructors require placeholder URLs that Telegram tries to fetch. Using raw dicts with `video_file_id`/`photo_file_id` avoids this.
@@ -188,7 +191,7 @@ Never commit `allowed-users.json` — it contains user IDs and is generated loca
 ## Running Tests
 
 ```bash
-python -m pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 All 428 tests use mocked subprocess calls - no real downloads needed.
