@@ -177,7 +177,7 @@ async def test_caption_command_includes_reply_parameters(update, context):
         await caption_command(update, context)
     kwargs = update.message.reply_text.call_args[1]
     assert "reply_parameters" in kwargs
-    assert kwargs["reply_parameters"] == {"message_id": 42}
+    assert kwargs["reply_parameters"] == {"message_id": 42, "allow_sending_without_reply": True}
 
 
 # --- start_command tests ---

@@ -56,6 +56,42 @@ def test_get_metadata_omits_format_selector_by_default():
         call_args = mock_run.call_args[0][0]
         assert "-f" not in call_args
 
+
+def test_video_format_selector_includes_merge_branches():
+    """VIDEO_FORMAT_SELECTOR must try bestvideo+bestaudio merge first.
+
+    YouTube increasingly serves DASH-only formats (no progressive
+    video+audio stream), for which a bare "best" selector fails with
+    "Requested format is not available".
+    """
+    from downloader import VIDEO_FORMAT_SELECTOR
+    assert "bestvideo" in VIDEO_FORMAT_SELECTOR
+    assert "+bestaudio" in VIDEO_FORMAT_SELECTOR
+    # Merge branches must come before the bare "best" fallback
+    assert VIDEO_FORMAT_SELECTOR.index("+bestaudio") < VIDEO_FORMAT_SELECTOR.rindex("/best")
+
+
+def test_download_video_selectors_include_merge_branches():
+    """download_video first attempt and retry must both support DASH-only formats."""
+    with patch("downloader.subprocess.run") as mock_run:
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="File is too large"),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
+        result = download_video("https://youtube.com/watch?v=abc123", "/tmp/test.mp4")
+        assert result is True
+
+        first_args = mock_run.call_args_list[0][0][0]
+        first_fmt = first_args[first_args.index("-f") + 1]
+        assert "bestvideo" in first_fmt
+        assert "+bestaudio" in first_fmt
+
+        retry_args = mock_run.call_args_list[1][0][0]
+        retry_fmt = retry_args[retry_args.index("-f") + 1]
+        assert "worstvideo" in retry_fmt
+        assert "+worstaudio" in retry_fmt
+        assert "worst[filesize<" in retry_fmt
+
 def test_get_metadata_returns_none_on_failure():
     with patch("downloader.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(

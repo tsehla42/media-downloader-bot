@@ -15,9 +15,14 @@ MAX_FILE_SIZE_MB = 50
 # Format selector matching download_video() — used by get_metadata() for
 # accurate pre-download size estimates (avoids rejecting videos whose
 # bestvideo+bestaudio streams exceed 50 MB but whose MP4 fallback fits).
+# Merge branches (bestvideo+bestaudio) come first: YouTube increasingly serves
+# DASH-only formats (no progressive video+audio), for which a bare "best"
+# selector fails with "Requested format is not available".
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 VIDEO_FORMAT_SELECTOR = (
-    f"best[ext=mp4][filesize<{MAX_FILE_SIZE_BYTES}]"
+    f"bestvideo[ext=mp4][filesize<{MAX_FILE_SIZE_BYTES}]+bestaudio[ext=m4a]"
+    f"/bestvideo[ext=mp4]+bestaudio[ext=m4a]"
+    f"/best[ext=mp4][filesize<{MAX_FILE_SIZE_BYTES}]"
     f"/best[ext=mp4]"
     f"/best[filesize<{MAX_FILE_SIZE_BYTES}]"
     f"/best"
@@ -202,7 +207,14 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
 
     logger.info("download_video: running yt-dlp", extra=extra)
     result = _run_ytdlp([
-        "-f", f"best[ext=mp4][filesize<{max_bytes}]/best[ext=mp4]/best[filesize<{max_bytes}]/best",
+        "-f", (
+            f"bestvideo[ext=mp4][filesize<{max_bytes}]+bestaudio[ext=m4a]"
+            f"/bestvideo[ext=mp4]+bestaudio[ext=m4a]"
+            f"/best[ext=mp4][filesize<{max_bytes}]"
+            f"/best[ext=mp4]"
+            f"/best[filesize<{max_bytes}]"
+            f"/best"
+        ),
         "--merge-output-format", "mp4",
         "-o", output_path,
         *platform_args,
@@ -219,7 +231,14 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     logger.info("download_video: retrying with lower quality", extra=extra)
 
     result = _run_ytdlp([
-        "-f", f"worst[ext=mp4][filesize<{max_bytes}]/worst[ext=mp4]/worst[filesize<{max_bytes}]/worst",
+        "-f", (
+            f"worstvideo[ext=mp4][filesize<{max_bytes}]+worstaudio[ext=m4a]"
+            f"/worstvideo[ext=mp4]+worstaudio[ext=m4a]"
+            f"/worst[ext=mp4][filesize<{max_bytes}]"
+            f"/worst[ext=mp4]"
+            f"/worst[filesize<{max_bytes}]"
+            f"/worst"
+        ),
         "--merge-output-format", "mp4",
         "-o", output_path,
         *platform_args,
