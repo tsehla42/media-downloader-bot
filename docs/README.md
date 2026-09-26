@@ -14,7 +14,7 @@ Modular design. Each module has one clear responsibility. yt-dlp is called as a 
 - [Logging](logs/) - Logging system
 - [Content Delivery](content-delivery/) - Media downloading
 - [Media Cache](cache/) - SQLite cache for guest mode file_ids
-- [Cookies](cookies.md) - Instagram cookie refresh setup
+- [Cookies](cookies.md) - Manual cookie setup and refresh (Instagram + TikTok)
 - [Deploy Guide](deploy.md) - Production server deployment flow (gitignored)
 
 ## Modules
@@ -99,12 +99,13 @@ Pure utility functions, no dependencies:
 - `cleanup_file(path)` / `cleanup_dir(path)` - Safe file removal
 - `get_gallery_dl_domains()` - Returns frozenset of gallery-dl supported domains. Auto-generates `src/gallery_dl_domains.py` from Codeberg if missing.
 
-### cookies.py
-Instagram cookie refresh via instagrapi:
-- `check_cookies_staleness(cookies_path, max_age_days=3)` - Returns True if cookies file is missing or older than threshold
-- `refresh_instagram_cookies(username, password, session_path, cookies_path, max_age_days=3, force=False)` - Refreshes cookies if stale. Returns True if fresh or successfully refreshed. Preserves existing cookies on failure.
-- `_login_with_session(cl, username, password, session_path)` - Tries saved session first, falls back to fresh login
-- `_export_cookies_to_netscape(cookie_jar, output_path, domain)` - Converts RequestsCookieJar to Netscape format (unused — cookies exported directly from authorization_data)
+### Instagram cookies (manual)
+
+Instagram cookie refresh is manual-only: run `./bot.sh refresh-ig`
+(`scripts/python/ig_login_local.py`) on the host when login-gated content
+starts failing. See [cookies.md](cookies.md). The old auto-refresh module
+(`src/cookies.py`) and staleness checker were removed — they could not detect
+server-side session invalidation.
 
 ### downloader.py
 Wraps yt-dlp and gallery-dl binary calls via subprocess:

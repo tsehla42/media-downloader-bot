@@ -26,7 +26,10 @@ FROM python:${PYTHON_VERSION}-slim
 # picks up fixes within hours instead of waiting for a release. The tradeoff
 # is no reproducibility, but this bot breaks when extractors go stale, so
 # staying current outweighs pinning.
-# gallery-dl: pinned to 1.32.4 — version 1.32.9+ broke TikTok extraction.
+# gallery-dl: pinned to 1.32.4 — 1.32.9+ broke TikTok extraction. Retested
+# 2026-09-26 against 1.32.13 on 4 known-failing TikTok photo URLs: 1.32.13
+# failed all 4 (403) while 1.32.4 succeeded on 1 — newer is not better.
+# TikTok extractor code is unchanged upstream since Feb 2026 anyway.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/* \

@@ -15,8 +15,6 @@ SCRIPT_START=$(date +%s%N)
 echo "Pulling latest changes..."
 git pull
 
-bash "$SCRIPT_DIR/refresh-ig-cookies.sh"
-
 echo "Rebuilding and restarting bot..."
 bash "$SCRIPT_DIR/compose.sh"
 

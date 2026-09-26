@@ -9,11 +9,11 @@ show_menu() {
 Media Downloader Bot — Script Menu
 
   1) deploy         Fetch + reset, then run update script
-  2) update         Git pull, refresh cookies, run compose script
+  2) update         Git pull, run compose script
   3) compose        Build image and restart container
   4) dev            Run local dev container
   5) dev-stop       Stop dev container, remove image, cleanup
-  6) refresh-ig     Check and refresh Instagram cookies
+  6) refresh-ig     Manually refresh Instagram cookies (interactive login)
   7) pull-logs      Pull logs from production server
   8) version        Show local and production server versions
 
@@ -31,7 +31,7 @@ run_deploy()   { bash "${SHELL_DIR}/deploy.sh" "$@"; }
 run_update()   { bash "${SHELL_DIR}/update.sh" "$@"; }
 run_dev()      { clear && bash "${SHELL_DIR}/compose.sh" "$@" && docker logs media-downloader-bot -f; }
 run_dev_stop() { bash "${SHELL_DIR}/dev-stop.sh" "$@"; }
-run_refresh()  { bash "${SHELL_DIR}/refresh-ig-cookies.sh" "$@"; }
+run_refresh()  { python "${SCRIPT_DIR}/scripts/python/ig_login_local.py" "$@"; }
 run_pull()     { bash "${SHELL_DIR}/pull-logs.sh" "$@"; }
 run_version()  { bash "${SHELL_DIR}/version.sh" "$@"; }
 

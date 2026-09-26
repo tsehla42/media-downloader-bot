@@ -34,7 +34,6 @@ media-downloader-bot/
 │   ├── auth.py         # Authorization checks (is_authorized, is_group_chat, allowlists)
 │   ├── commands.py     # User commands: /start, /help, /caption
 │   ├── telegram_utils.py # Telegram helpers: typing_indicator, send_images
-│   ├── cookies.py      # Instagram cookie refresh via instagrapi (login, session, Netscape export)
 │   ├── messages.py     # User-facing message constants (MSG_*) used across all handlers
 │   ├── logging_config.py # Structured JSON logging: four-file split (requests, details, service, errors)
 │   ├── cache.py          # SQLite media cache for guest mode (URL extraction, key generation, store/retrieve)
@@ -44,15 +43,13 @@ media-downloader-bot/
 │   │   ├── tiktok.py   # TikTok download with gallery-dl fallback
 │   │   └── instagram.py # Instagram images with gallery-dl fallback
 │   └── utils.py        # URL validation, file cleanup, get_gallery_dl_domains()
-├── bot                 # Root wrapper: menu + arg routing for all scripts
+├── bot.sh              # Script menu + arg routing for all scripts (deploy/update/compose/dev/pull-logs/refresh-ig)
 ├── scripts/
 │   ├── shell/          # Shell scripts
 │   │   ├── compose.sh
 │   │   ├── update.sh
-│   │   ├── pull-logs.sh
-│   │   └── refresh-ig-cookies.sh
+│   │   └── pull-logs.sh
 │   └── python/         # Python utility scripts
-│       ├── check_cookies.py
 │       ├── generate_gallery_dl_domains.py
 │       ├── generate_ytdlp_domains.py
 │       └── ig_login_local.py
@@ -66,8 +63,7 @@ media-downloader-bot/
 │   ├── test_guest.py
 │   ├── test_downloader.py
 │   ├── test_cache.py
-│   ├── test_logging.py
-│   └── test_cookies.py
+│   └── test_logging.py
 ├── docs/
 │   ├── README.md       # Project overview
 │   └── README.md       # Module responsibilities and data flow
@@ -94,7 +90,6 @@ media-downloader-bot/
 | `src/platforms/tiktok.py` | downloader, platform_args, telegram_utils | TikTok: `handle_tiktok()` with gallery-dl fallback for photo posts |
 | `src/platforms/instagram.py` | downloader, telegram_utils | Instagram: `handle_instagram()` with gallery-dl fallback and cookies |
 | `src/utils.py` | nothing | URL validation, file cleanup, `get_gallery_dl_domains()` (imports/auto-generates gallery-dl domain whitelist) |
-| `src/cookies.py` | instagrapi | Instagram cookie refresh: `check_cookies_staleness()`, `refresh_instagram_cookies()` (login via session or fresh, exports sessionid/ds_user_id to Netscape format), `_login_with_session()`, `_export_cookies_to_netscape()` |
 | `src/downloader.py` | yt-dlp, gallery-dl, platform_args | yt-dlp subprocess calls: `_run_ytdlp()` helper (common flags via COMMON_YTDL_ARGS), `get_metadata()` (optional `format_selector` for accurate size estimates, 60s timeout, logs stderr on failure, raises `DownloadAuthRequired` for age-restricted), `download_video()` (retries with lower quality, raises `DownloadAuthRequired`/`DownloadError`), `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()`. Raises `DownloadAuthRequired` when content requires login (age-restricted YouTube, TikTok login-gated). Raises `DownloadError` on gallery-dl timeout (user_message + raw_error for logging). |
 | `src/platform_args.py` | nothing | Platform-specific yt-dlp constants: `USER_AGENT` (Chrome 140), `COMMON_YTDL_ARGS` (`--no-playlist`, `--user-agent`), `TIKTOK_REFERER` (Referer header for WAF bypass). Imported by downloader.py and platform handlers. |
 - `src/logging_config.py` | config | Structured JSON logging: four-file split (requests/details/service/errors), JSONFormatter, `_enrich_chat()` for enriched chat dicts, `log_error()` for unhandled exceptions, filter-based routing, with_request_logging decorator (reads `_skip_reason` from user_data), contextvars for request_id, request lifecycle functions (log_request_received/completed/failed — completed accepts `skip_reason`), guest request functions (log_guest_request_received/completed), service log functions (log_new_user, log_bot_added_to_chat, log_bot_rejected_group_addition, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot, log_unauthorized_access) |
@@ -178,7 +173,7 @@ media-downloader-bot/
 - **Guest mode (Bot API 10.0)** - Users mention `@botname` in any chat to download media. Uses `guest_message` updates + `answerGuestQuery()`. Files uploaded to a private storage channel to get `file_id`s for InlineQueryResult. Guest handler registered before text handler to prevent `filters.TEXT` from consuming guest updates.
 - **InlineQueryResult as raw dicts** - ptb's `InlineQueryResultVideo`/`Photo` constructors require placeholder URLs that Telegram tries to fetch. Using raw dicts with `video_file_id`/`photo_file_id` avoids this.
 - **Media cache** - SQLite cache stores Telegram `file_id`s by platform-specific content ID. Cache hit skips download+upload entirely. TikTok metadata fetched for short URL deduplication. For short URLs, follows HTTP redirects to resolve video ID. Falls back to URL hash when redirect fails. Cache persists in Docker volume.
-- **Instagram cookie refresh** - Cookies managed via instagrapi (not browser export). `cookies.py` handles login, session persistence, and Netscape export. Must run on host (Docker blocked by Instagram). `./bot.sh refresh-ig` refreshes cookies.
+- **Instagram cookies (manual)** - Cookies managed via instagrapi (not browser export). Renewal is manual only: `./bot.sh refresh-ig` (runs `scripts/python/ig_login_local.py`) must be run on the host (Docker blocked by Instagram). Auto-renewal (staleness check, cron, refresh-on-update) was removed — it could not detect server-side session invalidation.
 - **TikTok cookies** - Browser-exported Netscape cookies (`tiktok-cookies.txt`) passed to yt-dlp and gallery-dl for TikTok URLs. Enables downloading age-restricted and login-gated content. Cookie file mounted as writable volume (yt-dlp writes back to update cookies). Configurable via `TIKTOK_COOKIES_PATH` env var. Cookies expire ~30 days and must be manually refreshed.
 - **Deleted message handling** - All `reply_parameters` dicts include `allow_sending_without_reply=True`. When user deletes their message before bot replies, bot sends message directly to chat instead of throwing `BadRequest`. Guest mode uses `_safe_answer_guest_query()` wrapper that catches `BadRequest` and logs gracefully.
 
@@ -196,7 +191,7 @@ Never commit `allowed-users.json` — it contains user IDs and is generated loca
 python -m pytest tests/ -v
 ```
 
-All 391 tests use mocked subprocess calls - no real downloads needed.
+All 428 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 
@@ -206,7 +201,7 @@ All 391 tests use mocked subprocess calls - no real downloads needed.
 
 **Change download behavior:** Edit `src/downloader.py` for yt-dlp changes, or the platform-specific handler in `src/platforms/` for platform logic.
 
-**Docker tool versions:** `gallery-dl` is pinned to 1.32.4 in the Dockerfile. Version 1.32.9+ has a TikTok regression (403 Forbidden). Do NOT upgrade without testing TikTok first. `yt-dlp` installs from master with curl-cffi for TikTok impersonation support.
+**Docker tool versions:** `gallery-dl` is pinned to 1.32.4 in the Dockerfile. Version 1.32.9+ has a TikTok regression (403 Forbidden) — retested 2026-09-26 against 1.32.13 on 4 known-failing TikTok photo URLs: 1.32.13 failed all 4 (403) while 1.32.4 succeeded on 1. Do NOT upgrade without testing TikTok first. `yt-dlp` installs from master with curl-cffi for TikTok impersonation support.
 
 **Add logging to a handler:** Apply `@with_request_logging` decorator from `logging_config`. The decorator automatically logs request lifecycle (received/completed/failed).
 
@@ -257,4 +252,4 @@ This copies today's logs from the server into local `logs/YYYY-MM-DD/`. Then rea
 - [Project Overview](docs/README.md) - Quick summary of what/why, architecture, and links to detailed docs
 - [Deployment](docs/deploy.md) - Production server, SSH access, deploy commands (gitignored)
 - [Guest Mode](docs/guest-mode/README.md) - Bot API 10.0 guest mode overview and technical reference
-- [Cookies](docs/cookies.md) - Instagram cookie refresh setup and troubleshooting
+- [Cookies](docs/cookies.md) - Manual cookie setup/refresh (Instagram + TikTok) and troubleshooting
