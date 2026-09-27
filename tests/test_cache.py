@@ -108,6 +108,50 @@ def test_get_cache_key_youtube():
     assert _get_cache_key(url, "youtube") == "youtube:dQw4w9WgXcQ"
 
 
+def test_get_cache_key_youtube_audio_variant():
+    """YouTube URL with audio variant generates youtube:ID:audio key."""
+    url = "https://music.youtube.com/watch?v=dQw4w9WgXcQ"
+    assert _get_cache_key(url, "youtube", None, "audio") == "youtube:dQw4w9WgXcQ:audio"
+
+
+def test_get_cache_key_youtube_variant_empty_matches_default():
+    """Empty variant produces the same key as no variant (backward compatible)."""
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    assert _get_cache_key(url, "youtube", None, "") == _get_cache_key(url, "youtube")
+
+
+def test_cache_audio_variant_does_not_collide_with_video(monkeypatch, tmp_path):
+    """Audio and video entries for the same URL are stored separately."""
+    monkeypatch.setenv("CACHE_DIR", str(tmp_path))
+    import cache
+    cache._db_path = None
+    cache._conn = None
+
+    url = "https://music.youtube.com/watch?v=dQw4w9WgXcQ"
+    store(url, "youtube", "audio_file_id", "audio", "Song", 0.5, None, "audio")
+    store(url, "youtube", "video_file_id", "video", "Song", 5.0)
+
+    audio_hit = get_cached(url, "youtube", None, "audio")
+    video_hit = get_cached(url, "youtube")
+
+    assert audio_hit == ("audio_file_id", "audio")
+    assert video_hit == ("video_file_id", "video")
+
+
+def test_cache_audio_variant_miss_when_only_video_cached(monkeypatch, tmp_path):
+    """Audio variant lookup misses when only the video entry exists."""
+    monkeypatch.setenv("CACHE_DIR", str(tmp_path))
+    import cache
+    cache._db_path = None
+    cache._conn = None
+
+    url = "https://music.youtube.com/watch?v=dQw4w9WgXcQ"
+    store(url, "youtube", "video_file_id", "video", "Song", 5.0)
+
+    assert get_cached(url, "youtube", None, "audio") is None
+    assert get_cached(url, "youtube") == ("video_file_id", "video")
+
+
 def test_get_cache_key_instagram():
     """Instagram URL generates instagram:SHORTCODE key."""
     url = "https://www.instagram.com/p/ABC123XYZ/"

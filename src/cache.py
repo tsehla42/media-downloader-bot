@@ -108,11 +108,22 @@ def _metadata_hash(metadata: dict) -> str:
     return hashlib.md5(content.encode()).hexdigest()[:8]
 
 
-def _get_cache_key(url: str, platform: str | None, metadata: dict | None = None) -> str | None:
+def _get_cache_key(url: str, platform: str | None, metadata: dict | None = None,
+                   variant: str = "") -> str | None:
     """Generate cache key from URL and optional metadata.
 
     Returns key in format "platform:id" or None if cannot generate.
+    When variant is non-empty it is appended ("platform:id:variant") so
+    different artifacts of the same content (e.g. audio vs video) coexist.
     """
+    key = _get_base_cache_key(url, platform, metadata)
+    if key and variant:
+        return f"{key}:{variant}"
+    return key
+
+
+def _get_base_cache_key(url: str, platform: str | None, metadata: dict | None = None) -> str | None:
+    """Generate the base cache key (without variant suffix)."""
     # TikTok
     if platform == "tiktok":
         video_id = _extract_tiktok_id(url)
@@ -181,9 +192,10 @@ def _get_db() -> sqlite3.Connection:
     return _conn
 
 
-def get_cached(url: str, platform: str | None, metadata: dict | None = None) -> tuple[str, str] | None:
+def get_cached(url: str, platform: str | None, metadata: dict | None = None,
+               variant: str = "") -> tuple[str, str] | None:
     """Check cache for URL. Returns (file_id, media_type) or None."""
-    cache_key = _get_cache_key(url, platform, metadata)
+    cache_key = _get_cache_key(url, platform, metadata, variant)
     if not cache_key:
         return None
 
@@ -210,9 +222,10 @@ def get_cached(url: str, platform: str | None, metadata: dict | None = None) -> 
 
 
 def store(url: str, platform: str | None, file_id: str, media_type: str,
-          title: str = "", file_size_mb: float = 0.0, metadata: dict | None = None) -> None:
+          title: str = "", file_size_mb: float = 0.0, metadata: dict | None = None,
+          variant: str = "") -> None:
     """Store download result in cache."""
-    cache_key = _get_cache_key(url, platform, metadata)
+    cache_key = _get_cache_key(url, platform, metadata, variant)
     if not cache_key:
         logger.debug("Cannot generate cache key for %s", url)
         return

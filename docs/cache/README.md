@@ -19,8 +19,11 @@ Same video shared via different URLs (e.g., different TikTok short links) maps t
 |---|---|---|
 | TikTok | Video ID from URL, yt-dlp metadata, HTTP redirect, or URL hash | `tiktok:7647759526040489234` |
 | YouTube | `v=` param from URL | `youtube:dQw4w9WgXcQ` |
+| YouTube (audio) | Same `v=` param + `:audio` variant suffix | `youtube:dQw4w9WgXcQ:audio` |
 | Instagram | Shortcode from URL | `instagram:DZKGZOcPJF-` |
 | Other | Hash of `title + duration + uploader` | `meta:a1b2c3d4` |
+
+**Audio variant:** guest mode downloads `music.youtube.com` links as audio by default, while a video keyword downloads video from the same URL. Both artifacts are cached side by side — audio entries use the `:audio` suffix (`get_cached()`/`store()` `variant` param), so the two never collide.
 
 **TikTok short URLs** (`vt.tiktok.com/...`, `vm.tiktok.com/...`) don't contain video IDs. The bot resolves them using this priority:
 
@@ -41,7 +44,7 @@ Same video shared via different URLs (e.g., different TikTok short links) maps t
 CREATE TABLE media_cache (
     cache_key TEXT PRIMARY KEY,      -- "platform:content_id"
     file_id TEXT NOT NULL,           -- Telegram file_id
-    media_type TEXT NOT NULL,        -- "video", "photo", "image"
+    media_type TEXT NOT NULL,        -- "video", "photo", "image", "audio"
     platform TEXT,                   -- "tiktok", "youtube", "instagram"
     title TEXT,                      -- Content title
     file_size_mb REAL,               -- File size in MB

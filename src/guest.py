@@ -17,7 +17,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from auth import is_user_allowed, was_notified_guest, mark_notified_guest
-from config import MAX_FILE_SIZE, IG_COOKIES_PATH, TIKTOK_COOKIES_PATH, STORAGE_CHANNEL_ID
+from config import MAX_FILE_SIZE, DOWNLOAD_DIR, IG_COOKIES_PATH, TIKTOK_COOKIES_PATH, STORAGE_CHANNEL_ID
 from platform_args import TIKTOK_REFERER
 from utils import find_downloaded_file, cleanup_video_files, make_video_tmp_path, make_tmp_dir
 from logging_config import (
@@ -30,11 +30,12 @@ from logging_config import (
     _build_forwarded_dict,
 )
 from platforms import detect_platform, extract_domain
-from utils import extract_urls, cleanup_dir, get_gallery_dl_domains, get_ytdlp_domains
+from utils import extract_urls, cleanup_dir, cleanup_file, get_gallery_dl_domains, get_ytdlp_domains, parse_format_choice
 from cache import get_cached, store
 from downloader import (
     get_metadata,
     download_video,
+    download_audio,
     download_gallery_dl_images,
     download_gallery_dl_video,
     DownloadAuthRequired,
@@ -122,6 +123,20 @@ def _photo_result(file_id: str, caption: str = "") -> dict:
     if caption:
         result["caption"] = caption
     return result
+
+
+def _audio_result(file_id: str, title: str = "Audio") -> dict:
+    """Build InlineQueryResultAudio for audio response.
+
+    Uses raw dict to pass audio_file_id directly — same pattern as
+    _video_result() (ptb constructors require placeholder URLs).
+    """
+    return {
+        "type": "audio",
+        "id": uuid.uuid4().hex[:8],
+        "audio_file_id": file_id,
+        "title": title[:100],
+    }
 
 
 def _media_group_result(file_ids: list[str]) -> dict:
@@ -237,6 +252,10 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     # Process first URL
     url = urls[0]
+    # Format keyword (video/відео/видео) in the tag text forces video for
+    # music.youtube.com URLs; everything else defaults to audio (guest only
+    # sends one inline result, so "both" also resolves to audio here)
+    force_video = parse_format_choice(text) == "video"
     platform = None
     try:
         platform = detect_platform(url)
@@ -250,7 +269,7 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     start_time = time.time()
 
     try:
-        result, content_type, file_size_mb, cache_hit = await _download_and_build_result(url, platform)
+        result, content_type, file_size_mb, cache_hit = await _download_and_build_result(url, platform, force_video)
         await _safe_answer_guest_query(context.bot, guest_query_id, result)
 
         duration_ms = int((time.time() - start_time) * 1000)
@@ -319,30 +338,42 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # Download pipeline
 # ---------------------------------------------------------------------------
 
-async def _download_and_build_result(url: str, platform: str | None) -> tuple[dict, str | None, float | None, bool]:
+async def _download_and_build_result(url: str, platform: str | None,
+                                     force_video: bool = False) -> tuple[dict, str | None, float | None, bool]:
     """Download media and return (InlineQueryResult, content_type, file_size_mb, cache_hit).
 
     Checks cache first. On miss, downloads and caches the result.
+    music.youtube.com URLs download audio by default; force_video=True
+    (video/відео/видео keyword) selects the video download instead.
     Raises ValueError when all download methods fail (expected failure).
     Other exceptions propagate as unexpected errors.
     """
+    # Music links download audio unless the video keyword was given
+    want_audio = platform == "youtube" and "music.youtube.com" in url and not force_video
+    variant = "audio" if want_audio else ""
+
     # Check cache first
     metadata = None
     if platform == "tiktok":
         # Fetch metadata to get video ID for short URLs
         metadata = await asyncio.to_thread(get_metadata, url)
-    cached = get_cached(url, platform, metadata)
+    cached = get_cached(url, platform, metadata, variant)
     if cached:
         file_id, media_type = cached
         if media_type == "video":
             return _video_result(file_id, title="Cached video"), "video", None, True
+        elif media_type == "audio":
+            return _audio_result(file_id, title="Cached audio"), "audio", None, True
         elif media_type in ("photo", "image"):
             return _photo_result(file_id), "image", None, True
 
     # Cache miss - proceed with download
     metadata = None
     if platform == "youtube":
-        result, content_type, file_size_mb = await _download_youtube(url)
+        if want_audio:
+            result, content_type, file_size_mb = await _download_audio(url)
+        else:
+            result, content_type, file_size_mb = await _download_youtube(url)
     elif platform == "tiktok":
         # Fetch metadata first to get video ID for short URLs
         metadata = await asyncio.to_thread(get_metadata, url, None, TIKTOK_REFERER, TIKTOK_COOKIES_PATH)
@@ -364,12 +395,44 @@ async def _download_and_build_result(url: str, platform: str | None) -> tuple[di
     # Cache successful result
     if result and result.get("video_file_id"):
         store(url, platform, result["video_file_id"], "video",
-              result.get("title", ""), file_size_mb or 0.0, metadata)
+              result.get("title", ""), file_size_mb or 0.0, metadata, "")
     elif result and result.get("photo_file_id"):
         store(url, platform, result["photo_file_id"], "photo",
-              result.get("title", ""), file_size_mb or 0.0, metadata)
+              result.get("title", ""), file_size_mb or 0.0, metadata, "")
+    elif result and result.get("audio_file_id"):
+        store(url, platform, result["audio_file_id"], "audio",
+              result.get("title", ""), file_size_mb or 0.0, metadata, variant)
 
     return result, content_type, file_size_mb, False
+
+
+async def _download_audio(url: str) -> tuple[dict, str, float | None]:
+    """Download YouTube Music audio as MP3 and return (InlineQueryResult, content_type, file_size_mb)."""
+    try:
+        metadata = await asyncio.to_thread(get_metadata, url)
+    except DownloadAuthRequired:
+        return _text_result(MSG_LOGIN_REQUIRED), "audio", None
+    if not metadata:
+        return _text_result(MSG_GUEST_METADATA_FAILED), "audio", None
+
+    title = metadata.get("title", "audio")
+    tmp_id = uuid.uuid4().hex[:8]
+    output_path = os.path.join(DOWNLOAD_DIR, f"{tmp_id}.mp3")
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+    try:
+        success = await asyncio.to_thread(download_audio, url, output_path)
+        if not success or not os.path.isfile(output_path):
+            raise ValueError(MSG_DOWNLOAD_FAILED)
+
+        file_size = os.path.getsize(output_path)
+        file_size_mb = round(file_size / (1024 * 1024), 2)
+        file_id = await _upload_to_telegram(output_path, "audio", title=title)
+        if file_id:
+            return _audio_result(file_id, title=title), "audio", file_size_mb
+        raise ValueError(MSG_GUEST_UPLOAD_FAILED)
+    finally:
+        cleanup_file(output_path)
 
 
 async def _download_youtube(url: str) -> tuple[dict, str, float | None]:
@@ -534,8 +597,13 @@ async def _gallery_dl_result(url: str) -> tuple[dict, str, float | None]:
 # File upload to storage channel
 # ---------------------------------------------------------------------------
 
-async def _upload_to_telegram(file_path: str, media_type: str) -> str | None:
-    """Upload a local file to the storage channel and return the file_id."""
+async def _upload_to_telegram(file_path: str, media_type: str, title: str = "") -> str | None:
+    """Upload a local file to the storage channel and return the file_id.
+
+    For audio, `title` is sent to sendAudio — Telegram validates the FILE's
+    stored title when the file_id is later used in an inline/guest audio
+    result (Audio_title_empty otherwise).
+    """
     if not STORAGE_CHANNEL_ID:
         details_logger.warning(
             "upload_to_telegram skipped — STORAGE_CHANNEL_ID not configured",
@@ -553,11 +621,15 @@ async def _upload_to_telegram(file_path: str, media_type: str) -> str | None:
                     files = {"video": f}
                 elif media_type == "photo":
                     files = {"photo": f}
+                elif media_type == "audio":
+                    files = {"audio": f}
                 else:
                     files = {"document": f}
                 data = {"chat_id": STORAGE_CHANNEL_ID}
                 if media_type == "video":
                     data["supports_streaming"] = "true"
+                elif media_type == "audio" and title:
+                    data["title"] = title
 
                 response = await client.post(url, data=data, files=files)
                 result = response.json()
@@ -572,6 +644,8 @@ async def _upload_to_telegram(file_path: str, media_type: str) -> str | None:
                 msg = result.get("result", {})
                 if media_type == "video":
                     return msg.get("video", {}).get("file_id")
+                elif media_type == "audio":
+                    return msg.get("audio", {}).get("file_id")
                 elif media_type == "photo":
                     # Telegram returns photo as list of PhotoSize (smallest→largest)
                     photo = msg.get("photo", [])

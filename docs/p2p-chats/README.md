@@ -35,6 +35,7 @@ Users can interact with the bot directly in private chats to download media by s
 - Detect platform (YouTube, TikTok, Instagram, or gallery-dl fallback)
 - Download media
 - Send to user
+- YouTube Music (`music.youtube.com`): shows Audio/Video/Video+Audio picker, unless the message contains a format keyword (`video`/`відео`/`видео`/`audio`/`аудіо`/`аудио`) — then the selected format is sent directly and the picker is skipped. Both keyword families → both formats.
 
 ### /audio Commands
 - Download audio only (YouTube, YouTube Music)

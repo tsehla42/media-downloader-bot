@@ -78,8 +78,9 @@ YouTube and YouTube Music download logic, depends on downloader, commands, teleg
 - `_download_and_send_video(url, base, output_path, caption, reply_params, message, context)` - Downloads and sends video
 - `_store_download_metadata(context, content_type, file_path)` - Stores download metadata for logging
 - `handle_youtube(update, context, url)` - Handles regular YouTube URLs
-- `handle_ytmusic(update, context, url, metadata, title, base, output_path, reply_params)` - Handles YouTube Music (format picker or audio-only)
-- `ytmusic_callback(update, context)` - Handles format picker callback (Audio/Video/Video+Audio)
+- `handle_ytmusic(update, context, url, metadata, title, base, output_path, reply_params)` - Handles YouTube Music: a format keyword in the message (video/відео/видео/audio/аудіо/аудио) downloads that format directly and skips the picker; otherwise shows the format picker (or audio-only direct download)
+- `_send_format(choice, url, title, base, output_path, reply_params, message, context)` - Downloads and sends the chosen format(s) (audio/video/both). Shared by the picker callback and the keyword path. Returns True when at least one requested format was sent.
+- `ytmusic_callback(update, context)` - Handles format picker callback (Audio/Video/Video+Audio), delegates to `_send_format()`
 - `_ytmusic_pending` - Shared dict for pending format requests
 - `AUDIO_TITLE_MAX` - Telegram Bot API limit for audio title (64 chars)
 
@@ -95,6 +96,7 @@ Instagram download logic with gallery-dl fallback, depends on downloader, telegr
 Pure utility functions, no dependencies:
 - `is_valid_url(text)` - Checks for HTTP(S) URL pattern
 - `extract_urls(text)` - Finds all URLs in text
+- `parse_format_choice(text)` - Parses format keywords (video/відео/видео, audio/аудіо/аудио) from free text; returns `"video"`, `"audio"`, `"both"`, or None. Case-insensitive, exact whitespace-separated token match.
 - `ensure_download_dir(path)` - Creates download directory if needed
 - `cleanup_file(path)` / `cleanup_dir(path)` - Safe file removal
 - `get_gallery_dl_domains()` - Returns frozenset of gallery-dl supported domains. Auto-generates `src/gallery_dl_domains.py` from Codeberg if missing.
@@ -129,12 +131,13 @@ Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloa
 Bot API 10.0 guest mode handler, depends on auth, config, downloader, platforms, utils, logging_config, httpx, cache:
 - `handle_guest(update, context)` - Main handler for `guest_message` updates. Identifies caller via `guest_msg.from_user` (Telegram sends `from`, ptb maps to `from_user`). Auth check via `is_user_allowed()`. Unauthorized users get "You are not authorized" once via `answer_guest_query`, then silently ignored (uses `was_notified_guest()`/`mark_notified_guest()`). Logs unauthorized access to service.jsonl. Reply to bot message without URL is silently ignored. Reply to bot message with no text shows media type (e.g. `[photo]`) in logs. Extracts URLs from tag text OR replied-to message. Platform set from `extract_domain(url)` when `detect_platform()` returns None (for gallery-dl supported sites). Routes to download pipeline.
 - `_safe_answer_guest_query(bot, guest_query_id, result)` - Wrapper around `answer_guest_query()` that catches `BadRequest` when user deletes their message before bot answers. Logs gracefully instead of throwing unhandled exception.
-- `_download_and_build_result(url, platform)` - Checks cache first (via `cache.get_cached()`). On cache hit, returns cached `file_id` instantly. On miss, routes to platform-specific download: YouTube, TikTok, Instagram, or gallery-dl fallback. For TikTok, fetches metadata before download to get video ID for short URL deduplication. Stores result in cache after successful download.
+- `_download_and_build_result(url, platform, force_video=False)` - Checks cache first (via `cache.get_cached()`, using cache variant `"audio"` for YouTube Music audio requests so audio and video entries coexist). On cache hit, returns cached `file_id` instantly. On miss, routes to platform-specific download: YouTube, TikTok, Instagram, or gallery-dl fallback. For TikTok, fetches metadata before download to get video ID for short URL deduplication. `music.youtube.com` URLs download audio by default; `force_video=True` (video/відео/видео keyword in tag text) selects video instead. Stores result in cache after successful download.
 - `_download_youtube(url)` - Downloads YouTube video, uploads to storage channel, returns `_video_result()`
+- `_download_audio(url)` - Downloads YouTube Music audio as MP3 (metadata for title, no size pre-check), uploads via `sendAudio`, returns `_audio_result()`
 - `_download_media_result(url, platform)` - Downloads TikTok/Instagram content (video -> gallery-dl images -> gallery-dl video). For TikTok, passes `platform="tiktok"` to `download_video()` for referer+cookies, and passes cookies+referer to `get_metadata()`.
 - `_gallery_dl_result(url)` - gallery-dl fallback for unsupported platforms (tries images, then video)
-- `_upload_to_telegram(file_path, media_type)` - Uploads local file to storage channel via httpx, returns `file_id`. Handles Telegram's photo response as list of PhotoSize objects (returns file_id from largest size).
-- `_text_result(text)` / `_video_result(file_id)` / `_photo_result(file_id)` / `_media_group_result(file_ids)` - Build InlineQueryResult as raw dicts. Uses `video_file_id`/`photo_file_id` directly (not ptb classes) to avoid placeholder URL issues. Media group returns first photo only (inline results don't support groups).
+- `_upload_to_telegram(file_path, media_type, title="")` - Uploads local file to storage channel via httpx, returns `file_id`. Handles Telegram's photo response as list of PhotoSize objects (returns file_id from largest size). `media_type` may be video/photo/audio/document. For audio, `title` is passed to sendAudio — Telegram validates the FILE's stored title for inline/guest audio results (`Audio_title_empty` otherwise).
+- `_text_result(text)` / `_video_result(file_id)` / `_photo_result(file_id)` / `_audio_result(file_id)` / `_media_group_result(file_ids)` - Build InlineQueryResult as raw dicts. Uses `video_file_id`/`photo_file_id`/`audio_file_id` directly (not ptb classes) to avoid placeholder URL issues. Media group returns first photo only (inline results don't support groups).
 
 **Critical**: Guest handler must be registered BEFORE `handle_url` text handler in `bot.py`. `filters.TEXT` matches guest messages because `Update.effective_message` now includes `guest_message`.
 
@@ -255,8 +258,11 @@ Guest mode (GUEST_MODE_ENABLED=true):
         +-- URL found -> log_guest_request_received() -> requests.jsonl
         |   (includes user, chat, reply context)
         |
-        +-- Platform detected -> _download_and_build_result(url, platform)
-        |   +-- YouTube -> _download_youtube()
+        +-- Format keyword in tag text (video/відео/видео) -> force_video
+        |
+        +-- Platform detected -> _download_and_build_result(url, platform, force_video)
+        |   +-- music.youtube.com, no video keyword -> _download_audio() (default)
+        |   +-- YouTube (regular URL or video keyword) -> _download_youtube()
         |   +-- TikTok/Instagram -> _download_media_result()
         |   +-- Unknown platform, domain in gallery-dl list -> _gallery_dl_result()
         |   +-- Unknown platform, domain NOT in list -> "Unsupported platform"

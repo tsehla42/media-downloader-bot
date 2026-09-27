@@ -161,6 +161,48 @@ def test_make_tmp_dir_creates_dir():
     assert os.path.isdir(out_dir)
 
 
+from utils import parse_format_choice
+
+
+def test_parse_format_choice_no_keyword():
+    assert parse_format_choice("https://music.youtube.com/watch?v=abc12345678") is None
+
+def test_parse_format_choice_video_en():
+    assert parse_format_choice("https://music.youtube.com/watch?v=abc12345678 video") == "video"
+
+def test_parse_format_choice_video_uk():
+    assert parse_format_choice("https://music.youtube.com/watch?v=abc12345678 відео") == "video"
+
+def test_parse_format_choice_video_ru():
+    assert parse_format_choice("https://music.youtube.com/watch?v=abc12345678 видео") == "video"
+
+def test_parse_format_choice_audio_en():
+    assert parse_format_choice("https://music.youtube.com/watch?v=abc12345678 audio") == "audio"
+
+def test_parse_format_choice_audio_uk():
+    assert parse_format_choice("https://music.youtube.com/watch?v=abc12345678 аудіо") == "audio"
+
+def test_parse_format_choice_audio_ru():
+    assert parse_format_choice("https://music.youtube.com/watch?v=abc12345678 аудио") == "audio"
+
+def test_parse_format_choice_both_keywords():
+    assert parse_format_choice("https://music.youtube.com/watch?v=abc video audio") == "both"
+
+def test_parse_format_choice_both_keywords_uk():
+    assert parse_format_choice("відео https://music.youtube.com/watch?v=abc аудіо") == "both"
+
+def test_parse_format_choice_case_insensitive():
+    assert parse_format_choice("URL VIDEO") == "video"
+    assert parse_format_choice("URL Audio") == "audio"
+
+def test_parse_format_choice_keyword_before_url():
+    assert parse_format_choice("video https://music.youtube.com/watch?v=abc") == "video"
+
+def test_parse_format_choice_keyword_inside_url_not_matched():
+    # A URL containing "/video/" as a path segment is a single token, not the keyword
+    assert parse_format_choice("https://www.tiktok.com/@user/video/123456") is None
+
+
 from utils import get_ytdlp_domains
 
 def test_get_ytdlp_domains_returns_frozenset():

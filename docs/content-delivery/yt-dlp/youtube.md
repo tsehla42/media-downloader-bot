@@ -69,19 +69,55 @@ Key behaviors:
 
 ## Format Picker
 
-When video is too large (>50MB), bot shows format picker:
+For `music.youtube.com` URLs with available video streams, the bot shows a format picker:
 
 ```
-Video is too large for direct download (52.3MB).
+🎵 Test Song
+
 Choose format:
 
-[Video] [Audio] [Both]
+[Audio] [Video] [Video + Audio]
 ```
+
+### Format Keyword (skips the picker)
+
+If the user's message contains a format keyword, the bot skips the picker and sends the selected format directly:
+
+- `video` / `відео` / `видео` → downloads video
+- `audio` / `аудіо` / `аудио` → downloads audio
+- both a video and an audio keyword → downloads and sends both
+
+```
+@bot https://music.youtube.com/watch?v=abc123 відео   → video, no picker
+@bot https://music.youtube.com/watch?v=abc123         → picker shown
+```
+
+Keyword matching is case-insensitive per whitespace-separated token (`parse_format_choice()` in `src/utils.py`). Keywords only apply to `music.youtube.com` links; regular `youtube.com` URLs always download video.
+
+In guest mode the same keywords apply, but the reply is a single inline result: `music.youtube.com` defaults to **audio**, a video keyword selects video, and both keywords resolve to audio.
 
 ### Callback Handler
 
+Both the picker callback and the keyword path share the same execution logic:
+
 ```python
 # src/platforms/youtube.py
+async def _send_format(choice, url, title, base, output_path,
+                       reply_params, message, context) -> bool:
+    """Download and send the chosen format(s) (audio/video/both)."""
+    if choice == "audio":
+        success = download_audio(url, f"{base}.mp3")
+        # ... send audio
+    elif choice == "video":
+        video_ok = await _download_and_send_video(url, base, output_path, caption, reply_params, message, context)
+        # ... send video
+    elif choice == "both":
+        # Download video and audio concurrently via asyncio.to_thread
+        video_task = asyncio.to_thread(download_video, url, output_path, MAX_FILE_SIZE)
+        audio_task = asyncio.to_thread(download_audio, url, f"{base}.mp3")
+        results = await asyncio.gather(video_task, audio_task, return_exceptions=True)
+        # ... send both
+
 async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle format picker callback."""
     query = update.callback_query
@@ -99,18 +135,8 @@ async def ytmusic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = pending["url"]
 
     async with typing_indicator(query.message.chat.id, context.bot):
-        if choice == "audio":
-            success = download_audio(url, f"{base}.mp3")
-            # ... send audio
-        elif choice == "video":
-            video_ok = await _download_and_send_video(url, base, output_path, caption, reply_params, update.effective_message, context)
-            # ... send video
-        elif choice == "both":
-            # Download video and audio concurrently via asyncio.to_thread
-            video_task = asyncio.to_thread(download_video, url, output_path, MAX_FILE_SIZE)
-            audio_task = asyncio.to_thread(download_audio, url, f"{base}.mp3")
-            results = await asyncio.gather(video_task, audio_task, return_exceptions=True)
-            # ... send both
+        await _send_format(choice, url, pending["title"], base, output_path,
+                           reply_params, update.effective_message, context)
 ```
 
 ## Audio Downloads

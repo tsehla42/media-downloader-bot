@@ -19,6 +19,33 @@ def extract_urls(text: str) -> list[str]:
     return URL_PATTERN.findall(text)
 
 
+VIDEO_WORDS = frozenset({"video", "відео", "видео"})
+AUDIO_WORDS = frozenset({"audio", "аудіо", "аудио"})
+
+
+def parse_format_choice(text: str) -> str | None:
+    """Parse a media format keyword from free text.
+
+    Returns "video", "audio", "both" (both keyword families present),
+    or None when no keyword is found. Matching is exact per whitespace-
+    separated token, case-insensitive.
+    """
+    has_video = False
+    has_audio = False
+    for token in (text or "").lower().split():
+        if token in VIDEO_WORDS:
+            has_video = True
+        elif token in AUDIO_WORDS:
+            has_audio = True
+    if has_video and has_audio:
+        return "both"
+    if has_video:
+        return "video"
+    if has_audio:
+        return "audio"
+    return None
+
+
 def ensure_download_dir(path: str) -> str:
     """Create download directory if it doesn't exist, return path."""
     os.makedirs(path, exist_ok=True)

@@ -1,6 +1,6 @@
 [project]
 name = "media-downloader-bot"
-version = "1.1.1"
+version = "1.2.0"
 description = "Telegram bot that downloads videos and images from YouTube, TikTok, Instagram, and 100+ other services"
 requires-python = ">=3.14"
 dependencies = [

@@ -11,7 +11,7 @@ from config import MAX_FILE_SIZE
 from downloader import download_video, download_audio
 from commands import get_caption_for_user
 from telegram_utils import typing_indicator
-from utils import cleanup_file, find_downloaded_file, cleanup_video_files, make_video_tmp_path
+from utils import cleanup_file, find_downloaded_file, cleanup_video_files, make_video_tmp_path, parse_format_choice
 from messages import MSG_DOWNLOAD_FAILED, MSG_YTMUSIC_AUDIO_FAILED, MSG_YTMUSIC_VIDEO_FAILED, MSG_YTMUSIC_UNKNOWN_CHOICE, MSG_YTMUSIC_REQUEST_EXPIRED
 
 from logging_config import details_logger as _log
@@ -73,11 +73,148 @@ def _store_download_metadata(context: ContextTypes.DEFAULT_TYPE, content_type: s
         pass
 
 
+async def _send_format(
+    choice: str, url: str, title: str, base: str, output_path: str,
+    reply_params: dict, message, context: ContextTypes.DEFAULT_TYPE = None,
+) -> bool:
+    """Download and send the chosen format(s).
+
+    Shared by the format picker callback and the keyword path in
+    handle_ytmusic(). Returns True when at least one requested format
+    was sent successfully. Never raises — download errors are replied
+    as text.
+    """
+    sent = False
+    try:
+        if choice == "audio":
+            _log.info("ytmusic: starting audio download for %s", url)
+            audio_ok = download_audio(url, f"{base}.mp3")
+            if audio_ok and os.path.isfile(f"{base}.mp3"):
+                with open(f"{base}.mp3", "rb") as f:
+                    await message.reply_audio(
+                        audio=f,
+                        title=title[:AUDIO_TITLE_MAX],
+                        reply_parameters=reply_params,
+                    )
+                _store_download_metadata(context, "audio", f"{base}.mp3")
+                _log.info("ytmusic: audio sent for %s", url)
+                sent = True
+            else:
+                _log.warning("ytmusic: audio download failed for %s", url)
+                await message.reply_text(
+                    MSG_YTMUSIC_AUDIO_FAILED,
+                    reply_parameters=reply_params,
+                )
+
+        elif choice == "video":
+            _log.info("ytmusic: starting video download for %s", url)
+            caption = get_caption_for_user(message.from_user.id, title)
+            video_ok = await _download_and_send_video(
+                url, base, output_path, caption, reply_params, message, context
+            )
+            if video_ok:
+                _log.info("ytmusic: video sent for %s", url)
+                sent = True
+            else:
+                _log.warning("ytmusic: video download failed for %s", url)
+                await message.reply_text(
+                    MSG_YTMUSIC_VIDEO_FAILED,
+                    reply_parameters=reply_params,
+                )
+
+        elif choice == "both":
+            _log.info("ytmusic: starting both download for %s", url)
+
+            # Download video and audio concurrently
+            video_task = asyncio.to_thread(download_video, url, output_path, MAX_FILE_SIZE)
+            audio_task = asyncio.to_thread(download_audio, url, f"{base}.mp3")
+            results = await asyncio.gather(video_task, audio_task, return_exceptions=True)
+            video_ok = results[0] is True
+            audio_ok = results[1] is True
+
+            for label, result in [("video", results[0]), ("audio", results[1])]:
+                if isinstance(result, Exception):
+                    _log.warning("ytmusic: %s download raised exception for %s: %s", label, url, result)
+
+            # Send video first
+            if video_ok:
+                downloaded = find_downloaded_file(base)
+                if downloaded:
+                    caption = get_caption_for_user(message.from_user.id, title)
+                    with open(downloaded, "rb") as f:
+                        await message.reply_video(
+                            video=f,
+                            caption=caption,
+                            reply_parameters=reply_params,
+                            supports_streaming=True,
+                        )
+                    _store_download_metadata(context, "both", downloaded)
+                    _log.info("ytmusic: video sent for %s", url)
+                else:
+                    await message.reply_text(
+                        MSG_YTMUSIC_VIDEO_FAILED,
+                        reply_parameters=reply_params,
+                    )
+            else:
+                await message.reply_text(
+                    MSG_YTMUSIC_VIDEO_FAILED,
+                    reply_parameters=reply_params,
+                )
+
+            # Then send audio
+            if audio_ok and os.path.isfile(f"{base}.mp3"):
+                with open(f"{base}.mp3", "rb") as f:
+                    await message.reply_audio(
+                        audio=f,
+                        title=title[:AUDIO_TITLE_MAX],
+                        reply_parameters=reply_params,
+                    )
+                if not video_ok:
+                    _store_download_metadata(context, "both", f"{base}.mp3")
+                _log.info("ytmusic: audio sent for %s", url)
+            else:
+                await message.reply_text(
+                    MSG_YTMUSIC_AUDIO_FAILED,
+                    reply_parameters=reply_params,
+                )
+
+            _log.info("ytmusic: both download completed for %s (video=%s, audio=%s)", url, video_ok, audio_ok)
+            sent = video_ok or audio_ok
+
+        else:
+            await message.reply_text(
+                MSG_YTMUSIC_UNKNOWN_CHOICE,
+                reply_parameters=reply_params,
+            )
+
+    except Exception as e:
+        await message.reply_text(
+            f"Error: {e}",
+            reply_parameters=reply_params,
+        )
+    return sent
+
+
 async def handle_ytmusic(
     update, context: ContextTypes.DEFAULT_TYPE, url: str,
     metadata: dict, title: str, base: str, output_path: str, reply_params: dict,
 ) -> None:
-    """Handle YouTube Music URL: show format picker or download audio directly."""
+    """Handle YouTube Music URL.
+
+    A format keyword (video/відео/видео/audio/аудіо/аудио) in the message
+    sends the selected format(s) directly and skips the picker. Otherwise
+    shows the format picker, or downloads audio directly when no video
+    streams exist.
+    """
+    choice = parse_format_choice(update.message.text or "")
+    if choice:
+        async with typing_indicator(update.message.chat.id, context.bot):
+            sent = await _send_format(
+                choice, url, title, base, output_path, reply_params, update.message, context,
+            )
+        context.user_data["_request_success"] = sent
+        return
+
     if _has_video_available(metadata):
         # Show inline keyboard for format selection
         msg_id = update.message.message_id
@@ -166,108 +303,9 @@ async def ytmusic_callback(update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply_params = {"message_id": msg_id, "allow_sending_without_reply": True}
 
         try:
-            if choice == "audio":
-                _log.info("ytmusic_callback: starting audio download for %s", url)
-                success = download_audio(url, f"{base}.mp3")
-                if success and os.path.isfile(f"{base}.mp3"):
-                    with open(f"{base}.mp3", "rb") as f:
-                        await update.effective_message.reply_audio(
-                            audio=f,
-                            title=title[:AUDIO_TITLE_MAX],
-                            reply_parameters=reply_params,
-                        )
-                    _store_download_metadata(context, "audio", f"{base}.mp3")
-                    _log.info("ytmusic_callback: audio sent for %s", url)
-                else:
-                    _log.warning("ytmusic_callback: audio download failed for %s", url)
-                    await update.effective_message.reply_text(
-                        MSG_YTMUSIC_AUDIO_FAILED,
-                        reply_parameters=reply_params,
-                    )
-
-            elif choice == "video":
-                _log.info("ytmusic_callback: starting video download for %s", url)
-                caption = get_caption_for_user(update.effective_message.from_user.id, title)
-                video_ok = await _download_and_send_video(
-                    url, base, output_path, caption, reply_params, update.effective_message, context
-                )
-                if video_ok:
-                    _log.info("ytmusic_callback: video sent for %s", url)
-                else:
-                    _log.warning("ytmusic_callback: video download failed for %s", url)
-                    await update.effective_message.reply_text(
-                        MSG_YTMUSIC_VIDEO_FAILED,
-                        reply_parameters=reply_params,
-                    )
-
-            elif choice == "both":
-                _log.info("ytmusic_callback: starting both download for %s", url)
-
-                # Download video and audio concurrently
-                video_task = asyncio.to_thread(download_video, url, output_path, MAX_FILE_SIZE)
-                audio_task = asyncio.to_thread(download_audio, url, f"{base}.mp3")
-                results = await asyncio.gather(video_task, audio_task, return_exceptions=True)
-                video_ok = results[0] is True
-                audio_ok = results[1] is True
-
-                for label, result in [("video", results[0]), ("audio", results[1])]:
-                    if isinstance(result, Exception):
-                        _log.warning("ytmusic_callback: %s download raised exception for %s: %s", label, url, result)
-
-                # Send video first
-                if video_ok:
-                    downloaded = find_downloaded_file(base)
-                    if downloaded:
-                        caption = get_caption_for_user(update.effective_message.from_user.id, title)
-                        with open(downloaded, "rb") as f:
-                            await update.effective_message.reply_video(
-                                video=f,
-                                caption=caption,
-                                reply_parameters=reply_params,
-                                supports_streaming=True,
-                            )
-                        _store_download_metadata(context, "both", downloaded)
-                        _log.info("ytmusic_callback: video sent for %s", url)
-                    else:
-                        await update.effective_message.reply_text(
-                            MSG_YTMUSIC_VIDEO_FAILED,
-                            reply_parameters=reply_params,
-                        )
-                else:
-                    await update.effective_message.reply_text(
-                        MSG_YTMUSIC_VIDEO_FAILED,
-                        reply_parameters=reply_params,
-                    )
-
-                # Then send audio
-                if audio_ok and os.path.isfile(f"{base}.mp3"):
-                    with open(f"{base}.mp3", "rb") as f:
-                        await update.effective_message.reply_audio(
-                            audio=f,
-                            title=title[:AUDIO_TITLE_MAX],
-                            reply_parameters=reply_params,
-                        )
-                    if not video_ok:
-                        _store_download_metadata(context, "both", f"{base}.mp3")
-                    _log.info("ytmusic_callback: audio sent for %s", url)
-                else:
-                    await update.effective_message.reply_text(
-                        MSG_YTMUSIC_AUDIO_FAILED,
-                        reply_parameters=reply_params,
-                    )
-
-                _log.info("ytmusic_callback: both download completed for %s (video=%s, audio=%s)", url, video_ok, audio_ok)
-
-            else:
-                await update.effective_message.reply_text(
-                    MSG_YTMUSIC_UNKNOWN_CHOICE,
-                    reply_parameters=reply_params,
-                )
-
-        except Exception as e:
-            await update.effective_message.reply_text(
-                f"Error: {e}",
-                reply_parameters=reply_params,
+            await _send_format(
+                choice, url, title, base, output_path,
+                reply_params, update.effective_message, context,
             )
         finally:
             cleanup_video_files(base)

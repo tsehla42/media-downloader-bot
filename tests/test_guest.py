@@ -600,7 +600,7 @@ class TestDownloadAndBuildResultCache:
              patch("guest.store") as mock_store:
             await _download_and_build_result("https://youtube.com/watch?v=abc123", "youtube")
             mock_store.assert_called_once_with(
-                "https://youtube.com/watch?v=abc123", "youtube", "new_id", "video", "Test Video", 5.0, None
+                "https://youtube.com/watch?v=abc123", "youtube", "new_id", "video", "Test Video", 5.0, None, ""
             )
 
     @pytest.mark.asyncio
@@ -614,7 +614,7 @@ class TestDownloadAndBuildResultCache:
              patch("guest.store") as mock_store:
             await _download_and_build_result("https://tiktok.com/@user/video/123", "tiktok")
             mock_store.assert_called_once_with(
-                "https://tiktok.com/@user/video/123", "tiktok", "new_photo_id", "photo", "", 0.5, None
+                "https://tiktok.com/@user/video/123", "tiktok", "new_photo_id", "photo", "", 0.5, None, ""
             )
 
     @pytest.mark.asyncio
@@ -707,3 +707,424 @@ class TestDownloadYoutubeAuth:
         assert "restricted" in result["input_message_content"]["message_text"].lower()
         assert content_type == "video"
         assert file_size_mb is None
+
+
+# ---------------------------------------------------------------------------
+# _audio_result — InlineQueryResultAudio builder
+# ---------------------------------------------------------------------------
+
+
+class TestAudioResult:
+    """Tests for _audio_result() — returns raw dict with audio_file_id."""
+
+    def test_returns_dict(self):
+        from guest import _audio_result
+        result = _audio_result("abc123")
+        assert isinstance(result, dict)
+
+    def test_type_is_audio(self):
+        from guest import _audio_result
+        result = _audio_result("abc123")
+        assert result["type"] == "audio"
+
+    def test_has_string_id(self):
+        from guest import _audio_result
+        result = _audio_result("abc123")
+        assert isinstance(result["id"], str)
+        assert len(result["id"]) == 8
+
+    def test_audio_file_id(self):
+        from guest import _audio_result
+        result = _audio_result("my_audio_fid")
+        assert result["audio_file_id"] == "my_audio_fid"
+
+    def test_default_title(self):
+        from guest import _audio_result
+        result = _audio_result("abc")
+        assert result["title"] == "Audio"
+
+    def test_custom_title(self):
+        from guest import _audio_result
+        result = _audio_result("abc", title="My Song")
+        assert result["title"] == "My Song"
+
+    def test_title_truncated_to_100(self):
+        from guest import _audio_result
+        result = _audio_result("abc", title="x" * 200)
+        assert len(result["title"]) == 100
+
+
+# ---------------------------------------------------------------------------
+# _download_audio — guest audio download pipeline
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadAudio:
+    """Tests for _download_audio()."""
+
+    @pytest.mark.asyncio
+    async def test_age_restricted_returns_login_required(self):
+        from guest import _download_audio
+        from downloader import DownloadAuthRequired
+
+        with patch("guest.get_metadata", side_effect=DownloadAuthRequired("Sign in")):
+            result, content_type, file_size_mb = await _download_audio(
+                "https://music.youtube.com/watch?v=abc123"
+            )
+
+        assert result["type"] == "article"
+        assert "restricted" in result["input_message_content"]["message_text"].lower()
+        assert content_type == "audio"
+        assert file_size_mb is None
+
+    @pytest.mark.asyncio
+    async def test_metadata_failed_returns_error(self):
+        from guest import _download_audio
+
+        with patch("guest.get_metadata", return_value=None):
+            result, content_type, file_size_mb = await _download_audio(
+                "https://music.youtube.com/watch?v=abc123"
+            )
+
+        assert result["type"] == "article"
+        assert content_type == "audio"
+        assert file_size_mb is None
+
+    @pytest.mark.asyncio
+    async def test_success_returns_audio_result(self):
+        from guest import _download_audio
+
+        with patch("guest.get_metadata", return_value={"title": "My Song"}), \
+             patch("guest.download_audio", return_value=True), \
+             patch("os.path.isfile", return_value=True), \
+             patch("os.path.getsize", return_value=2 * 1024 * 1024), \
+             patch("guest.cleanup_file"), \
+             patch("guest._upload_to_telegram", new_callable=AsyncMock,
+                  return_value="audio_fid_1") as mock_upload:
+            result, content_type, file_size_mb = await _download_audio(
+                "https://music.youtube.com/watch?v=abc123"
+            )
+
+        assert result["type"] == "audio"
+        assert result["audio_file_id"] == "audio_fid_1"
+        assert result["title"] == "My Song"
+        assert content_type == "audio"
+        assert file_size_mb == 2.0
+        assert mock_upload.call_args[0][1] == "audio"
+
+    @pytest.mark.asyncio
+    async def test_download_failure_raises(self):
+        from guest import _download_audio
+
+        with patch("guest.get_metadata", return_value={"title": "My Song"}), \
+             patch("guest.download_audio", return_value=False), \
+             patch("os.path.isfile", return_value=False), \
+             patch("guest.cleanup_file"):
+            with pytest.raises(ValueError):
+                await _download_audio("https://music.youtube.com/watch?v=abc123")
+
+    @pytest.mark.asyncio
+    async def test_upload_failure_raises(self):
+        from guest import _download_audio
+
+        with patch("guest.get_metadata", return_value={"title": "My Song"}), \
+             patch("guest.download_audio", return_value=True), \
+             patch("os.path.isfile", return_value=True), \
+             patch("os.path.getsize", return_value=1024), \
+             patch("guest.cleanup_file"), \
+             patch("guest._upload_to_telegram", new_callable=AsyncMock, return_value=None):
+            with pytest.raises(ValueError):
+                await _download_audio("https://music.youtube.com/watch?v=abc123")
+
+
+# ---------------------------------------------------------------------------
+# _download_and_build_result — music URL audio/video routing
+# ---------------------------------------------------------------------------
+
+
+class TestYoutubeAudioRouting:
+    """Tests for music.youtube.com audio default and force_video override."""
+
+    MUSIC_URL = "https://music.youtube.com/watch?v=abc12345678"
+
+    @pytest.mark.asyncio
+    async def test_music_url_default_routes_to_audio(self):
+        from guest import _download_and_build_result
+
+        fake_result = {"type": "audio", "id": "x", "audio_file_id": "fid", "title": "Song"}
+        with patch("guest.get_cached", return_value=None), \
+             patch("guest._download_audio", new_callable=AsyncMock,
+                  return_value=(fake_result, "audio", 1.0)) as mock_audio, \
+             patch("guest._download_youtube", new_callable=AsyncMock) as mock_video, \
+             patch("guest.store"):
+            await _download_and_build_result(self.MUSIC_URL, "youtube")
+            mock_audio.assert_called_once_with(self.MUSIC_URL)
+            mock_video.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_music_url_force_video_routes_to_video(self):
+        from guest import _download_and_build_result
+
+        fake_result = {"type": "video", "id": "x", "video_file_id": "fid", "title": "Song"}
+        with patch("guest.get_cached", return_value=None), \
+             patch("guest._download_audio", new_callable=AsyncMock) as mock_audio, \
+             patch("guest._download_youtube", new_callable=AsyncMock,
+                   return_value=(fake_result, "video", 5.0)) as mock_video, \
+             patch("guest.store"):
+            await _download_and_build_result(self.MUSIC_URL, "youtube", force_video=True)
+            mock_video.assert_called_once_with(self.MUSIC_URL)
+            mock_audio.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_regular_youtube_url_always_video(self):
+        from guest import _download_and_build_result
+
+        fake_result = {"type": "video", "id": "x", "video_file_id": "fid", "title": "V"}
+        with patch("guest.get_cached", return_value=None), \
+             patch("guest._download_audio", new_callable=AsyncMock) as mock_audio, \
+             patch("guest._download_youtube", new_callable=AsyncMock,
+                   return_value=(fake_result, "video", 5.0)) as mock_video, \
+             patch("guest.store"):
+            await _download_and_build_result("https://youtube.com/watch?v=abc12345678", "youtube")
+            mock_video.assert_called_once()
+            mock_audio.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_music_audio_uses_audio_cache_variant(self):
+        from guest import _download_and_build_result
+
+        with patch("guest.get_cached", return_value=None) as mock_cache, \
+             patch("guest._download_audio", new_callable=AsyncMock,
+                   return_value=({"type": "audio"}, "audio", None)), \
+             patch("guest.store"):
+            await _download_and_build_result(self.MUSIC_URL, "youtube")
+            assert mock_cache.call_args[0][3] == "audio"
+
+    @pytest.mark.asyncio
+    async def test_music_video_uses_default_cache_variant(self):
+        from guest import _download_and_build_result
+
+        with patch("guest.get_cached", return_value=None) as mock_cache, \
+             patch("guest._download_youtube", new_callable=AsyncMock,
+                   return_value=({"type": "video"}, "video", None)), \
+             patch("guest.store"):
+            await _download_and_build_result(self.MUSIC_URL, "youtube", force_video=True)
+            assert mock_cache.call_args[0][3] == ""
+
+    @pytest.mark.asyncio
+    async def test_audio_cache_hit_returns_audio_result(self):
+        from guest import _download_and_build_result
+
+        with patch("guest.get_cached", return_value=("cached_audio_id", "audio")), \
+             patch("guest._download_audio", new_callable=AsyncMock) as mock_audio, \
+             patch("guest._download_youtube", new_callable=AsyncMock) as mock_video:
+            result, content_type, file_size_mb, cache_hit = await _download_and_build_result(
+                self.MUSIC_URL, "youtube"
+            )
+            mock_audio.assert_not_called()
+            mock_video.assert_not_called()
+            assert result["type"] == "audio"
+            assert result["audio_file_id"] == "cached_audio_id"
+            assert content_type == "audio"
+            assert cache_hit is True
+
+    @pytest.mark.asyncio
+    async def test_audio_download_stored_with_audio_variant(self):
+        from guest import _download_and_build_result
+
+        fake_result = {"type": "audio", "id": "x", "audio_file_id": "new_audio_id", "title": "Song"}
+        with patch("guest.get_cached", return_value=None), \
+             patch("guest._download_audio", new_callable=AsyncMock,
+                   return_value=(fake_result, "audio", 1.5)), \
+             patch("guest.store") as mock_store:
+            await _download_and_build_result(self.MUSIC_URL, "youtube")
+            mock_store.assert_called_once_with(
+                self.MUSIC_URL, "youtube", "new_audio_id", "audio", "Song", 1.5, None, "audio"
+            )
+
+    @pytest.mark.asyncio
+    async def test_video_download_stored_without_variant(self):
+        from guest import _download_and_build_result
+
+        fake_result = {"type": "video", "id": "x", "video_file_id": "vid_id", "title": "Song"}
+        with patch("guest.get_cached", return_value=None), \
+             patch("guest._download_youtube", new_callable=AsyncMock,
+                   return_value=(fake_result, "video", 5.0)), \
+             patch("guest.store") as mock_store:
+            await _download_and_build_result(self.MUSIC_URL, "youtube", force_video=True)
+            mock_store.assert_called_once_with(
+                self.MUSIC_URL, "youtube", "vid_id", "video", "Song", 5.0, None, ""
+            )
+
+
+# ---------------------------------------------------------------------------
+# handle_guest — format keyword parsing
+# ---------------------------------------------------------------------------
+
+
+class TestHandleGuestFormatKeyword:
+    """Tests that handle_guest parses format keywords from the tag text."""
+
+    MUSIC_TEXT = "https://music.youtube.com/watch?v=abc12345678"
+
+    async def _run(self, text):
+        from guest import handle_guest
+        msg = _make_guest_message(text=text)
+        update = _make_update(msg)
+        context = _make_context()
+        fake_result = {"type": "audio", "id": "1", "audio_file_id": "fid"}
+        with patch("guest.is_user_allowed", return_value=True), \
+             patch("guest.detect_platform", return_value="youtube"), \
+             patch("guest._download_and_build_result", new_callable=AsyncMock,
+                   return_value=(fake_result, "audio", 1.0, False)) as mock_build:
+            await handle_guest(update, context)
+        return mock_build
+
+    @pytest.mark.asyncio
+    async def test_no_keyword_defaults_to_audio(self):
+        mock_build = await self._run(self.MUSIC_TEXT)
+        assert mock_build.call_args[0][2] is False
+
+    @pytest.mark.asyncio
+    async def test_video_keyword_sets_force_video(self):
+        mock_build = await self._run(f"{self.MUSIC_TEXT} video")
+        assert mock_build.call_args[0][2] is True
+
+    @pytest.mark.asyncio
+    async def test_ukrainian_video_keyword_sets_force_video(self):
+        mock_build = await self._run(f"{self.MUSIC_TEXT} відео")
+        assert mock_build.call_args[0][2] is True
+
+    @pytest.mark.asyncio
+    async def test_russian_video_keyword_sets_force_video(self):
+        mock_build = await self._run(f"{self.MUSIC_TEXT} видео")
+        assert mock_build.call_args[0][2] is True
+
+    @pytest.mark.asyncio
+    async def test_audio_keyword_defaults_to_audio(self):
+        mock_build = await self._run(f"{self.MUSIC_TEXT} audio")
+        assert mock_build.call_args[0][2] is False
+
+    @pytest.mark.asyncio
+    async def test_both_keywords_defaults_to_audio(self):
+        """Guest mode answers with a single result, so both -> audio."""
+        mock_build = await self._run(f"{self.MUSIC_TEXT} video audio")
+        assert mock_build.call_args[0][2] is False
+
+    @pytest.mark.asyncio
+    async def test_keyword_ignored_for_regular_youtube(self):
+        """Regular youtube.com URL downloads video regardless of audio keyword."""
+        from guest import handle_guest
+        msg = _make_guest_message(text="https://youtube.com/watch?v=abc12345678 audio")
+        update = _make_update(msg)
+        context = _make_context()
+        fake_result = {"type": "video", "id": "1", "video_file_id": "fid"}
+        with patch("guest.is_user_allowed", return_value=True), \
+             patch("guest.detect_platform", return_value="youtube"), \
+             patch("guest._download_and_build_result", new_callable=AsyncMock,
+                   return_value=(fake_result, "video", 5.0, False)) as mock_build:
+            await handle_guest(update, context)
+            assert mock_build.call_args[0][2] is False
+
+
+# ---------------------------------------------------------------------------
+# _upload_to_telegram — audio branch
+# ---------------------------------------------------------------------------
+
+
+class TestUploadToTelegramAudio:
+    """Tests that _upload_to_telegram sends audio via sendAudio."""
+
+    @pytest.mark.asyncio
+    async def test_audio_uses_send_audio(self):
+        from guest import _upload_to_telegram
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "ok": True,
+            "result": {"audio": {"file_id": "sent_audio_fid"}},
+        }
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch("guest.httpx.AsyncClient", return_value=mock_client), \
+             patch("guest.STORAGE_CHANNEL_ID", "12345"), \
+             patch("config.BOT_TOKEN", "test-token"), \
+             patch("builtins.open", MagicMock()):
+            file_id = await _upload_to_telegram("/tmp/some.mp3", "audio")
+
+        assert file_id == "sent_audio_fid"
+        post_url = mock_client.post.call_args[0][0]
+        assert "sendAudio" in post_url
+        files = mock_client.post.call_args[1]["files"]
+        assert "audio" in files
+
+    @pytest.mark.asyncio
+    async def test_audio_upload_passes_title_to_sendAudio(self):
+        """sendAudio must carry the title — Telegram validates the FILE's title
+        for inline/guest audio results (Audio_title_empty otherwise)."""
+        from guest import _upload_to_telegram
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "ok": True,
+            "result": {"audio": {"file_id": "sent_audio_fid", "title": "My Song"}},
+        }
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch("guest.httpx.AsyncClient", return_value=mock_client), \
+             patch("guest.STORAGE_CHANNEL_ID", "12345"), \
+             patch("config.BOT_TOKEN", "test-token"), \
+             patch("builtins.open", MagicMock()):
+            await _upload_to_telegram("/tmp/some.mp3", "audio", title="My Song")
+
+        data = mock_client.post.call_args[1]["data"]
+        assert data["title"] == "My Song"
+
+    @pytest.mark.asyncio
+    async def test_upload_without_title_omits_title_param(self):
+        """Non-audio uploads (or no title) must not send an empty title param."""
+        from guest import _upload_to_telegram
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "ok": True,
+            "result": {"video": {"file_id": "v"}},
+        }
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch("guest.httpx.AsyncClient", return_value=mock_client), \
+             patch("guest.STORAGE_CHANNEL_ID", "12345"), \
+             patch("config.BOT_TOKEN", "test-token"), \
+             patch("builtins.open", MagicMock()):
+            await _upload_to_telegram("/tmp/some.mp4", "video")
+
+        data = mock_client.post.call_args[1]["data"]
+        assert "title" not in data
+
+
+class TestDownloadAudioUploadTitle:
+    """_download_audio must pass the metadata title into the storage upload."""
+
+    @pytest.mark.asyncio
+    async def test_upload_receives_metadata_title(self):
+        from guest import _download_audio
+
+        with patch("guest.get_metadata", return_value={"title": "My Song"}), \
+             patch("guest.download_audio", return_value=True), \
+             patch("os.path.isfile", return_value=True), \
+             patch("os.path.getsize", return_value=1024), \
+             patch("guest.cleanup_file"), \
+             patch("guest._upload_to_telegram", new_callable=AsyncMock,
+                  return_value="audio_fid_1") as mock_upload:
+            await _download_audio("https://music.youtube.com/watch?v=abc123")
+
+        assert mock_upload.call_args[1]["title"] == "My Song"

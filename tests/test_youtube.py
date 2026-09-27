@@ -1,6 +1,7 @@
 """Tests for platforms.youtube module: _has_video_available, ytmusic_callback, _ytmusic_pending."""
 
 import time
+from contextlib import ExitStack
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -261,3 +262,151 @@ async def test_ytmusic_callback_malformed_data():
     update.callback_query.answer.assert_called_once()
     # Should not crash or try to delete anything
     update.callback_query.message.delete.assert_not_called()
+
+
+# --- handle_ytmusic keyword tests ---
+
+from platforms.youtube import handle_ytmusic
+from messages import MSG_YTMUSIC_VIDEO_FAILED, MSG_YTMUSIC_AUDIO_FAILED
+
+
+def _make_ytmusic_update(text):
+    update = MagicMock()
+    update.message.text = text
+    update.message.message_id = 42
+    update.message.chat.id = -100123
+    update.message.from_user.id = 123
+    update.message.reply_text = AsyncMock()
+    update.message.reply_audio = AsyncMock()
+    update.message.reply_video = AsyncMock()
+    return update
+
+
+def _make_ytmusic_context():
+    context = MagicMock()
+    context.user_data = {}
+    context.bot.send_chat_action = AsyncMock()
+    return context
+
+
+VIDEO_METADATA = {
+    "title": "Test Song",
+    "ext": "mp4",
+    "formats": [
+        {"format_id": "140", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2"},
+        {"format_id": "137", "ext": "mp4", "vcodec": "avc1.640020", "acodec": "none"},
+    ],
+}
+
+
+class TestHandleYtmusicKeyword:
+    """Format keywords in the message skip the picker and send directly."""
+
+    URL = "https://music.youtube.com/watch?v=abc"
+    REPLY_PARAMS = {"message_id": 42, "allow_sending_without_reply": True}
+
+    async def _run(self, text, *patchers):
+        update = _make_ytmusic_update(text)
+        context = _make_ytmusic_context()
+        mock_typing = _make_typing_indicator_mock()
+        base_patches = [
+            patch("platforms.youtube.typing_indicator", mock_typing),
+            patch("os.path.isfile", return_value=True),
+            patch("os.remove"),
+            patch("platforms.youtube.cleanup_file"),
+            patch("builtins.open", MagicMock()),
+        ]
+        with ExitStack() as stack:
+            for p in base_patches:
+                stack.enter_context(p)
+            for p in patchers:
+                stack.enter_context(p)
+            await handle_ytmusic(
+                update, context, self.URL, VIDEO_METADATA, "Test Song",
+                "/tmp/base", "/tmp/base.%(ext)s", self.REPLY_PARAMS,
+            )
+        return update, context, mock_typing
+
+    @pytest.mark.asyncio
+    async def test_audio_keyword_skips_picker_sends_audio(self):
+        update, context, _ = await self._run(
+            f"{self.URL} audio",
+            patch("platforms.youtube.download_audio", return_value=True),
+        )
+
+        update.message.reply_text.assert_not_called()
+        update.message.reply_audio.assert_called_once()
+        update.message.reply_video.assert_not_called()
+        assert 42 not in _ytmusic_pending
+        assert context.user_data["_request_success"] is True
+
+    @pytest.mark.asyncio
+    async def test_video_keyword_skips_picker_sends_video(self):
+        update, context, _ = await self._run(
+            f"{self.URL} відео",
+            patch("platforms.youtube.download_video", return_value=True),
+        )
+
+        update.message.reply_text.assert_not_called()
+        update.message.reply_video.assert_called_once()
+        update.message.reply_audio.assert_not_called()
+        assert 42 not in _ytmusic_pending
+        assert context.user_data["_request_success"] is True
+
+    @pytest.mark.asyncio
+    async def test_both_keywords_send_video_then_audio(self):
+        update, context, _ = await self._run(
+            f"{self.URL} video audio",
+            patch("platforms.youtube.download_video", return_value=True),
+            patch("platforms.youtube.download_audio", return_value=True),
+        )
+
+        update.message.reply_text.assert_not_called()
+        update.message.reply_video.assert_called_once()
+        update.message.reply_audio.assert_called_once()
+        assert 42 not in _ytmusic_pending
+
+    @pytest.mark.asyncio
+    async def test_video_keyword_failure_replies_message(self):
+        update, context, _ = await self._run(
+            f"{self.URL} video",
+            patch("platforms.youtube.download_video", return_value=False),
+        )
+
+        update.message.reply_video.assert_not_called()
+        update.message.reply_text.assert_called_once()
+        sent_text = update.message.reply_text.call_args[0][0]
+        assert sent_text == MSG_YTMUSIC_VIDEO_FAILED
+        assert context.user_data["_request_success"] is False
+
+    @pytest.mark.asyncio
+    async def test_audio_keyword_failure_replies_message(self):
+        update, context, _ = await self._run(
+            f"{self.URL} аудіо",
+            patch("platforms.youtube.download_audio", return_value=False),
+        )
+
+        update.message.reply_audio.assert_not_called()
+        update.message.reply_text.assert_called_once()
+        sent_text = update.message.reply_text.call_args[0][0]
+        assert sent_text == MSG_YTMUSIC_AUDIO_FAILED
+        assert context.user_data["_request_success"] is False
+
+    @pytest.mark.asyncio
+    async def test_no_keyword_still_shows_picker(self):
+        update, context, _ = await self._run(self.URL)
+
+        update.message.reply_text.assert_called_once()
+        kwargs = update.message.reply_text.call_args[1]
+        assert "reply_markup" in kwargs
+        assert 42 in _ytmusic_pending
+        update.message.reply_audio.assert_not_called()
+        update.message.reply_video.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unrelated_words_still_show_picker(self):
+        """Text without format keywords does not change picker behavior."""
+        update, context, _ = await self._run(f"{self.URL} something else")
+
+        update.message.reply_text.assert_called_once()
+        assert 42 in _ytmusic_pending
