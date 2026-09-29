@@ -28,7 +28,7 @@ async def handle_instagram(update, context, url: str) -> bool:
         # Try video download first
         _, output_path, base = make_video_tmp_path()
 
-        success = download_video(url, output_path, MAX_FILE_SIZE)
+        success = download_video(url, output_path, MAX_FILE_SIZE, platform="instagram")
         if success:
             downloaded = find_downloaded_file(base)
 

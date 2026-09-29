@@ -12,20 +12,75 @@ from config import TIKTOK_COOKIES_PATH, YT_COOKIES_PATH
 
 MAX_FILE_SIZE_MB = 50
 
-# Format selector matching download_video() — used by get_metadata() for
-# accurate pre-download size estimates (avoids rejecting videos whose
-# bestvideo+bestaudio streams exceed 50 MB but whose MP4 fallback fits).
-# Merge branches (bestvideo+bestaudio) come first: YouTube increasingly serves
-# DASH-only formats (no progressive video+audio), for which a bare "best"
-# selector fails with "Requested format is not available".
+# Format selectors — VIDEO_FORMAT_SELECTOR must match download_video()'s
+# default selection: it is passed to get_metadata() for accurate pre-download
+# size estimates (avoids rejecting videos whose bestvideo+bestaudio streams
+# exceed 50 MB but whose MP4 fallback fits).
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
-VIDEO_FORMAT_SELECTOR = (
-    f"bestvideo[ext=mp4][filesize<{MAX_FILE_SIZE_BYTES}]+bestaudio[ext=m4a]"
-    f"/bestvideo[ext=mp4]+bestaudio[ext=m4a]"
-    f"/best[ext=mp4][filesize<{MAX_FILE_SIZE_BYTES}]"
-    f"/best[ext=mp4]"
-    f"/best[filesize<{MAX_FILE_SIZE_BYTES}]"
-    f"/best"
+
+
+def _build_format_selector(
+    max_bytes: int, *, worst: bool = False, progressive_first: bool = False
+) -> str:
+    """Build a yt-dlp -f selector with codec priority for Telegram clients.
+
+    Branch order (worst=False / best):
+      1. H.264 (avc1) DASH merge — size-capped, then uncapped
+      2. H.264 progressive single-file — size-capped, then uncapped
+      3. Any-codec (AV1/VP9) DASH merge — size-capped, then uncapped
+      4. Progressive single-file fallback — size-capped, then uncapped
+      5. Catch-all — size-capped, then bare, so a video is always delivered
+
+    H.264 comes first because it is the only codec every Telegram client
+    decodes: iOS AVPlayer has no VP9 and most iPhones have no AV1, while
+    ext=mp4 does NOT imply H.264 (Instagram DASH and YouTube AV1 ship
+    other codecs in an mp4 container). Each size-capped branch makes yt-dlp
+    drop over-limit rungs and pick the best remaining one, descending the
+    quality ladder (1080p too big -> 720p -> 480p -> ...) in one step;
+    the uncapped twin of every branch keeps a video coming even when
+    file sizes are unknown, preferring a low/broken-quality file over an
+    error.
+
+    progressive_first (Instagram): Instagram's H.264 rendition carries no
+    vcodec metadata (codec filters skip it) while its DASH ladder is
+    VP9-only, so the unfiltered progressive branch must precede any
+    unfiltered DASH merge.
+    """
+    video = "worstvideo" if worst else "bestvideo"
+    audio = "worstaudio" if worst else "bestaudio"
+    single = "worst" if worst else "best"
+
+    avc1_merge = [
+        f"{video}[ext=mp4][vcodec^=avc1][filesize<{max_bytes}]+{audio}[ext=m4a]",
+        f"{video}[ext=mp4][vcodec^=avc1]+{audio}[ext=m4a]",
+    ]
+    avc1_single = [
+        f"{single}[ext=mp4][vcodec^=avc1][filesize<{max_bytes}]",
+        f"{single}[ext=mp4][vcodec^=avc1]",
+    ]
+    any_merge = [
+        f"{video}[ext=mp4][filesize<{max_bytes}]+{audio}[ext=m4a]",
+        f"{video}[ext=mp4]+{audio}[ext=m4a]",
+    ]
+    any_single = [
+        f"{single}[ext=mp4][filesize<{max_bytes}]",
+        f"{single}[ext=mp4]",
+    ]
+    catch_all = [
+        f"{single}[filesize<{max_bytes}]",
+        single,
+    ]
+
+    if progressive_first:
+        branches = avc1_merge + any_single + any_merge + catch_all
+    else:
+        branches = avc1_merge + avc1_single + any_merge + any_single + catch_all
+    return "/".join(branches)
+
+
+VIDEO_FORMAT_SELECTOR = _build_format_selector(MAX_FILE_SIZE_BYTES)
+INSTAGRAM_FORMAT_SELECTOR = _build_format_selector(
+    MAX_FILE_SIZE_BYTES, progressive_first=True
 )
 
 
@@ -221,16 +276,13 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     if yt_cookies:
         platform_args.extend(["--cookies", yt_cookies])
 
+    # Instagram's H.264 progressive rendition must beat its VP9 DASH ladder
+    # (VP9 does not play on iPhone); other platforms exhaust avc1 before AV1.
+    progressive_first = platform == "instagram"
+
     logger.info("download_video: running yt-dlp", extra=extra)
     result = _run_ytdlp([
-        "-f", (
-            f"bestvideo[ext=mp4][filesize<{max_bytes}]+bestaudio[ext=m4a]"
-            f"/bestvideo[ext=mp4]+bestaudio[ext=m4a]"
-            f"/best[ext=mp4][filesize<{max_bytes}]"
-            f"/best[ext=mp4]"
-            f"/best[filesize<{max_bytes}]"
-            f"/best"
-        ),
+        "-f", _build_format_selector(max_bytes, progressive_first=progressive_first),
         "--merge-output-format", "mp4",
         "-o", output_path,
         *platform_args,
@@ -247,14 +299,7 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     logger.info("download_video: retrying with lower quality", extra=extra)
 
     result = _run_ytdlp([
-        "-f", (
-            f"worstvideo[ext=mp4][filesize<{max_bytes}]+worstaudio[ext=m4a]"
-            f"/worstvideo[ext=mp4]+worstaudio[ext=m4a]"
-            f"/worst[ext=mp4][filesize<{max_bytes}]"
-            f"/worst[ext=mp4]"
-            f"/worst[filesize<{max_bytes}]"
-            f"/worst"
-        ),
+        "-f", _build_format_selector(max_bytes, worst=True, progressive_first=progressive_first),
         "--merge-output-format", "mp4",
         "-o", output_path,
         *platform_args,
@@ -281,15 +326,20 @@ def _apply_faststart(output_path: str, extra: dict) -> None:
     For MP4 files: moves moov atom to front.
     For non-MP4 (webm, mkv): remuxes to MP4 with faststart.
     """
-    base = output_path.replace("%(ext)s", "")
-    for ext in ["mp4", "webm", "mkv"]:
-        candidate = f"{base}.{ext}"
+    base = output_path.replace("%(ext)s", "") if "%(ext)s" in output_path else ""
+    if base:
+        # yt-dlp output pattern "<id>.%(ext)s" -> base "<id>." + ext = "<id>.mp4"
+        candidates = [f"{base}{ext}" for ext in ("mp4", "webm", "mkv")]
+    else:
+        candidates = [output_path]
+
+    for candidate in candidates:
         if os.path.isfile(candidate):
             result = _ensure_faststart(candidate)
             if result:
-                details_logger.info("faststart applied", extra=extra)
+                logger.info("faststart applied", extra=extra)
             else:
-                details_logger.info("faststart skipped (ffmpeg unavailable or failed)", extra=extra)
+                logger.info("faststart skipped (ffmpeg unavailable or failed)", extra=extra)
             break
 
 

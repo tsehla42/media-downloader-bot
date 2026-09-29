@@ -92,6 +92,118 @@ def test_download_video_selectors_include_merge_branches():
         assert "+worstaudio" in retry_fmt
         assert "worst[filesize<" in retry_fmt
 
+
+def test_video_format_selector_prefers_avc1_then_av1_with_size_ladders():
+    """H.264 first (plays on every Telegram client, incl. iPhone), then AV1.
+
+    Each codec phase is size-limited first: yt-dlp drops over-limit rungs and
+    picks the best remaining one (1080p > 50MB -> 720p -> 480p -> ...).
+    The selector must end with catch-all branches so a video is always sent
+    when one exists, rather than failing with an error.
+    """
+    from downloader import VIDEO_FORMAT_SELECTOR
+    b = VIDEO_FORMAT_SELECTOR.split("/")
+    assert len(b) == 10
+    # 1-2: H.264 DASH merge — size ladder, then uncapped avc1
+    assert b[0].startswith("bestvideo[ext=mp4][vcodec^=avc1][filesize<")
+    assert b[1] == "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]"
+    # 3-4: H.264 progressive single-file — size ladder, then uncapped
+    assert b[2].startswith("best[ext=mp4][vcodec^=avc1][filesize<")
+    assert b[3] == "best[ext=mp4][vcodec^=avc1]"
+    # 5-6: AV1/any-mp4 DASH merge — only after all avc1 options are exhausted
+    assert b[4].startswith("bestvideo[ext=mp4][filesize<")
+    assert b[5] == "bestvideo[ext=mp4]+bestaudio[ext=m4a]"
+    # 7-8: progressive fallback, 9-10: catch-all that always yields something
+    assert b[6].startswith("best[ext=mp4][filesize<")
+    assert b[7] == "best[ext=mp4]"
+    assert b[8].startswith("best[filesize<")
+    assert b[9] == "best"
+
+
+def test_instagram_format_selector_prefers_h264_progressive():
+    """Instagram DASH is VP9 (unplayable on iPhone); H.264 progressive wins.
+
+    Instagram's H.264 rendition has no vcodec metadata (codec filters skip
+    it), so the unfiltered progressive branch must come before any DASH
+    merge. VP9 merge stays as last-resort so a video is still delivered.
+    """
+    from downloader import INSTAGRAM_FORMAT_SELECTOR
+    b = INSTAGRAM_FORMAT_SELECTOR.split("/")
+    assert b[0].startswith("bestvideo[ext=mp4][vcodec^=avc1][filesize<")
+    prog = next(i for i, x in enumerate(b) if x.startswith("best[ext=mp4]"))
+    dash = b.index("bestvideo[ext=mp4]+bestaudio[ext=m4a]")
+    assert prog < dash
+    assert b[-1] == "best"
+
+
+def test_download_video_picks_selector_by_platform():
+    """Instagram platform arg switches to the progressive-first selector."""
+    with patch("downloader.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        download_video("https://www.instagram.com/reel/abc/", "/tmp/t.%(ext)s", platform="instagram")
+        args = mock_run.call_args[0][0]
+        ig_fmt = args[args.index("-f") + 1]
+    b = ig_fmt.split("/")
+    prog = next(i for i, x in enumerate(b) if x.startswith("best[ext=mp4]"))
+    dash = b.index("bestvideo[ext=mp4]+bestaudio[ext=m4a]")
+    assert prog < dash, "Instagram must prefer progressive H.264 over VP9 DASH merge"
+
+    with patch("downloader.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        download_video("https://youtube.com/watch?v=abc", "/tmp/t.%(ext)s")
+        args = mock_run.call_args[0][0]
+        yt_fmt = args[args.index("-f") + 1]
+    b = yt_fmt.split("/")
+    assert b[0].startswith("bestvideo[ext=mp4][vcodec^=avc1][filesize<")
+    dash = b.index("bestvideo[ext=mp4]+bestaudio[ext=m4a]")
+    bare_prog = next(i for i, x in enumerate(b) if x == "best[ext=mp4]")
+    assert dash < bare_prog, "generic selector keeps DASH merge before bare progressive"
+
+
+def test_download_video_retry_prefers_avc1_then_catch_all():
+    """Retry selector mirrors the attempt selector: avc1 first, always ends
+    with a catch-all so a low-quality video beats an error."""
+    with patch("downloader.subprocess.run") as mock_run:
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="fail"),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
+        download_video("https://youtube.com/watch?v=abc", "/tmp/t.%(ext)s")
+        args = mock_run.call_args_list[1][0][0]
+        retry_fmt = args[args.index("-f") + 1]
+    b = retry_fmt.split("/")
+    assert b[0].startswith("worstvideo[ext=mp4][vcodec^=avc1][filesize<")
+    assert any(x.startswith("worst[filesize<") for x in b)
+    assert b[-1] == "worst"
+
+
+def test_apply_faststart_finds_ytdlp_output_file(tmp_path):
+    """_apply_faststart must resolve '<id>.%(ext)s' to '<id>.mp4'.
+
+    It previously built '<id>..mp4' (double dot), so the downloaded file was
+    never found and faststart never ran — and the logging call raised
+    NameError (details_logger is not imported in downloader).
+    """
+    from downloader import _apply_faststart
+    video = tmp_path / "abc123.mp4"
+    video.write_bytes(b"data")
+    with patch("downloader._ensure_faststart", return_value=str(video)) as mock_fs, \
+         patch("downloader.logger") as mock_log:
+        _apply_faststart(str(tmp_path / "abc123.%(ext)s"), {"url": "https://x"})
+    mock_fs.assert_called_once_with(str(video))
+    mock_log.info.assert_any_call("faststart applied", extra={"url": "https://x"})
+
+
+def test_apply_faststart_handles_literal_path(tmp_path):
+    """A literal .mp4 path (no %(ext)s template) must be found as-is."""
+    from downloader import _apply_faststart
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"data")
+    with patch("downloader._ensure_faststart", return_value=str(video)) as mock_fs:
+        _apply_faststart(str(video), {})
+    mock_fs.assert_called_once_with(str(video))
+
+
 def test_get_metadata_returns_none_on_failure():
     with patch("downloader.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(

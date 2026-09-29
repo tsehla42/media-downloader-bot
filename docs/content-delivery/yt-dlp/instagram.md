@@ -33,8 +33,10 @@ async def handle_instagram(update, context, url: str) -> bool:
     """Handle Instagram URL: try video download first, fallback to images."""
     reply_params = {"message_id": update.message.message_id}
 
-    # Try video download first
-    success = download_video(url, output_path, MAX_FILE_SIZE)
+    # Try video download first (platform="instagram" selects the
+    # progressive-first format selector: H.264 before VP9 — VP9 does
+    # not play on iPhone Telegram)
+    success = download_video(url, output_path, MAX_FILE_SIZE, platform="instagram")
     if success:
         # Find downloaded file and send as video
         # ...

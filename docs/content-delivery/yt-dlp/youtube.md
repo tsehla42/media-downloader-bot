@@ -18,11 +18,11 @@ YouTube and YouTube Music download handling.
 
 1. Detect platform as `youtube` or `ytmusic`
 2. Skip pure playlist URLs silently
-3. Fetch metadata with `VIDEO_FORMAT_SELECTOR` (matches `download_video()`'s `best[ext=mp4]...` format) for accurate size estimate (60s timeout)
+3. Fetch metadata with `VIDEO_FORMAT_SELECTOR` (matches `download_video()`'s codec-priority format selection) for accurate size estimate (60s timeout)
 4. If age-restricted: raise `DownloadAuthRequired` → user sees "This content is restricted"
 5. Check if file size > 50MB limit
 6. If too large: skip with `skip_reason: "size_limit"`
-7. If under limit: download best quality
+7. If under limit: download best H.264 quality that fits (falls back to AV1/any codec if no H.264 fits)
 8. Send to user
 
 ## Metadata Fetching
@@ -35,7 +35,7 @@ def get_metadata(url: str, format_selector: str | None = None) -> dict | None:
     Args:
         format_selector: Optional yt-dlp -f flag. When set, metadata reflects
             the size of the format that will actually be downloaded (important
-            for YouTube where download_video() forces MP4, not bestvideo).
+            for YouTube where download_video() uses the codec-priority selector).
     """
     ytdlp = _find_ytdlp()
     try:
@@ -63,7 +63,7 @@ def get_metadata(url: str, format_selector: str | None = None) -> dict | None:
 Key behaviors:
 - **60s timeout** (up from 30s) — gives playlists and slow extractions more time
 - **`--no-playlist`** — fetches metadata for single video only, ignores playlist context
-- **Optional `format_selector`** — when set, passes `-f` flag to yt-dlp so metadata size reflects the format that will actually be downloaded. Used for YouTube where `download_video()` uses `best[ext=mp4]...` but default yt-dlp picks `bestvideo+bestaudio/best` (much larger).
+- **Optional `format_selector`** — when set, passes `-f` flag to yt-dlp so metadata size reflects the format that will actually be downloaded. Used for YouTube where `download_video()` and `get_metadata()` share `VIDEO_FORMAT_SELECTOR` (H.264-first size-capped ladder) but default yt-dlp picks `bestvideo+bestaudio/best` (often larger, AV1).
 - **Stderr logging** — failure reason logged to `request-details.jsonl` for debugging
 - **Age-restriction detection** — raises `DownloadAuthRequired` for login-gated content
 
