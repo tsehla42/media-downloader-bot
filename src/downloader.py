@@ -8,7 +8,7 @@ import sys
 from logging_config import details_logger as logger, get_current_request_id
 from messages import MSG_FETCH_FAILED
 from platform_args import USER_AGENT, COMMON_YTDL_ARGS, TIKTOK_REFERER
-from config import TIKTOK_COOKIES_PATH
+from config import TIKTOK_COOKIES_PATH, YT_COOKIES_PATH
 
 MAX_FILE_SIZE_MB = 50
 
@@ -86,6 +86,17 @@ def _find_gallery_dl() -> str | None:
     return None
 
 
+def _youtube_cookies(url: str) -> str:
+    """Return YT_COOKIES_PATH for YouTube URLs when a non-empty cookies file exists."""
+    if not YT_COOKIES_PATH or not os.path.isfile(YT_COOKIES_PATH):
+        return ""
+    if os.path.getsize(YT_COOKIES_PATH) == 0:
+        return ""
+    if "youtube.com" in url or "youtu.be" in url:
+        return YT_COOKIES_PATH
+    return ""
+
+
 def get_metadata(url: str, format_selector: str | None = None, referer: str = "", cookies: str = "") -> dict | None:
     """Get video metadata via yt-dlp --dump-json.
 
@@ -95,11 +106,13 @@ def get_metadata(url: str, format_selector: str | None = None, referer: str = ""
             for YouTube where download_video() forces MP4, not bestvideo).
         referer: Optional Referer header (e.g. for TikTok anti-bot bypass).
         cookies: Optional path to cookies file (Netscape format).
+            Falls back to YT_COOKIES_PATH for YouTube URLs when not set.
     """
     try:
         args = ["--dump-json", "--no-download", *COMMON_YTDL_ARGS]
         if referer:
             args.extend(["--referer", referer])
+        cookies = cookies or _youtube_cookies(url)
         if cookies and os.path.isfile(cookies):
             args.extend(["--cookies", cookies])
         if format_selector:
@@ -204,6 +217,9 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     platform_args = ["--referer", TIKTOK_REFERER] if platform == "tiktok" else []
     if platform == "tiktok" and TIKTOK_COOKIES_PATH and os.path.isfile(TIKTOK_COOKIES_PATH):
         platform_args.extend(["--cookies", TIKTOK_COOKIES_PATH])
+    yt_cookies = _youtube_cookies(url)
+    if yt_cookies:
+        platform_args.extend(["--cookies", yt_cookies])
 
     logger.info("download_video: running yt-dlp", extra=extra)
     result = _run_ytdlp([
@@ -281,12 +297,16 @@ def download_audio(url: str, output_path: str) -> bool:
     """Extract audio as MP3."""
     extra = _log_extra(url)
     logger.info("download_audio: running yt-dlp", extra=extra)
-    result = _run_ytdlp([
+    args = [
         "--extract-audio",
         "--audio-format", "mp3",
         "-o", output_path,
-        url,
-    ])
+    ]
+    yt_cookies = _youtube_cookies(url)
+    if yt_cookies:
+        args.extend(["--cookies", yt_cookies])
+    args.append(url)
+    result = _run_ytdlp(args)
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
         extra["yt_dlp_stderr"] = stderr

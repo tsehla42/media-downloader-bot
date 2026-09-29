@@ -16,6 +16,7 @@ from config import BOT_TOKEN, GUEST_MODE_ENABLED
 from handlers import handle_url, audio_command, my_chat_member_handler
 from platforms.youtube import ytmusic_callback
 from commands import start_command, help_command, caption_command
+from cookie_upload import handle_cookie_document
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -85,6 +86,7 @@ def main() -> None:
     app.add_handler(CommandHandler("audio", audio_command))
     app.add_handler(CallbackQueryHandler(ytmusic_callback, pattern="^ytm\\|"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_cookie_document))
     app.add_handler(ChatMemberHandler(my_chat_member_handler, ChatMemberHandler.MY_CHAT_MEMBER))
 
     service_logger.info("Bot started")

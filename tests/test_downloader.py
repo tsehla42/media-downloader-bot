@@ -436,3 +436,84 @@ def test_download_gallery_dl_video_raises_on_timeout():
             download_gallery_dl_video("https://example.com/page", "/tmp/out")
         assert "Could not fetch" in exc_info.value.user_message
         assert "timed out" in exc_info.value.raw_error
+
+
+class TestYouTubeCookies:
+    """YT_COOKIES_PATH is passed to yt-dlp for YouTube URLs when the file exists."""
+
+    @pytest.fixture
+    def yt_cookies(self, tmp_path):
+        cookie_file = tmp_path / "yt-cookies.txt"
+        cookie_file.write_text("# Netscape HTTP Cookie File\n")
+        return str(cookie_file)
+
+    def test_get_metadata_passes_cookies_for_youtube_url(self, yt_cookies):
+        with patch("downloader.subprocess.run") as mock_run, \
+             patch("downloader.YT_COOKIES_PATH", yt_cookies):
+            mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(SAMPLE_METADATA), stderr="")
+            get_metadata("https://www.youtube.com/watch?v=abc123")
+            call_args = mock_run.call_args[0][0]
+            assert "--cookies" in call_args
+            assert yt_cookies in call_args
+
+    def test_get_metadata_passes_cookies_for_youtu_be_url(self, yt_cookies):
+        with patch("downloader.subprocess.run") as mock_run, \
+             patch("downloader.YT_COOKIES_PATH", yt_cookies):
+            mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(SAMPLE_METADATA), stderr="")
+            get_metadata("https://youtu.be/abc123")
+            call_args = mock_run.call_args[0][0]
+            assert "--cookies" in call_args
+            assert yt_cookies in call_args
+
+    def test_get_metadata_no_cookies_for_non_youtube_url(self, yt_cookies):
+        with patch("downloader.subprocess.run") as mock_run, \
+             patch("downloader.YT_COOKIES_PATH", yt_cookies):
+            mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(SAMPLE_METADATA), stderr="")
+            get_metadata("https://example.com/video")
+            call_args = mock_run.call_args[0][0]
+            assert "--cookies" not in call_args
+
+    def test_get_metadata_no_cookies_when_file_missing(self):
+        with patch("downloader.subprocess.run") as mock_run, \
+             patch("downloader.YT_COOKIES_PATH", "/nonexistent/yt-cookies.txt"):
+            mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(SAMPLE_METADATA), stderr="")
+            get_metadata("https://www.youtube.com/watch?v=abc123")
+            call_args = mock_run.call_args[0][0]
+            assert "--cookies" not in call_args
+
+    def test_download_video_passes_cookies_for_youtube_url(self, yt_cookies):
+        with patch("downloader.subprocess.run") as mock_run, \
+             patch("downloader.YT_COOKIES_PATH", yt_cookies):
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            download_video("https://www.youtube.com/watch?v=abc123", "/tmp/test.mp4")
+            call_args = mock_run.call_args[0][0]
+            assert "--cookies" in call_args
+            assert yt_cookies in call_args
+
+    def test_download_video_no_cookies_for_non_youtube_url(self, yt_cookies):
+        with patch("downloader.subprocess.run") as mock_run, \
+             patch("downloader.YT_COOKIES_PATH", yt_cookies):
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            download_video("https://example.com/video", "/tmp/test.mp4")
+            call_args = mock_run.call_args[0][0]
+            assert "--cookies" not in call_args
+
+    def test_download_audio_passes_cookies_for_youtube_url(self, yt_cookies):
+        with patch("downloader.subprocess.run") as mock_run, \
+             patch("downloader.YT_COOKIES_PATH", yt_cookies):
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            download_audio("https://www.youtube.com/watch?v=abc123", "/tmp/test.mp3")
+            call_args = mock_run.call_args[0][0]
+            assert "--cookies" in call_args
+            assert yt_cookies in call_args
+
+    def test_get_metadata_no_cookies_when_file_empty(self, tmp_path):
+        """An empty yt-cookies.txt (placeholder) is treated as missing."""
+        cookie_file = tmp_path / "yt-cookies.txt"
+        cookie_file.write_text("")
+        with patch("downloader.subprocess.run") as mock_run, \
+             patch("downloader.YT_COOKIES_PATH", str(cookie_file)):
+            mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(SAMPLE_METADATA), stderr="")
+            get_metadata("https://www.youtube.com/watch?v=abc123")
+            call_args = mock_run.call_args[0][0]
+            assert "--cookies" not in call_args

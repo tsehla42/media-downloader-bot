@@ -13,9 +13,8 @@ Media Downloader Bot — Script Menu
   3) compose        Build image and restart container
   4) dev            Run local dev container
   5) dev-stop       Stop dev container, remove image, cleanup
-  6) refresh-ig     Manually refresh Instagram cookies (interactive login)
-  7) pull-logs      Pull logs from production server
-  8) version        Show local and production server versions
+  6) pull-logs      Pull logs from production server
+  7) version        Show local and production server versions
 
 Usage:
   ./bot.sh          Show this menu
@@ -31,14 +30,13 @@ run_deploy()   { bash "${SHELL_DIR}/deploy.sh" "$@"; }
 run_update()   { bash "${SHELL_DIR}/update.sh" "$@"; }
 run_dev()      { clear && bash "${SHELL_DIR}/compose.sh" "$@" && docker logs media-downloader-bot -f; }
 run_dev_stop() { bash "${SHELL_DIR}/dev-stop.sh" "$@"; }
-run_refresh()  { uv run --project "${SCRIPT_DIR}" python "${SCRIPT_DIR}/scripts/python/ig_login_local.py" "$@"; }
 run_pull()     { bash "${SHELL_DIR}/pull-logs.sh" "$@"; }
 run_version()  { bash "${SHELL_DIR}/version.sh" "$@"; }
 
 # No args -> show menu
 if [[ $# -eq 0 ]]; then
     show_menu
-    read -rp "Select [1-8]: " choice
+    read -rp "Select [1-7]: " choice
     set -- "$choice"
 fi
 
@@ -49,9 +47,8 @@ case "${1}" in
     3|compose)      run_compose "${@:2}" ;;
     4|dev)          run_dev "${@:2}" ;;
     5|dev-stop)     run_dev_stop "${@:2}" ;;
-    6|refresh-ig)   run_refresh "${@:2}" ;;
-    7|pull-logs)    run_pull "${@:2}" ;;
-    8|version)      run_version "${@:2}" ;;
+    6|pull-logs)    run_pull "${@:2}" ;;
+    7|version)      run_version "${@:2}" ;;
     *)
         echo "Unknown command: ${1}"
         echo "Run './bot.sh' for usage."

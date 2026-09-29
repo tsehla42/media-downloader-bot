@@ -66,6 +66,12 @@ MSG_HELP = (
 # Group admin
 MSG_ONLY_ADMINS_CAN_ADD = "Not everyone can add me to groups💋"
 
+# Cookie upload (admin P2P document messages)
+MSG_COOKIE_CAPTION_EMPTY = "Caption cannot be empty"
+MSG_COOKIE_INVALID_CAPTION = "Invalid caption"
+MSG_COOKIE_INVALID_FILE = "Invalid file"
+MSG_COOKIE_UPDATED = "Cookies updated for {platform}"
+
 # Guest mode
 MSG_GUEST_DOWNLOAD_FAILED = "Download failed: {error}"
 MSG_GUEST_NO_IMAGES = "No images found"

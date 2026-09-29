@@ -14,7 +14,7 @@ Modular design. Each module has one clear responsibility. yt-dlp is called as a 
 - [Logging](logs/) - Logging system
 - [Content Delivery](content-delivery/) - Media downloading
 - [Media Cache](cache/) - SQLite cache for guest mode file_ids
-- [Cookies](cookies.md) - Manual cookie setup and refresh (Instagram + TikTok)
+- [Cookies](cookies.md) - Manual cookie setup/refresh (Instagram + TikTok + YouTube) and admin bot upload
 - [Deploy Guide](deploy.md) - Production server deployment flow (gitignored)
 
 ## Modules
@@ -29,11 +29,10 @@ Loads settings from `.env` via python-dotenv. Exports constants:
 - `DOWNLOAD_DIR` - Temp directory for downloads (default: /tmp/bot-downloads)
 - `MAX_FILE_SIZE` - Max download size in MB (default: 50)
 - `MAX_CONCURRENT_DOWNLOADS` - Concurrency limit (default: 3)
-- `IG_USERNAME` - Instagram account username for cookie refresh via instagrapi
-- `IG_PASSWORD` - Instagram account password for cookie refresh via instagrapi
 - `IG_COOKIES_PATH` - Path to Netscape cookies.txt for gallery-dl Instagram auth (default: ig-cookies.txt)
-- `IG_SESSION_PATH` - Path to instagrapi session JSON (default: ig-session.json)
 - `TIKTOK_COOKIES_PATH` - Path to Netscape cookies.txt for TikTok auth (default: tiktok-cookies.txt)
+- `COOKIES_DIR` - Directory for dated cookie uploads + YouTube cookies (default: cookies)
+- `YT_COOKIES_PATH` - Path to Netscape cookies.txt for YouTube auth (default: yt-cookies.txt)
 - `GUEST_MODE_ENABLED` - Enable Bot API 10.0 guest mode (default: false)
 - `STORAGE_CHANNEL_ID` - Private channel ID for guest mode file storage (bot must be admin). Files uploaded here to get `file_id`s for InlineQueryResult.
 - `MODE` - Environment mode: "development" (default) or "production". Determines log file name.
@@ -103,18 +102,18 @@ Pure utility functions, no dependencies:
 
 ### Instagram cookies (manual)
 
-Instagram cookie refresh is manual-only: run `./bot.sh refresh-ig`
-(`scripts/python/ig_login_local.py`) on the host when login-gated content
-starts failing. See [cookies.md](cookies.md). The old auto-refresh module
-(`src/cookies.py`) and staleness checker were removed — they could not detect
-server-side session invalidation.
+Instagram cookies are exported from a browser (Netscape format) and uploaded
+by a bot admin with caption `cookie update ig`, or placed manually as
+`ig-cookies.txt`. There is no automated login — the old instagrapi-based
+refresh module (`src/cookies.py`, `scripts/python/ig_login_local.py`) was
+removed. See [cookies.md](cookies.md).
 
 ### downloader.py
 Wraps yt-dlp and gallery-dl binary calls via subprocess:
 - `_find_ytdlp()` / `_find_gallery_dl()` - Locate binaries
-- `get_metadata(url, format_selector=None, referer="", cookies="")` - Runs `yt-dlp --dump-json --no-playlist` (60s timeout). Optional `format_selector` param passes `-f` flag for accurate size estimates (used for YouTube where `download_video()` forces MP4). Optional `referer` and `cookies` params for platform-specific auth. Logs stderr on failure. Raises `DownloadAuthRequired` for age-restricted content.
-- `download_video(url, path, max_size, platform)` - Downloads video, retries with lower quality on failure. When `platform="tiktok"`, adds referer header and cookies.
-- `download_audio(url, path)` - Extracts audio as MP3
+- `get_metadata(url, format_selector=None, referer="", cookies="")` - Runs `yt-dlp --dump-json --no-playlist` (60s timeout). Optional `format_selector` param passes `-f` flag for accurate size estimates (used for YouTube where `download_video()` forces MP4). Optional `referer` and `cookies` params for platform-specific auth. When `cookies` is not set, falls back to `YT_COOKIES_PATH` for YouTube URLs. Logs stderr on failure. Raises `DownloadAuthRequired` for age-restricted content.
+- `download_video(url, path, max_size, platform)` - Downloads video, retries with lower quality on failure. When `platform="tiktok"`, adds referer header and cookies. Adds `YT_COOKIES_PATH` cookies for YouTube URLs when the file exists.
+- `download_audio(url, path)` - Extracts audio as MP3 (adds `YT_COOKIES_PATH` cookies for YouTube URLs when the file exists)
 - `download_images(url, dir)` - Downloads carousel/gallery images via gallery-dl
 - `download_gallery_dl_images(url, dir, cookies)` - Downloads images using gallery-dl
 - `download_gallery_dl_video(url, dir)` - Downloads video using gallery-dl (for unsupported platform fallback)
@@ -126,6 +125,12 @@ Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloa
 - `_download_and_send(update, context, url, silent, reply_to_message_id)` - Orchestrates download with YouTube size check, error suppression, and `skip_reason` tracking (`unsupported`, `size_limit`, `auth_required`, `metadata_failed`, `fetch_failed`, `download_failed`)
 - `handle_gallery_dl_fallback(update, context, url)` - Tries gallery-dl for unsupported platforms (images then video), silent on failure
 - `handle_url(update, context)` - Main handler: clears stale `_platform`, filters pure playlist URLs, authorization check, detects group/P2P, unauthorized reply-to-bot check in groups (silently ignores), splits supported/unsupported URLs, filters unsupported against gallery-dl domain whitelist, handles reply-to-retry, routes remaining unsupported URLs to gallery-dl fallback
+
+### cookie_upload.py
+Admin-only cookie file upload (document messages), depends on auth, config, logging_config, messages:
+- `handle_cookie_document(update, context)` - Handles `.txt` documents sent to the bot. Silently ignores non-P2P chats and non-admin senders. Validates the caption `cookie update <platform>` (`tt`/`ig`/`yt`; keyword case-insensitive, platform lowercase-only): missing → `MSG_COOKIE_CAPTION_EMPTY`, mismatch → `MSG_COOKIE_INVALID_CAPTION`. Validates file: `.txt` extension + Netscape cookie content → otherwise `MSG_COOKIE_INVALID_FILE`. On success saves `cookies/<platform>-cookie-<date>.txt` (dated history) and overwrites the active cookie path, replies `MSG_COOKIE_UPDATED`, logs `cookies_updated` via `log_cookie_updated()`.
+- `_looks_like_netscape(text)` - Detects Netscape cookie files (header line or tab-separated 6-field rows, incl. `#HttpOnly_` rows)
+- `_active_path(platform)` - Maps `tt`/`ig`/`yt` to `TIKTOK_COOKIES_PATH`/`IG_COOKIES_PATH`/`YT_COOKIES_PATH`
 
 ### guest.py
 Bot API 10.0 guest mode handler, depends on auth, config, downloader, platforms, utils, logging_config, httpx, cache:
@@ -152,7 +157,7 @@ Structured JSON logging with zero external dependencies:
 - `with_request_logging()` - Decorator that wraps handlers and logs request lifecycle
 - `log_request_received()` / `log_request_completed()` / `log_request_failed()` - Log request events (use `requests_logger`)
 - `log_guest_request_received()` / `log_guest_request_completed()` - Log guest mode request lifecycle (use `requests_logger`). Only logs when URL is present.
-- `log_new_user()` / `log_bot_added_to_chat()` / `log_bot_rejected_group_addition()` / `log_bot_removed_from_chat()` / `log_admin_rights_changed()` / `log_user_blocked_bot()` / `log_unauthorized_access()` - System events (use `service_logger`)
+- `log_new_user()` / `log_bot_added_to_chat()` / `log_bot_rejected_group_addition()` / `log_bot_removed_from_chat()` / `log_admin_rights_changed()` / `log_user_blocked_bot()` / `log_unauthorized_access()` / `log_cookie_updated()` - System events (use `service_logger`)
 - `_extract_admin_rights(member)` - Extracts admin rights dict from ChatMemberAdministrator
 
 ### bot.py
@@ -551,10 +556,23 @@ cat logs/service.jsonl | jq 'select(.event == "bot_rejected_group_addition")'
 **Volumes:**
 - `./logs:/usr/src/app/logs` -- persistent structured JSON logs
 - `bot-cache:/usr/src/app/data` -- SQLite media cache (named volume)
-- `./ig-cookies.txt:/usr/src/app/ig-cookies.txt:ro` -- Instagram cookies (Netscape format, generated by ig_login_local.py)
-- `./ig-session.json:/usr/src/app/ig-session.json:ro` -- Instagram instagrapi session state
+- `./ig-cookies.txt:/usr/src/app/ig-cookies.txt` -- Instagram cookies (Netscape format, browser export; writable for bot upload)
+- `./tiktok-cookies.txt:/usr/src/app/tiktok-cookies.txt` -- TikTok cookies (writable: yt-dlp writes back + bot upload)
+- `./yt-cookies.txt:/usr/src/app/yt-cookies.txt` -- YouTube cookies (writable for bot upload)
+- `./cookies:/usr/src/app/cookies` -- dated cookie upload history
 - `./allowed-users.json:/usr/src/app/allowed-users.json:ro` -- user allowlist (read-only)
 - `bot-downloads:/tmp/bot-downloads` -- temp download directory (named volume)
+
+> **Bind-mount gotcha (read before adding a mount):** if a mount source path
+> does not exist when `docker compose up` runs, the Docker daemon creates it as
+> **root**, and the container user (`appuser`, uid 1000) gets `PermissionError`
+> when the bot writes to it. Pre-create every new mount source as the invoking
+> user first — directories via a tracked `.gitkeep` (see the `cookies/` pattern
+> in `.gitignore`), files via the pre-create loop in `scripts/shell/compose.sh`.
+> If Docker already created the path as root, fix ownership and
+> `docker compose up -d --force-recreate` (replacing the path on the host does
+> NOT remount it in a running container). Full checklist: AGENTS.md →
+> Common Tasks → "Add a new bind mount".
 
 **Deploying updates:**
 ```bash

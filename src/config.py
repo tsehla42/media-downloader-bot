@@ -61,14 +61,17 @@ DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", "/tmp/bot-downloads")
 MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", "50"))
 MAX_CONCURRENT_DOWNLOADS = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "3"))
 
-# Instagram cookie refresh
-IG_USERNAME = os.environ.get("IG_USERNAME", "")
-IG_PASSWORD = os.environ.get("IG_PASSWORD", "")
+# Instagram cookies (Netscape format, browser export or bot upload)
 IG_COOKIES_PATH = os.environ.get("IG_COOKIES_PATH", "ig-cookies.txt")
-IG_SESSION_PATH = os.environ.get("IG_SESSION_PATH", "ig-session.json")
 
 # TikTok cookies (Netscape format, exported from browser)
 TIKTOK_COOKIES_PATH = os.environ.get("TIKTOK_COOKIES_PATH", "tiktok-cookies.txt")
+
+# Cookie upload (bot admin sends a .txt document in a P2P chat)
+COOKIES_DIR = os.environ.get("COOKIES_DIR", "cookies")
+
+# YouTube cookies (Netscape format, browser export or bot upload)
+YT_COOKIES_PATH = os.environ.get("YT_COOKIES_PATH", "yt-cookies.txt")
 
 MODE = os.environ.get("MODE", "development")
 LOG_OUTPUT = os.environ.get("LOG_OUTPUT", "both")

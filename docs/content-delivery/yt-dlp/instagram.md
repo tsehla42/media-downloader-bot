@@ -19,18 +19,11 @@ Instagram image and video download handling.
 
 Instagram often requires authentication for downloads.
 
-### Cookie Refresh
+### Cookie Upload
 
-Cookies are managed via instagrapi (see [Cookies](../../cookies.md)):
-
-```bash
-IG_USERNAME=your-ig-account
-IG_PASSWORD=your-password
-IG_COOKIES_PATH=ig-cookies.txt
-IG_SESSION_PATH=ig-session.json
-```
-
-Run `./bot.sh refresh-ig` to refresh cookies. Must run on the host machine (Instagram blocks Docker logins).
+Cookies are exported from a browser (Netscape format) and uploaded to the bot
+by a bot admin with caption `cookie update ig`, or placed manually as
+`ig-cookies.txt` (`IG_COOKIES_PATH`). See [Cookies](../../cookies.md).
 
 ### gallery-dl with Cookies
 
@@ -129,7 +122,7 @@ async def send_images(message, images: list[str], reply_params: dict) -> int:
 
 ### Authentication Required
 - Check if `IG_COOKIES_PATH` points to a valid cookies file
-- If not, run `./bot.sh refresh-ig` to refresh cookies
+- If not or expired, export fresh cookies from a browser and upload them to the bot
 
 ### Download Failed
 - Try alternative method (yt-dlp → gallery-dl or vice versa)

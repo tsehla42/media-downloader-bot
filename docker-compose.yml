@@ -10,9 +10,10 @@ services:
     volumes:
       - bot-downloads:/tmp/bot-downloads
       - bot-cache:/usr/src/app/data
-      - ./ig-cookies.txt:/usr/src/app/ig-cookies.txt:ro
-      - ./ig-session.json:/usr/src/app/ig-session.json
+      - ./ig-cookies.txt:/usr/src/app/ig-cookies.txt
       - ./tiktok-cookies.txt:/usr/src/app/tiktok-cookies.txt
+      - ./yt-cookies.txt:/usr/src/app/yt-cookies.txt
+      - ./cookies:/usr/src/app/cookies
       - ./allowed-users.json:/usr/src/app/allowed-users.json:ro
       - ./logs:/usr/src/app/logs
     environment:

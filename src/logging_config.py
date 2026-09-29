@@ -416,6 +416,22 @@ def log_unauthorized_access(user, chat, command: str = "") -> None:
     service_logger.info("unauthorized_access", extra={"extra_data": log_data})
 
 
+def log_cookie_updated(platform: str, user, filename: str) -> None:
+    """Log a successful admin cookie file update."""
+    log_data = {
+        "event": "cookies_updated",
+        "message": f"Cookies updated for {platform}",
+        "platform": platform,
+        "file": filename,
+        "user": {
+            "id": user.id,
+            "name": getattr(user, "first_name", None),
+            "username": getattr(user, "username", None),
+        },
+    }
+    service_logger.info("cookies_updated", extra={"extra_data": log_data})
+
+
 def log_bot_removed_from_chat(chat, removed_by) -> None:
     """Log when the bot is removed from a chat."""
     log_data = {

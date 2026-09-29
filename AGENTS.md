@@ -18,7 +18,7 @@ For detailed documentation, see `docs/README.md` (human-readable overview) and t
 - `docs/logs/` - Logging system
 - `docs/content-delivery/` - Media downloading
 - `docs/cache/` - Media cache for guest mode
-- `docs/cookies.md` - Instagram cookie refresh
+- `docs/cookies.md` - Manual cookie setup/refresh (Instagram + TikTok + YouTube) and admin bot upload
 
 ## Project Structure
 
@@ -30,6 +30,7 @@ media-downloader-bot/
 │   ├── downloader.py   # yt-dlp subprocess wrapper (metadata, download, audio, images, DownloadError)
 │   ├── platform_args.py # Platform-specific yt-dlp constants (USER_AGENT, COMMON_YTDL_ARGS, TIKTOK_REFERER)
 │   ├── handlers.py     # Telegram handlers: /audio, URL message handling (thin orchestrator)
+│   ├── cookie_upload.py # Admin-only cookie upload: handle_cookie_document() (P2P document messages)
 │   ├── guest.py        # Bot API 10.0 guest mode: handle_guest(), download pipeline, InlineQueryResult builders
 │   ├── auth.py         # Authorization checks (is_authorized, is_group_chat, allowlists)
 │   ├── commands.py     # User commands: /start, /help, /caption
@@ -43,7 +44,7 @@ media-downloader-bot/
 │   │   ├── tiktok.py   # TikTok download with gallery-dl fallback
 │   │   └── instagram.py # Instagram images with gallery-dl fallback
 │   └── utils.py        # URL validation, file cleanup, get_gallery_dl_domains()
-├── bot.sh              # Script menu + arg routing for all scripts (deploy/update/compose/dev/pull-logs/refresh-ig)
+├── bot.sh              # Script menu + arg routing for all scripts (deploy/update/compose/dev/pull-logs/version)
 ├── scripts/
 │   ├── shell/          # Shell scripts
 │   │   ├── compose.sh
@@ -51,8 +52,7 @@ media-downloader-bot/
 │   │   └── pull-logs.sh
 │   └── python/         # Python utility scripts
 │       ├── generate_gallery_dl_domains.py
-│       ├── generate_ytdlp_domains.py
-│       └── ig_login_local.py
+│       └── generate_ytdlp_domains.py
 ├── tests/              # Test suite (imports from src/ via conftest.py)
 │   ├── test_handlers.py
 │   ├── test_commands.py
@@ -63,6 +63,7 @@ media-downloader-bot/
 │   ├── test_guest.py
 │   ├── test_downloader.py
 │   ├── test_cache.py
+│   ├── test_cookie_upload.py
 │   └── test_logging.py
 ├── docs/
 │   ├── README.md       # Project overview
@@ -82,7 +83,7 @@ media-downloader-bot/
 
 | Module | Depends on | What it does |
 |---|---|---|
-| `src/config.py` | .env file, allowed-users.json | Loads BOT_TOKEN, BOT_ADMIN_IDS, ALLOWED_USER_IDS (merged from JSON + env), ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, MAX_CONCURRENT_DOWNLOADS, IG_USERNAME, IG_PASSWORD, IG_COOKIES_PATH, IG_SESSION_PATH, TIKTOK_COOKIES_PATH, GUEST_MODE_ENABLED, STORAGE_CHANNEL_ID, MODE, LOG_OUTPUT, LOG_DIR, LOG_LEVEL |
+| `src/config.py` | .env file, allowed-users.json | Loads BOT_TOKEN, BOT_ADMIN_IDS, ALLOWED_USER_IDS (merged from JSON + env), ALLOWED_GROUP_IDS, DOWNLOAD_DIR, MAX_FILE_SIZE, MAX_CONCURRENT_DOWNLOADS, IG_COOKIES_PATH, TIKTOK_COOKIES_PATH, COOKIES_DIR, YT_COOKIES_PATH, GUEST_MODE_ENABLED, STORAGE_CHANNEL_ID, MODE, LOG_OUTPUT, LOG_DIR, LOG_LEVEL |
 | `src/auth.py` | config | Authorization: `is_authorized()`, `is_bot_admin()`, `was_notified()`, `mark_notified()`, `was_notified_guest()`, `mark_notified_guest()`, `is_group_chat()`, `_is_allowed()`, `_is_allowed_group()` |
 | `src/messages.py` | nothing | User-facing message constants: `MSG_UNAUTHORIZED`, `MSG_TIKTOK_LOGIN_REQUIRED`, `MSG_FETCH_FAILED`, `MSG_SIZE_LIMIT`, `MSG_CAPTION_ENABLED/DISABLED`, `MSG_START`, `MSG_HELP`, etc. All `reply_text()` and `_text_result()` strings import from here. |
 | `src/commands.py` | auth, config, messages, logging_config | User commands: `start_command()`, `help_command()`, `caption_command()`, `get_caption_for_user()` — all use notification tracking for unauthorized users |
@@ -92,12 +93,13 @@ media-downloader-bot/
 | `src/platforms/tiktok.py` | downloader, platform_args, telegram_utils | TikTok: `handle_tiktok()` with gallery-dl fallback for photo posts |
 | `src/platforms/instagram.py` | downloader, telegram_utils | Instagram: `handle_instagram()` with gallery-dl fallback and cookies |
 | `src/utils.py` | nothing | URL validation, file cleanup, `parse_format_choice()` (format keywords video/відео/видео, audio/аудіо/аудио → `"video"`/`"audio"`/`"both"`/None), `get_gallery_dl_domains()` (imports/auto-generates gallery-dl domain whitelist) |
-| `src/downloader.py` | yt-dlp, gallery-dl, platform_args | yt-dlp subprocess calls: `_run_ytdlp()` helper (common flags via COMMON_YTDL_ARGS), `get_metadata()` (optional `format_selector` for accurate size estimates, 60s timeout, logs stderr on failure, raises `DownloadAuthRequired` for age-restricted), `download_video()` (retries with lower quality, raises `DownloadAuthRequired`/`DownloadError`), `download_audio()`, `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()`. Raises `DownloadAuthRequired` when content requires login (age-restricted YouTube, TikTok login-gated). Raises `DownloadError` on gallery-dl timeout (user_message + raw_error for logging). |
+| `src/downloader.py` | yt-dlp, gallery-dl, platform_args | yt-dlp subprocess calls: `_run_ytdlp()` helper (common flags via COMMON_YTDL_ARGS), `_youtube_cookies(url)` (returns YT_COOKIES_PATH for YouTube URLs when the file exists), `get_metadata()` (optional `format_selector` for accurate size estimates, 60s timeout, logs stderr on failure, raises `DownloadAuthRequired` for age-restricted; falls back to YouTube cookies for YouTube URLs), `download_video()` (retries with lower quality, raises `DownloadAuthRequired`/`DownloadError`; adds YouTube cookies for YouTube URLs), `download_audio()` (adds YouTube cookies for YouTube URLs), `download_images()`, `download_gallery_dl_images()`, `download_gallery_dl_video()`. Raises `DownloadAuthRequired` when content requires login (age-restricted YouTube, TikTok login-gated). Raises `DownloadError` on gallery-dl timeout (user_message + raw_error for logging). |
 | `src/platform_args.py` | nothing | Platform-specific yt-dlp constants: `USER_AGENT` (Chrome 140), `COMMON_YTDL_ARGS` (`--no-playlist`, `--user-agent`), `TIKTOK_REFERER` (Referer header for WAF bypass). Imported by downloader.py and platform handlers. |
-- `src/logging_config.py` | config | Structured JSON logging: four-file split (requests/details/service/errors), JSONFormatter, `_enrich_chat()` for enriched chat dicts, `log_error()` for unhandled exceptions, filter-based routing, with_request_logging decorator (reads `_skip_reason` from user_data), contextvars for request_id, request lifecycle functions (log_request_received/completed/failed — completed accepts `skip_reason`), guest request functions (log_guest_request_received/completed), service log functions (log_new_user, log_bot_added_to_chat, log_bot_rejected_group_addition, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot, log_unauthorized_access) |
+- `src/logging_config.py` | config | Structured JSON logging: four-file split (requests/details/service/errors), JSONFormatter, `_enrich_chat()` for enriched chat dicts, `log_error()` for unhandled exceptions, filter-based routing, with_request_logging decorator (reads `_skip_reason` from user_data), contextvars for request_id, request lifecycle functions (log_request_received/completed/failed — completed accepts `skip_reason`), guest request functions (log_guest_request_received/completed), service log functions (log_new_user, log_bot_added_to_chat, log_bot_rejected_group_addition, log_bot_removed_from_chat, log_admin_rights_changed, log_user_blocked_bot, log_unauthorized_access, log_cookie_updated) |
 | `src/cache.py` | logging_config | SQLite media cache: `get_cached()` returns (file_id, media_type) by URL/platform (optional `variant` param appends a key suffix, e.g. `youtube:{id}:audio` so audio and video entries coexist), `store()` saves download result, URL-based ID extraction for TikTok/YouTube/Instagram, metadata hash fallback, `get_stats()`, `cleanup_older_than()`. For TikTok short URLs, follows HTTP redirects to resolve video ID for cache key. |
 | `src/handlers.py` | auth, commands, platforms, telegram_utils, downloader, logging_config | Thin orchestrator: `handle_url()` (clears stale `_platform`, filters pure playlist URLs, reply-to-retry, gallery-dl fallback, unauthorized reply-to-bot check in groups), `handle_gallery_dl_fallback()`, `audio_command()`, `_download_and_send()` (sets `skip_reason` on failure: `unsupported`, `size_limit`, `auth_required`, `metadata_failed`, `fetch_failed`, `download_failed`), `my_chat_member_handler()` (handles bot added/removed/promoted/demoted/blocked, admin check for group additions) |
 | `src/guest.py` | auth, config, downloader, platforms, utils, logging_config, httpx, cache | Bot API 10.0 guest mode: `handle_guest()` receives guest_message updates, extracts URLs (from tag text or replied-to message), parses format keyword (`video`/`відео`/`видео` → `force_video`), downloads via platform handlers, uploads to storage channel for file_id, replies via `answer_guest_query()`. Uses raw dicts for InlineQueryResult to avoid ptb placeholder URL issues. `music.youtube.com` URLs download audio by default via `_download_audio()` (MP3 → `sendAudio` → `_audio_result()`); `force_video=True` selects video. Caches file_ids via `cache.get_cached()`/`cache.store()` — cache hit skips download+upload entirely; audio results use cache variant `"audio"`. Fetches TikTok metadata for short URL deduplication. Unauthorized users without URL are silently ignored; unauthorized users with URL get "You are not authorized" once via `answer_guest_query`, then silently ignored. Uses `was_notified_guest()`/`mark_notified_guest()` (separate from P2P tracking). Reply to bot message without URL is silently ignored. Logs unauthorized access to service.jsonl via `log_unauthorized_access()`. For gallery-dl supported domains (e.g. deviantart, pinterest), falls back to `_gallery_dl_result()` when platform is not in SUPPORTED_PLATFORMS. Platform logged from `extract_domain(url)` for non-primary platforms. Photo upload handles Telegram's list-of-PhotoSize response. Uses `_safe_answer_guest_query()` to handle deleted messages gracefully (catches BadRequest when user deletes message before bot answers). |
+| `src/cookie_upload.py` | auth, config, logging_config, messages | Admin-only cookie upload: `handle_cookie_document()` handles `.txt` documents in P2P chats only (groups/guest/inline ignored). Flow: private-chat check → `is_bot_admin()` (non-admins silently ignored) → caption `cookie update <tt|ig|yt>` (`MSG_COOKIE_CAPTION_EMPTY` / `MSG_COOKIE_INVALID_CAPTION`) → `.txt` + Netscape content check (`MSG_COOKIE_INVALID_FILE`) → saves `cookies/<platform>-cookie-YYYY-MM-DD.txt` + overwrites active path → replies `MSG_COOKIE_UPDATED` → `log_cookie_updated()` to service.jsonl. |
 | `src/bot.py` | config, handlers, commands, platforms.youtube, logging_config, guest | Entry point, wires everything together, initializes logging, global error handler. Guest handler registered BEFORE text handler (filters.TEXT matches guest messages via effective_message). |
 
 ## Data Flow
@@ -156,6 +158,7 @@ media-downloader-bot/
     - `log_guest_request_completed()` logs success/failure, platform, duration, cache hit/miss to `requests.jsonl`
     - **Handler order**: guest handler registered BEFORE text handler because `filters.TEXT` matches guest messages via `effective_message`
 15. **Unauthorized reply to bot in groups**: In `handle_url()`, if a user replies to a bot message in a group and is not in the allowlist (`_is_allowed()`), the message is silently ignored. This prevents unauthorized users from triggering downloads by replying to bot messages in groups.
+16. **Cookie upload**: Bot admin sends a `.txt` document in P2P with caption `cookie update <tt|ig|yt>` → `cookie_upload.handle_cookie_document()` validates chat/admin/caption/file, saves `cookies/<platform>-cookie-<date>.txt` + active copy, replies confirmation, logs `cookies_updated` to service.jsonl. Non-P2P chats and non-admins are silently ignored.
 
 ## Key Design Decisions
 
@@ -177,7 +180,8 @@ media-downloader-bot/
 - **InlineQueryResult as raw dicts** - ptb's `InlineQueryResultVideo`/`Photo` constructors require placeholder URLs that Telegram tries to fetch. Using raw dicts with `video_file_id`/`photo_file_id`/`audio_file_id` avoids this.
 - **Media cache** - SQLite cache stores Telegram `file_id`s by platform-specific content ID. Cache hit skips download+upload entirely. TikTok metadata fetched for short URL deduplication. For short URLs, follows HTTP redirects to resolve video ID. Falls back to URL hash when redirect fails. Cache persists in Docker volume.
 - **Format keywords** - A message word `video`/`відео`/`видео` or `audio`/`аудіо`/`аудио` (case-insensitive, `parse_format_choice()`) selects the format for `music.youtube.com` links only. P2P/groups: keyword skips the format picker and sends directly; both keyword families → both formats. Guest mode: music links default to audio, video keyword selects video, both keywords resolve to audio (single inline result only). Regular `youtube.com` links always download video and ignore keywords.
-- **Instagram cookies (manual)** - Cookies managed via instagrapi (not browser export). Renewal is manual only: `./bot.sh refresh-ig` (runs `scripts/python/ig_login_local.py`) must be run on the host (Docker blocked by Instagram). Auto-renewal (staleness check, cron, refresh-on-update) was removed — it could not detect server-side session invalidation.
+- **Instagram cookies (browser export)** - Cookies are exported from a browser as Netscape format and uploaded by a bot admin (`cookie update ig`) or placed manually as `ig-cookies.txt`. No automated login: instagrapi and `scripts/python/ig_login_local.py` (`./bot.sh refresh-ig`) were removed. Auto-renewal (staleness check, cron, refresh-on-update) was removed earlier — it could not detect server-side session invalidation.
+- **Cookie upload via bot** - Bot admins update cookie files by sending a `.txt` document in a P2P chat with caption `cookie update <tt|ig|yt>` (keyword case-insensitive, platform lowercase-only). Saved as dated file `cookies/<platform>-cookie-<YYYY-MM-DD>.txt` (history, gitignored dir mounted into container) plus an overwrite of the active path the code reads. Non-admins, groups, guest, and inline are silently ignored. Rejects: empty caption → "Caption cannot be empty", bad keyword → "Invalid caption", bad file → "Invalid file". Success logs `cookies_updated` event to service.jsonl.
 - **TikTok cookies** - Browser-exported Netscape cookies (`tiktok-cookies.txt`) passed to yt-dlp and gallery-dl for TikTok URLs. Enables downloading age-restricted and login-gated content. Cookie file mounted as writable volume (yt-dlp writes back to update cookies). Configurable via `TIKTOK_COOKIES_PATH` env var. Cookies expire ~30 days and must be manually refreshed.
 - **Deleted message handling** - All `reply_parameters` dicts include `allow_sending_without_reply=True`. When user deletes their message before bot replies, bot sends message directly to chat instead of throwing `BadRequest`. Guest mode uses `_safe_answer_guest_query()` wrapper that catches `BadRequest` and logs gracefully.
 
@@ -195,7 +199,7 @@ Never commit `allowed-users.json` — it contains user IDs and is generated loca
 uv run pytest tests/ -v
 ```
 
-All 428 tests use mocked subprocess calls - no real downloads needed.
+All 508 tests use mocked subprocess calls - no real downloads needed.
 
 ## Common Tasks
 
@@ -204,6 +208,12 @@ All 428 tests use mocked subprocess calls - no real downloads needed.
 **Add a new command:** Add handler function in `src/commands.py`, register in `src/bot.py` with `app.add_handler(CommandHandler(...))`.
 
 **Change download behavior:** Edit `src/downloader.py` for yt-dlp changes, or the platform-specific handler in `src/platforms/` for platform logic.
+
+**Add a new bind mount (folder or file) to `docker-compose.yml`:** The Docker daemon auto-creates missing mount sources as **root**, and the container user (`appuser`, uid 1000) then cannot write them — the failure shows up as `PermissionError: [Errno 13]` in `errors.jsonl` at runtime. Prevent it BEFORE the mount ships:
+1. **Directory:** commit a `.gitkeep` inside it and un-ignore it (see the `/cookies/*` + `!/cookies/.gitkeep` pattern in `.gitignore`) so fresh clones get a user-owned dir.
+2. **File:** pre-create it (empty if needed) as the invoking user in `scripts/shell/compose.sh` (see the existing loop before `docker compose up`).
+3. **Existing server where Docker already created the path as root:** for an empty dir, `rmdir` + `mkdir` as the deploy user; for a file, `sudo chown 1000:1000 <path>`. Then `docker compose up -d --force-recreate` — a running container keeps the old (root-owned) inode even after you replace the path on the host.
+Also verify writability from inside the container: `docker compose exec bot sh -c 'touch <mount-path>/.wtest && rm <mount-path>/.wtest'`.
 
 **Docker tool versions:** `gallery-dl` is pinned to 1.32.4 in the Dockerfile. Version 1.32.9+ has a TikTok regression (403 Forbidden) — retested 2026-09-26 against 1.32.13 on 4 known-failing TikTok photo URLs: 1.32.13 failed all 4 (403) while 1.32.4 succeeded on 1. Do NOT upgrade without testing TikTok first. `yt-dlp` installs from master with curl-cffi for TikTok impersonation support.
 

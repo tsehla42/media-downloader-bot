@@ -8,7 +8,6 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "httpx",
     "gallery-dl==1.32.4",
-    "instagrapi",
 ]
 
 [dependency-groups]
