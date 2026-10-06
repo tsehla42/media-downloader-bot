@@ -97,6 +97,7 @@ from logging_config import (
     with_request_logging,
     log_bot_added_to_chat,
     log_bot_rejected_group_addition,
+    log_bot_admin_lookup,
     log_bot_removed_from_chat,
     log_bot_status_changed,
     log_admin_rights_changed,
@@ -194,9 +195,11 @@ async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_T
             for admin_id in BOT_ADMIN_IDS:
                 try:
                     member = await context.bot.getChatMember(chat.id, admin_id)
-                    if member.status in ("administrator", "member"):
+                    log_bot_admin_lookup(chat, admin_id, status=member.status)
+                    if member.status in ("administrator", "member", "creator"):
                         return True
-                except Exception:
+                except Exception as exc:
+                    log_bot_admin_lookup(chat, admin_id, error=str(exc))
                     continue
             return False
 

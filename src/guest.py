@@ -38,6 +38,7 @@ from downloader import (
     download_audio,
     download_gallery_dl_images,
     download_gallery_dl_video,
+    download_tiktok_photo_images,
     DownloadAuthRequired,
     DownloadError,
     VIDEO_FORMAT_SELECTOR,
@@ -311,6 +312,30 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             guest_query_id,
             _text_result(e.user_message),
         )
+    except ValueError as e:
+        # Deliberate pipeline failures: all raise sites use MSG_* constants,
+        # so the specific text is safe to show instead of the generic message.
+        duration_ms = int((time.time() - start_time) * 1000)
+        details_logger.warning("guest: download failed: %s", e, extra={"request_id": request_id, "url": url})
+        log_guest_request_completed(
+            request_id=request_id,
+            guest_query_id=guest_query_id,
+            url=url,
+            platform=platform,
+            duration_ms=duration_ms,
+            success=False,
+            error=str(e),
+            caller=caller,
+            chat=chat,
+            chat_owner_name=chat_owner_name,
+            chat_owner_username=chat_owner_username,
+            forwarded=forwarded,
+        )
+        await _safe_answer_guest_query(
+            context.bot,
+            guest_query_id,
+            _text_result(str(e)),
+        )
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
         log_guest_request_completed(
@@ -470,11 +495,39 @@ async def _download_youtube(url: str) -> tuple[dict, str, float | None]:
         cleanup_video_files(base)
 
 
+async def _upload_photo_result(images: list[str]) -> tuple[dict, str, float | None] | None:
+    """Upload image files and build a photo/media-group result, or None if nothing uploaded."""
+    file_ids = []
+    total_size = 0
+    for img_path in images[:10]:
+        total_size += os.path.getsize(img_path)
+        fid = await _upload_to_telegram(img_path, "photo")
+        if fid:
+            file_ids.append(fid)
+    if not file_ids:
+        return None
+    file_size_mb = round(total_size / (1024 * 1024), 2)
+    if len(file_ids) == 1:
+        return _photo_result(file_ids[0]), "image", file_size_mb
+    return _media_group_result(file_ids), "image", file_size_mb
+
+
 async def _download_media_result(url: str, platform: str) -> tuple[dict, str, float | None]:
     """Download TikTok/Instagram content. Returns (result, content_type, file_size_mb)."""
     output_dir = make_tmp_dir()
 
     try:
+        # TikTok photo posts: yt-dlp cannot download them; the rehydration
+        # page-dump extractor must run before the doomed video attempts.
+        if platform == "tiktok":
+            photo_images = await asyncio.to_thread(
+                download_tiktok_photo_images, url, output_dir, TIKTOK_COOKIES_PATH
+            )
+            if photo_images:
+                photo_result = await _upload_photo_result(photo_images)
+                if photo_result:
+                    return photo_result
+
         # Try video download first
         video_path = os.path.join(output_dir, f"{platform}.mp4")
         try:
@@ -498,18 +551,9 @@ async def _download_media_result(url: str, platform: str) -> tuple[dict, str, fl
             cookies = ""
         images = await asyncio.to_thread(download_gallery_dl_images, url, output_dir, cookies)
         if images:
-            file_ids = []
-            total_size = 0
-            for img_path in images[:10]:
-                total_size += os.path.getsize(img_path)
-                fid = await _upload_to_telegram(img_path, "photo")
-                if fid:
-                    file_ids.append(fid)
-            if file_ids:
-                file_size_mb = round(total_size / (1024 * 1024), 2)
-                if len(file_ids) == 1:
-                    return _photo_result(file_ids[0]), "image", file_size_mb
-                return _media_group_result(file_ids), "image", file_size_mb
+            photo_result = await _upload_photo_result(images)
+            if photo_result:
+                return photo_result
 
         # Try gallery-dl video fallback
         video = await asyncio.to_thread(download_gallery_dl_video, url, output_dir)

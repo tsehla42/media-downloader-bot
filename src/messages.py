@@ -15,6 +15,7 @@ MSG_INVALID_URL = "Please send a valid URL"
 # Download failures
 MSG_LOGIN_REQUIRED = "This content is restricted. Login required to access"
 MSG_FETCH_FAILED = "Could not fetch post. The content may be private or the URL is invalid"
+MSG_IMAGE_POST_FETCH_FAILED = "Could not fetch this image post"
 MSG_SIZE_LIMIT = "This video is above Telegram's 50MB limit"
 MSG_METADATA_FAILED = "Failed to fetch metadata"
 MSG_DOWNLOAD_FAILED = "Download failed"

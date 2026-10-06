@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import pytest
 from unittest.mock import patch, MagicMock
@@ -629,3 +630,283 @@ class TestYouTubeCookies:
             get_metadata("https://www.youtube.com/watch?v=abc123")
             call_args = mock_run.call_args[0][0]
             assert "--cookies" not in call_args
+
+
+# ---------------------------------------------------------------------------
+# download_tiktok_photo_images — TikTok photo posts via yt-dlp --write-pages
+# ---------------------------------------------------------------------------
+
+PHOTO_PAGE_DUMP = (
+    '<html><script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">'
+    + json.dumps({
+        "__DEFAULT_SCOPE__": {
+            "webapp.video-detail": {
+                "statusCode": 0,
+                "itemInfo": {"itemStruct": {"id": "123", "imagePost": {"images": [
+                    {"imageURL": {"urlList": ["https://cdn.example.com/a1.jpeg", "https://cdn.example.com/a1x.jpeg"]}},
+                    {"imageURL": {"urlList": ["https://cdn.example.com/a2.jpeg"]}},
+                ]}}},
+            }
+        }
+    })
+    + "</script></html>"
+)
+
+VIDEO_PAGE_DUMP = (
+    '<html><script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">'
+    + json.dumps({
+        "__DEFAULT_SCOPE__": {
+            "webapp.video-detail": {
+                "statusCode": 0,
+                "itemInfo": {"itemStruct": {"id": "123", "video": {"playAddr": "https://cdn.example.com/v.mp4"}}},
+            }
+        }
+    })
+    + "</script></html>"
+)
+
+
+def _dump_writer(dump_text, returncode=0):
+    """subprocess.run side effect: write a page dump into the yt-dlp cwd."""
+    def _run(cmd, **kwargs):
+        cwd = kwargs.get("cwd")
+        assert cwd, "yt-dlp must run with cwd set so page dumps land in a temp dir"
+        with open(os.path.join(cwd, "page.dump"), "w") as f:
+            f.write(dump_text)
+        return MagicMock(returncode=returncode, stdout="", stderr="boom" if returncode else "")
+    return _run
+
+
+def _httpx_client_mock(head_url=None):
+    """Build a patch target for downloader.httpx.Client (resolve + image download)."""
+    client = MagicMock()
+    if head_url is not None:
+        client.head.return_value = MagicMock(url=head_url)
+    resp = MagicMock()
+    resp.content = b"\xff\xd8fakejpeg"
+    resp.raise_for_status = MagicMock()
+    resp.headers = {"content-type": "image/jpeg"}
+    client.get.return_value = resp
+    cm = MagicMock()
+    cm.__enter__.return_value = client
+    cm.__exit__.return_value = False
+    return MagicMock(return_value=cm), client
+
+
+class TestDownloadTiktokPhotoImages:
+    """Tests for download_tiktok_photo_images."""
+
+    def test_photo_url_returns_downloaded_files(self, tmp_path):
+        from downloader import download_tiktok_photo_images
+        client_patch, _ = _httpx_client_mock()
+        with patch("downloader.subprocess.run", side_effect=_dump_writer(PHOTO_PAGE_DUMP)) as mock_run, \
+             patch("downloader.httpx.Client", client_patch):
+            files = download_tiktok_photo_images(
+                "https://www.tiktok.com/@user/photo/123", str(tmp_path)
+            )
+
+        assert len(files) == 2
+        for f in files:
+            assert os.path.isfile(f)
+            with open(f, "rb") as fh:
+                assert fh.read() == b"\xff\xd8fakejpeg"
+        # /photo/ rewritten to /video/ because yt-dlp only matches /video/
+        cmd = mock_run.call_args[0][0]
+        assert "https://www.tiktok.com/@user/video/123" in cmd
+        assert not any("/photo/" in arg for arg in cmd)
+
+    def test_video_url_returns_empty_without_side_effects(self, tmp_path):
+        from downloader import download_tiktok_photo_images
+        with patch("downloader.subprocess.run") as mock_run, \
+             patch("downloader.httpx.Client") as mock_client:
+            files = download_tiktok_photo_images(
+                "https://www.tiktok.com/@user/video/123", str(tmp_path)
+            )
+
+        assert files == []
+        mock_run.assert_not_called()
+        mock_client.assert_not_called()
+
+    def test_short_url_resolving_to_photo_extracts(self, tmp_path):
+        from downloader import download_tiktok_photo_images
+        client_patch, _ = _httpx_client_mock(
+            head_url="https://www.tiktok.com/@user/photo/999"
+        )
+        with patch("downloader.subprocess.run", side_effect=_dump_writer(PHOTO_PAGE_DUMP)) as mock_run, \
+             patch("downloader.httpx.Client", client_patch):
+            files = download_tiktok_photo_images("https://vt.tiktok.com/ZSbPKwDAm/", str(tmp_path))
+
+        assert len(files) == 2
+        cmd = mock_run.call_args[0][0]
+        assert "https://www.tiktok.com/@user/video/999" in cmd
+
+    def test_short_url_resolving_to_video_returns_empty(self, tmp_path):
+        from downloader import download_tiktok_photo_images
+        client_patch, _ = _httpx_client_mock(
+            head_url="https://www.tiktok.com/@user/video/999"
+        )
+        with patch("downloader.subprocess.run") as mock_run, \
+             patch("downloader.httpx.Client", client_patch):
+            files = download_tiktok_photo_images("https://vt.tiktok.com/ZSxyz/", str(tmp_path))
+
+        assert files == []
+        mock_run.assert_not_called()
+
+    def test_ytdlp_failure_raises_image_post_error(self, tmp_path):
+        from downloader import download_tiktok_photo_images, DownloadError
+        with patch("downloader.subprocess.run", side_effect=_dump_writer(PHOTO_PAGE_DUMP, returncode=1)), \
+             patch("downloader.download_gallery_dl_images", return_value=[]), \
+             patch("downloader.httpx.Client") as mock_client:
+            with pytest.raises(DownloadError) as exc:
+                download_tiktok_photo_images(
+                    "https://www.tiktok.com/@user/photo/123", str(tmp_path)
+                )
+
+        assert exc.value.user_message == "Could not fetch this image post"
+        mock_client.assert_not_called()
+
+    def test_dump_without_imagepost_raises_image_post_error(self, tmp_path):
+        from downloader import download_tiktok_photo_images, DownloadError
+        with patch("downloader.subprocess.run", side_effect=_dump_writer(VIDEO_PAGE_DUMP)), \
+             patch("downloader.download_gallery_dl_images", return_value=[]), \
+             patch("downloader.httpx.Client") as mock_client:
+            with pytest.raises(DownloadError) as exc:
+                download_tiktok_photo_images(
+                    "https://www.tiktok.com/@user/photo/123", str(tmp_path)
+                )
+
+        assert exc.value.user_message == "Could not fetch this image post"
+        mock_client.assert_not_called()
+
+    def test_photo_extraction_failure_rescued_by_gallery_dl(self, tmp_path):
+        """gallery-dl safety net still rescues when the page-dump path fails."""
+        from downloader import download_tiktok_photo_images
+        with patch("downloader.subprocess.run", side_effect=_dump_writer(PHOTO_PAGE_DUMP, returncode=1)), \
+             patch("downloader.download_gallery_dl_images", return_value=["/tmp/gdl.jpg"]) as mock_gdl:
+            files = download_tiktok_photo_images(
+                "https://www.tiktok.com/@user/photo/123", str(tmp_path)
+            )
+
+        assert files == ["/tmp/gdl.jpg"]
+        mock_gdl.assert_called_once()
+
+    def test_image_download_failure_raises_image_post_error(self, tmp_path):
+        """A failed image fetch falls through gallery-dl and raises the specific error."""
+        from downloader import download_tiktok_photo_images, DownloadError
+        client_patch, client = _httpx_client_mock()
+        client.get.return_value.raise_for_status.side_effect = RuntimeError("network down")
+        with patch("downloader.subprocess.run", side_effect=_dump_writer(PHOTO_PAGE_DUMP)), \
+             patch("downloader.download_gallery_dl_images", return_value=[]), \
+             patch("downloader.httpx.Client", client_patch):
+            with pytest.raises(DownloadError) as exc:
+                download_tiktok_photo_images(
+                    "https://www.tiktok.com/@user/photo/123", str(tmp_path)
+                )
+
+        assert exc.value.user_message == "Could not fetch this image post"
+
+    def test_passes_cookies_when_file_exists(self, tmp_path):
+        from downloader import download_tiktok_photo_images
+        cookie_file = tmp_path / "tt-cookies.txt"
+        cookie_file.write_text("# Netscape HTTP Cookie File\n")
+        client_patch, _ = _httpx_client_mock()
+        with patch("downloader.subprocess.run", side_effect=_dump_writer(PHOTO_PAGE_DUMP)) as mock_run, \
+             patch("downloader.httpx.Client", client_patch):
+            download_tiktok_photo_images(
+                "https://www.tiktok.com/@user/photo/123", str(tmp_path), str(cookie_file)
+            )
+
+        cmd = mock_run.call_args[0][0]
+        assert "--cookies" in cmd
+        assert str(cookie_file) in cmd
+
+    def test_no_cookies_flag_when_file_missing(self, tmp_path):
+        from downloader import download_tiktok_photo_images
+        client_patch, _ = _httpx_client_mock()
+        with patch("downloader.subprocess.run", side_effect=_dump_writer(PHOTO_PAGE_DUMP)) as mock_run, \
+             patch("downloader.httpx.Client", client_patch):
+            download_tiktok_photo_images(
+                "https://www.tiktok.com/@user/photo/123", str(tmp_path), "/nonexistent/cookies.txt"
+            )
+
+        cmd = mock_run.call_args[0][0]
+        assert "--cookies" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# _resolve_tiktok_url — transient-failure resilience
+# ---------------------------------------------------------------------------
+
+
+class TestResolveTiktokUrl:
+    """Redirect resolution must survive transient network hiccups."""
+
+    def _client_factory(self, head=None, stream_url=None):
+        """Build a downloader.httpx.Client patch; head is a list of side effects."""
+        client = MagicMock()
+        if head is not None:
+            client.head.side_effect = head
+        else:
+            client.head.return_value = MagicMock(url="https://www.tiktok.com/@u/photo/1")
+        if stream_url is not None:
+            stream_cm = MagicMock()
+            stream_cm.__enter__.return_value = MagicMock(url=stream_url)
+            stream_cm.__exit__.return_value = False
+            client.stream.return_value = stream_cm
+        cm = MagicMock()
+        cm.__enter__.return_value = client
+        cm.__exit__.return_value = False
+        return MagicMock(return_value=cm), client
+
+    def test_retries_after_transient_timeout(self):
+        from downloader import _resolve_tiktok_url
+        import httpx
+        client_patch, _ = self._client_factory(
+            head=[httpx.ReadTimeout("The read operation timed out"),
+                  MagicMock(url="https://www.tiktok.com/@u/photo/42")]
+        )
+        with patch("downloader.httpx.Client", client_patch), \
+             patch("downloader.time.sleep"):
+            final = _resolve_tiktok_url("https://vt.tiktok.com/ZSbba4FUF/")
+
+        assert final == "https://www.tiktok.com/@u/photo/42"
+
+    def test_get_fallback_when_head_always_times_out(self):
+        from downloader import _resolve_tiktok_url
+        import httpx
+        client_patch, client = self._client_factory(
+            head=httpx.ReadTimeout("The read operation timed out"),
+            stream_url="https://www.tiktok.com/@u/photo/77",
+        )
+        with patch("downloader.httpx.Client", client_patch), \
+             patch("downloader.time.sleep"):
+            final = _resolve_tiktok_url("https://vt.tiktok.com/ZSxyz/")
+
+        assert final == "https://www.tiktok.com/@u/photo/77"
+        assert client.stream.called
+
+    def test_raises_after_all_attempts_fail(self):
+        from downloader import _resolve_tiktok_url
+        import httpx
+        client_patch, client = self._client_factory(head=httpx.ReadTimeout("timed out"))
+        client.stream.side_effect = httpx.ReadTimeout("timed out")
+        with patch("downloader.httpx.Client", client_patch), \
+             patch("downloader.time.sleep"):
+            with pytest.raises(httpx.HTTPError):
+                _resolve_tiktok_url("https://vt.tiktok.com/ZSxyz/")
+
+    def test_resolve_exhausted_returns_empty(self, tmp_path):
+        """When resolution fails entirely, the pipeline falls through (not a photo)."""
+        from downloader import download_tiktok_photo_images
+        import httpx
+        client_patch, client = self._client_factory(head=httpx.ReadTimeout("timed out"))
+        client.stream.side_effect = httpx.ReadTimeout("timed out")
+        with patch("downloader.httpx.Client", client_patch), \
+             patch("downloader.time.sleep"), \
+             patch("downloader.subprocess.run") as mock_run:
+            files = download_tiktok_photo_images(
+                "https://vt.tiktok.com/ZSxyz/", str(tmp_path)
+            )
+
+        assert files == []
+        mock_run.assert_not_called()

@@ -62,6 +62,36 @@ Captures bot lifecycle events:
 }
 ```
 
+### Bot Admin Lookup
+One `getChatMember` lookup of a `BOT_ADMIN_IDS` user during the group-add presence check. Logged for every lookup — success (`status`) and failure (`error`) alike — so a rejected group addition can be diagnosed (e.g. an anonymous bot admin failing to resolve).
+
+```json
+{
+  "timestamp": "2026-10-04T17:16:05.000000+03:00",
+  "level": "INFO",
+  "message": "Bot admin presence check lookup",
+  "event": "bot_admin_lookup",
+  "chat": {"id": -1003804964305, "name": "Test Group", "type": "supergroup"},
+  "admin_id": 12345678,
+  "status": "administrator"
+}
+```
+
+On lookup failure `status` is `null` and `error` contains the Telegram API error:
+
+```json
+{
+  "timestamp": "2026-10-04T17:16:05.000000+03:00",
+  "level": "INFO",
+  "message": "Bot admin presence check lookup",
+  "event": "bot_admin_lookup",
+  "chat": {"id": -1003804964305, "name": "Test Group", "type": "supergroup"},
+  "admin_id": 12345678,
+  "status": null,
+  "error": "Bad Request: user not found"
+}
+```
+
 ### New User
 ```json
 {

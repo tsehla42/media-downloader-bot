@@ -399,6 +399,20 @@ def log_bot_rejected_group_addition(chat, added_by) -> None:
     service_logger.info("bot_rejected_group_addition", extra={"extra_data": log_data})
 
 
+def log_bot_admin_lookup(chat, admin_id: int, status: str | None = None, error: str | None = None) -> None:
+    """Log one getChatMember lookup during the group-add bot admin presence check."""
+    log_data = {
+        "event": "bot_admin_lookup",
+        "message": "Bot admin presence check lookup",
+        "chat": _enrich_chat(chat),
+        "admin_id": admin_id,
+        "status": status,
+    }
+    if error is not None:
+        log_data["error"] = error
+    service_logger.info("bot_admin_lookup", extra={"extra_data": log_data})
+
+
 def log_unauthorized_access(user, chat, command: str = "") -> None:
     """Log when an unauthorized user tries to access the bot."""
     log_data = {

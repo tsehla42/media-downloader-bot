@@ -1,12 +1,17 @@
 import glob
 import json
 import os
+import re
 import subprocess
 import shutil
 import sys
+import tempfile
+import time
+
+import httpx
 
 from logging_config import details_logger as logger, get_current_request_id
-from messages import MSG_FETCH_FAILED
+from messages import MSG_FETCH_FAILED, MSG_IMAGE_POST_FETCH_FAILED
 from platform_args import USER_AGENT, COMMON_YTDL_ARGS, TIKTOK_REFERER
 from config import TIKTOK_COOKIES_PATH, YT_COOKIES_PATH
 
@@ -255,13 +260,14 @@ def _ensure_faststart(filepath: str) -> str | None:
     return None
 
 
-def _run_ytdlp(args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
+def _run_ytdlp(args: list[str], timeout: int = 300, cwd: str | None = None) -> subprocess.CompletedProcess:
     """Run yt-dlp with common flags. Returns CompletedProcess."""
     return subprocess.run(
         [_find_ytdlp(), *COMMON_YTDL_ARGS, *args],
         capture_output=True,
         text=True,
         timeout=timeout,
+        cwd=cwd,
     )
 
 
@@ -496,3 +502,180 @@ def download_gallery_dl_video(url: str, output_dir: str) -> str | None:
     # Return the largest video found, apply faststart
     video_path = max(videos, key=os.path.getsize)
     return _ensure_faststart(video_path)
+
+
+_REHYDRATION_RE = re.compile(
+    r'__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">(.*?)</script>',
+    re.S,
+)
+
+
+def _resolve_tiktok_url(url: str) -> str:
+    """Follow TikTok short-link redirects and return the final URL.
+
+    Transient network hiccups previously caused photo posts to be
+    misclassified as non-photo and fall into the doomed video flow, so
+    this retries HEAD up to 3 times with backoff, then tries a streaming
+    GET (some edges hang on HEAD but answer GET). Raises httpx.HTTPError
+    only after every attempt failed.
+    """
+    headers = {"User-Agent": USER_AGENT}
+    last_exc: httpx.HTTPError | None = None
+    for attempt in range(3):
+        if attempt:
+            time.sleep(0.5 * attempt)
+        try:
+            with httpx.Client(timeout=15.0, follow_redirects=True, headers=headers) as client:
+                response = client.head(url)
+                return str(response.url)
+        except httpx.HTTPError as exc:
+            last_exc = exc
+    try:
+        with httpx.Client(timeout=15.0, follow_redirects=True, headers=headers) as client:
+            with client.stream("GET", url) as response:
+                return str(response.url)
+    except httpx.HTTPError as exc:
+        last_exc = exc
+    raise last_exc
+
+
+def _parse_tiktok_photo_urls(tmp_dir: str) -> list[str]:
+    """Extract imagePost gallery URLs from yt-dlp --write-pages dumps."""
+    urls: list[str] = []
+    for dump in sorted(glob.glob(os.path.join(tmp_dir, "*"))):
+        try:
+            with open(dump, encoding="utf-8", errors="ignore") as f:
+                html = f.read()
+        except OSError:
+            continue
+        match = _REHYDRATION_RE.search(html)
+        if not match:
+            continue
+        try:
+            scope = json.loads(match.group(1)).get("__DEFAULT_SCOPE__", {})
+        except json.JSONDecodeError:
+            continue
+        item = (
+            scope.get("webapp.video-detail", {})
+            .get("itemInfo", {})
+            .get("itemStruct")
+        )
+        if not item or "imagePost" not in item:
+            continue
+        for image in item["imagePost"].get("images", []):
+            url_list = image.get("imageURL", {}).get("urlList") or []
+            if url_list:
+                urls.append(url_list[0])
+    return urls
+
+
+def _extract_tiktok_photo_urls_via_pagedump(
+    video_url: str, cookies: str, extra: dict
+) -> tuple[list[str], str]:
+    """Run yt-dlp --write-pages and parse imagePost URLs from the dump.
+
+    Returns (urls, error): urls is non-empty on success; error is a
+    short technical description for logging when extraction fails.
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="tiktok_pages_")
+    try:
+        args = ["--skip-download", "--write-pages"]
+        if cookies and os.path.isfile(cookies):
+            args += ["--cookies", os.path.abspath(cookies)]
+        args.append(video_url)
+
+        logger.info("tiktok photos: running yt-dlp for page dump", extra=extra)
+        try:
+            result = _run_ytdlp(args, timeout=60, cwd=tmp_dir)
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            logger.warning("tiktok photos: yt-dlp failed: %s", exc, extra=extra)
+            return [], str(exc)
+
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            extra["yt_dlp_stderr"] = stderr
+            logger.warning("tiktok photos: yt-dlp failed (code %d)", result.returncode, extra=extra)
+            return [], stderr or f"yt-dlp exited {result.returncode}"
+
+        urls = _parse_tiktok_photo_urls(tmp_dir)
+        if not urls:
+            return [], "no imagePost data in page dump"
+        return urls, ""
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _download_tiktok_images(urls: list[str], output_dir: str, extra: dict) -> list[str]:
+    """Fetch image URLs into output_dir. Returns [] on any failure."""
+    os.makedirs(output_dir, exist_ok=True)
+    paths: list[str] = []
+    try:
+        with httpx.Client(timeout=30.0, headers={"User-Agent": USER_AGENT}) as client:
+            for i, image_url in enumerate(urls, 1):
+                response = client.get(image_url)
+                response.raise_for_status()
+                ext = os.path.splitext(image_url.split("?")[0])[1] or ".jpg"
+                path = os.path.join(output_dir, f"tiktok_photo_{i}{ext}")
+                with open(path, "wb") as f:
+                    f.write(response.content)
+                paths.append(path)
+    except Exception as exc:
+        logger.warning("tiktok photos: image download failed: %s", exc, extra=extra)
+        return []
+    return paths
+
+
+def download_tiktok_photo_images(url: str, output_dir: str, cookies: str = "") -> list[str]:
+    """Download a TikTok photo-post gallery via yt-dlp's rehydration page dump.
+
+    yt-dlp cannot download photo galleries (its TikTok extractor does not
+    even match /photo/ URLs), but its challenge-cookie page fetch retrieves
+    the full __UNIVERSAL_DATA_FOR_REHYDRATION__ JSON containing the
+    imagePost image URLs. This runs yt-dlp with --write-pages against the
+    /video/ form of the URL, parses the dump, and downloads each image;
+    gallery-dl is tried as a safety net before giving up.
+
+    Returns:
+        Downloaded file paths on success; [] when the URL is not a photo
+        post (callers continue with the regular video flow).
+
+    Raises:
+        DownloadError: the URL IS a photo post, but the page-dump
+        extraction and the gallery-dl fallback both failed.
+    """
+    extra = _log_extra(url, "tiktok")
+
+    if "/photo/" in url:
+        final_url = url
+    elif "/video/" in url:
+        return []
+    else:
+        try:
+            final_url = _resolve_tiktok_url(url)
+        except Exception as exc:
+            logger.warning("tiktok photos: redirect resolve failed: %s", exc, extra=extra)
+            return []
+        if "/photo/" not in final_url:
+            return []
+
+    # yt-dlp only matches /video/ URLs; photo posts also answer on that form
+    video_url = final_url.replace("/photo/", "/video/", 1)
+
+    image_urls, last_error = _extract_tiktok_photo_urls_via_pagedump(video_url, cookies, extra)
+
+    paths: list[str] = []
+    if image_urls:
+        paths = _download_tiktok_images(image_urls, output_dir, extra)
+
+    if paths:
+        logger.info("tiktok photos: downloaded %d images", len(paths), extra=extra)
+        return paths
+
+    # Known photo post with a failed page-dump path: gallery-dl safety net
+    gdl_images = download_gallery_dl_images(url, output_dir, cookies)
+    if gdl_images:
+        logger.info("tiktok photos: rescued by gallery-dl (%d images)", len(gdl_images), extra=extra)
+        return gdl_images
+
+    logger.warning("tiktok photos: all extraction methods failed", extra=extra)
+    raise DownloadError(MSG_IMAGE_POST_FETCH_FAILED, raw_error=last_error)

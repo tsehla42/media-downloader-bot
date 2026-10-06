@@ -3,6 +3,8 @@
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from downloader import DownloadError
+
 import pytest
 
 
@@ -1128,3 +1130,144 @@ class TestDownloadAudioUploadTitle:
             await _download_audio("https://music.youtube.com/watch?v=abc123")
 
         assert mock_upload.call_args[1]["title"] == "My Song"
+
+
+# ---------------------------------------------------------------------------
+# TikTok photo-post extractor (yt-dlp --write-pages) in _download_media_result
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadMediaResultTiktokPhotos:
+    """Tests for download_tiktok_photo_images in guest mode."""
+
+    @pytest.mark.asyncio
+    async def test_tiktok_photo_extractor_tried_before_video(self):
+        """Guest mode tries the photo extractor before download_video for TikTok."""
+        from guest import _download_media_result
+
+        with patch("guest.download_tiktok_photo_images", return_value=["/tmp/a.jpg"]) as mock_photo, \
+             patch("guest.download_video") as mock_video, \
+             patch("guest.os.path.getsize", return_value=100000), \
+             patch("guest._upload_to_telegram", new_callable=AsyncMock, return_value="fid_photo_1"), \
+             patch("guest.cleanup_dir"):
+            result, content_type, file_size_mb = await _download_media_result(
+                "https://vt.tiktok.com/ZSbPKwDAm/", "tiktok"
+            )
+
+        mock_photo.assert_called_once()
+        mock_video.assert_not_called()
+        assert result["photo_file_id"] == "fid_photo_1"
+        assert content_type == "image"
+
+    @pytest.mark.asyncio
+    async def test_tiktok_photo_extractor_empty_falls_through_to_video(self):
+        """Empty photo extractor result falls through to the video flow."""
+        from guest import _download_media_result
+
+        with patch("guest.download_tiktok_photo_images", return_value=[]), \
+             patch("guest.download_video", return_value=True), \
+             patch("guest.os.path.getsize", return_value=1048576), \
+             patch("guest._upload_to_telegram", new_callable=AsyncMock, return_value="vid_1"), \
+             patch("guest.cleanup_dir"):
+            result, content_type, file_size_mb = await _download_media_result(
+                "https://tiktok.com/@user/video/123", "tiktok"
+            )
+
+        assert result["video_file_id"] == "vid_1"
+        assert content_type == "video"
+
+
+# ---------------------------------------------------------------------------
+# Specific error messages reaching guest users
+# ---------------------------------------------------------------------------
+
+
+class TestGuestSpecificErrors:
+    """Guest replies must surface specific error messages, not the generic fallback."""
+
+    @pytest.mark.asyncio
+    async def test_value_error_replies_with_specific_message(self):
+        """ValueError raised by the pipeline is shown to the user verbatim."""
+        from guest import handle_guest
+        msg = _make_guest_message(text="https://youtube.com/watch?v=abc")
+        update = _make_update(msg)
+        context = _make_context()
+
+        with patch("guest.is_user_allowed", return_value=True), \
+             patch("guest.detect_platform", return_value="youtube"), \
+             patch("guest._download_and_build_result", new_callable=AsyncMock,
+                   side_effect=ValueError("Could not download media from this URL")):
+            await handle_guest(update, context)
+
+        context.bot.answer_guest_query.assert_called_once()
+        text = context.bot.answer_guest_query.call_args[1]["result"]["input_message_content"]["message_text"]
+        assert "Could not download media from this URL" in text
+        assert "Download failed" not in text
+
+    @pytest.mark.asyncio
+    async def test_generic_exception_still_replies_download_failed(self):
+        """Unexpected exceptions keep the generic message (no internals leaked)."""
+        from guest import handle_guest
+        msg = _make_guest_message(text="https://youtube.com/watch?v=abc")
+        update = _make_update(msg)
+        context = _make_context()
+
+        with patch("guest.is_user_allowed", return_value=True), \
+             patch("guest.detect_platform", return_value="youtube"), \
+             patch("guest._download_and_build_result", new_callable=AsyncMock,
+                   side_effect=RuntimeError("traceback-ish internals")):
+            await handle_guest(update, context)
+
+        text = context.bot.answer_guest_query.call_args[1]["result"]["input_message_content"]["message_text"]
+        assert "Download failed" in text
+        assert "traceback-ish internals" not in text
+
+    @pytest.mark.asyncio
+    async def test_image_post_error_reaches_guest_user(self):
+        """DownloadError from the image-post pipeline shows its user message."""
+        from guest import handle_guest
+        from messages import MSG_IMAGE_POST_FETCH_FAILED
+        msg = _make_guest_message(text="https://vt.tiktok.com/ZSbxorMFG/")
+        update = _make_update(msg)
+        context = _make_context()
+
+        with patch("guest.is_user_allowed", return_value=True), \
+             patch("guest.detect_platform", return_value="tiktok"), \
+             patch("guest._download_and_build_result", new_callable=AsyncMock,
+                   side_effect=DownloadError(MSG_IMAGE_POST_FETCH_FAILED)):
+            await handle_guest(update, context)
+
+        text = context.bot.answer_guest_query.call_args[1]["result"]["input_message_content"]["message_text"]
+        assert "Could not fetch this image post" in text
+
+    @pytest.mark.asyncio
+    async def test_photo_extractor_error_propagates_through_media_result(self):
+        """_download_media_result does not swallow DownloadError from the photo extractor."""
+        from guest import _download_media_result
+        from messages import MSG_IMAGE_POST_FETCH_FAILED
+
+        with patch("guest.download_tiktok_photo_images",
+                   side_effect=DownloadError(MSG_IMAGE_POST_FETCH_FAILED)), \
+             patch("guest.cleanup_dir"):
+            with pytest.raises(DownloadError) as exc:
+                await _download_media_result("https://vt.tiktok.com/ZSbxorMFG/", "tiktok")
+
+        assert exc.value.user_message == MSG_IMAGE_POST_FETCH_FAILED
+
+    @pytest.mark.asyncio
+    async def test_two_image_post_sends_first_with_only_one_caption(self):
+        """Multi-image post in guest: first image sent + caption that only 1 is supported."""
+        from guest import _download_media_result
+        from messages import MSG_GUEST_MEDIA_GROUP_CAPTION
+
+        with patch("guest.download_tiktok_photo_images", return_value=["/tmp/a.jpg", "/tmp/b.jpg"]), \
+             patch("guest.os.path.getsize", return_value=100000), \
+             patch("guest._upload_to_telegram", new_callable=AsyncMock, side_effect=["fid_1", "fid_2"]), \
+             patch("guest.cleanup_dir"):
+            result, content_type, file_size_mb = await _download_media_result(
+                "https://vt.tiktok.com/ZSbba4FUF/", "tiktok"
+            )
+
+        assert result["photo_file_id"] == "fid_1"
+        assert result["caption"] == MSG_GUEST_MEDIA_GROUP_CAPTION.format(count=2)
+        assert content_type == "image"

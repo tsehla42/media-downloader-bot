@@ -18,6 +18,7 @@ The bot can be added to Telegram groups and supergroups to download media for al
 ### Bot Admin Checks
 - When bot is added to a group, `my_chat_member_handler` checks multiple conditions
 - Bot admin can always add; anonymous admin and allowed users can add if a bot admin is in the group; group admins with invite rights can add if a bot admin is in the group
+- **Gotcha:** a bot admin who is an *anonymous admin* may not be resolvable by the `getChatMember` presence check — the bot then wrongly rejects the addition and leaves. Turn off anonymous mode for that admin before adding the bot. See [Admin Controls](admin-controls.md#known-gotchas)
 - See [Admin Controls](admin-controls.md) for the full flow
 
 ### Group Allowlists

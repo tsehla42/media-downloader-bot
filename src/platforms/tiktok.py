@@ -3,7 +3,7 @@
 import os
 
 from config import MAX_FILE_SIZE, TIKTOK_COOKIES_PATH
-from downloader import download_video, download_gallery_dl_images, get_metadata
+from downloader import download_video, download_gallery_dl_images, download_tiktok_photo_images, get_metadata
 from platform_args import TIKTOK_REFERER
 from telegram_utils import send_images
 from utils import cleanup_dir, find_downloaded_file, cleanup_video_files, make_video_tmp_path, make_tmp_dir
@@ -21,6 +21,20 @@ async def handle_tiktok(update, context, url: str) -> bool:
     base = None
 
     try:
+        # Photo posts: yt-dlp cannot handle /photo/ URLs at all, so try the
+        # rehydration page-dump extractor before the doomed video attempts.
+        out_dir = make_tmp_dir()
+        try:
+            images = download_tiktok_photo_images(url, out_dir, TIKTOK_COOKIES_PATH)
+            if images:
+                total_size = await send_images(update.message, images, reply_params)
+                context.user_data["_content_type"] = "image"
+                context.user_data["_file_size_mb"] = round(total_size / (1024 * 1024), 2) if total_size > 0 else None
+                context.user_data["_request_success"] = True
+                return True
+        finally:
+            cleanup_dir(out_dir)
+
         # Best-effort: check metadata to detect photo posts early
         metadata = get_metadata(url, referer=TIKTOK_REFERER, cookies=TIKTOK_COOKIES_PATH)
         if metadata:

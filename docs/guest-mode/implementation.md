@@ -76,6 +76,12 @@ Auth check runs AFTER URL extraction — only when the user is actually trying t
 - URL extraction checks both tag message AND replied-to message
 - Guest reply-to-retry doesn't conflict with existing reply-to-retry (different update types)
 
+### Error Replies
+`handle_guest` distinguishes three failure classes:
+- `DownloadError` → replies `e.user_message` (e.g. gallery-dl timeout, "Could not fetch this image post" for failed image posts)
+- `ValueError` → replies `str(e)`; every pipeline raise site uses an `MSG_*` constant, so users see the specific text (e.g. "Could not download media from this URL", "Failed to upload video to Telegram")
+- Any other `Exception` → logs `str(e)`, replies the generic `MSG_DOWNLOAD_FAILED` ("Download failed") so internals never leak to users
+
 ## Implementation
 
 ### Branch: `feature/guest-mode`

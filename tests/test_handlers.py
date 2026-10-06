@@ -780,6 +780,7 @@ async def test_download_and_send_tiktok_multiple_photos():
         return io.BytesIO(b"\x89PNG fake image data")
 
     with patch("handlers.detect_platform", return_value="tiktok"), \
+         patch("platforms.tiktok.download_tiktok_photo_images", return_value=[]), \
          patch("platforms.tiktok.download_video", return_value=False), \
          patch("platforms.tiktok.download_gallery_dl_images", return_value=["/tmp/tt1.jpg", "/tmp/tt2.jpg", "/tmp/tt3.jpg"]), \
          patch("builtins.open", side_effect=fake_open), \
@@ -806,6 +807,7 @@ async def test_download_and_send_tiktok_both_fail():
     context.user_data = {}
 
     with patch("handlers.detect_platform", return_value="tiktok"), \
+         patch("platforms.tiktok.download_tiktok_photo_images", return_value=[]), \
          patch("platforms.tiktok.download_video", return_value=False), \
          patch("platforms.tiktok.download_gallery_dl_images", return_value=[]), \
          patch("platforms.tiktok.cleanup_video_files"), \
@@ -2377,6 +2379,9 @@ class TestMyChatMemberHandler:
 
             context.bot.leave_chat.assert_called_once_with(123456)
             context.bot.send_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_bot_added_by_anonymous_admin_with_bot_admin_in_group(self):
         """Anonymous admin can add bot when a bot admin is in the group."""
         from handlers import my_chat_member_handler
 
@@ -2440,6 +2445,86 @@ class TestMyChatMemberHandler:
 
             context.bot.leave_chat.assert_called_once_with(123456)
             context.bot.send_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_bot_admin_presence_check_accepts_group_creator(self):
+        """A bot admin who is the group owner (status 'creator') counts as present."""
+        from handlers import my_chat_member_handler
+
+        update = MagicMock(spec=Update)
+        update.my_chat_member = MagicMock(spec=ChatMemberUpdated)
+        update.my_chat_member.chat = MagicMock(spec=Chat)
+        update.my_chat_member.chat.type = "supergroup"
+        update.my_chat_member.chat.id = 123456
+        update.my_chat_member.chat.title = "Test Group"
+        update.my_chat_member.old_chat_member = MagicMock()
+        update.my_chat_member.old_chat_member.status = "left"
+        update.my_chat_member.new_chat_member = MagicMock()
+        update.my_chat_member.new_chat_member.status = "member"
+        update.my_chat_member.from_user = MagicMock(spec=User)
+        update.my_chat_member.from_user.id = 555555
+        update.my_chat_member.from_user.first_name = "Trusted"
+
+        context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+        context.bot.leave_chat = AsyncMock()
+        context.bot.send_message = AsyncMock()
+
+        creator_member = MagicMock()
+        creator_member.status = "creator"
+        context.bot.getChatMember = AsyncMock(return_value=creator_member)
+
+        with patch('handlers.is_bot_admin', return_value=False), \
+             patch('handlers._is_allowed', return_value=True), \
+             patch('handlers.BOT_ADMIN_IDS', {111}), \
+             patch('handlers.log_bot_added_to_chat'):
+            await my_chat_member_handler(update, context)
+
+            context.bot.leave_chat.assert_not_called()
+            context.bot.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bot_admin_presence_check_logs_lookup_results(self):
+        """Each presence-check lookup logs its status or error instead of failing silently."""
+        from handlers import my_chat_member_handler
+
+        update = MagicMock(spec=Update)
+        update.my_chat_member = MagicMock(spec=ChatMemberUpdated)
+        update.my_chat_member.chat = MagicMock(spec=Chat)
+        update.my_chat_member.chat.type = "supergroup"
+        update.my_chat_member.chat.id = 123456
+        update.my_chat_member.chat.title = "Test Group"
+        update.my_chat_member.old_chat_member = MagicMock()
+        update.my_chat_member.old_chat_member.status = "left"
+        update.my_chat_member.new_chat_member = MagicMock()
+        update.my_chat_member.new_chat_member.status = "member"
+        update.my_chat_member.from_user = MagicMock(spec=User)
+        update.my_chat_member.from_user.id = 555555
+        update.my_chat_member.from_user.first_name = "Trusted"
+
+        context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+        context.bot.leave_chat = AsyncMock()
+
+        member_in_group = MagicMock()
+        member_in_group.status = "member"
+        # First admin lookup raises, second resolves — loop must continue and log both
+        context.bot.getChatMember = AsyncMock(side_effect=[
+            Exception("lookup failed"),
+            member_in_group,
+        ])
+
+        with patch('handlers.is_bot_admin', return_value=False), \
+             patch('handlers._is_allowed', return_value=True), \
+             patch('handlers.BOT_ADMIN_IDS', {111, 222}), \
+             patch('handlers.log_bot_admin_lookup') as mock_log, \
+             patch('handlers.log_bot_added_to_chat'):
+            await my_chat_member_handler(update, context)
+
+            context.bot.leave_chat.assert_not_called()
+            assert mock_log.call_count == 2
+            first_call = mock_log.call_args_list[0]
+            assert "lookup failed" in str(first_call.kwargs.get("error", ""))
+            second_call = mock_log.call_args_list[1]
+            assert second_call.kwargs.get("status") == "member"
 
     @pytest.mark.asyncio
     async def test_bot_added_no_bot_admin_ids_configured(self):
@@ -2667,3 +2752,28 @@ async def test_handle_metadata_failure_replies_when_not_silent(update, context):
     with patch("handlers.details_logger"):
         await _handle_metadata_failure(update, context, "http://url", False, {"message_id": 1}, "ytdlp_metadata_failed", "MSG_METADATA_FAILED")
     update.message.reply_text.assert_called_once_with("MSG_METADATA_FAILED", reply_parameters={"message_id": 1})
+
+
+@pytest.mark.asyncio
+async def test_download_and_send_shows_image_post_error():
+    """A failing image post replies with the specific image-post message in P2P."""
+    update = MagicMock()
+    update.message.message_id = 42
+    update.message.from_user.id = 123
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    from messages import MSG_IMAGE_POST_FETCH_FAILED
+    from downloader import DownloadError
+
+    with patch("handlers.detect_platform", return_value="tiktok"), \
+         patch("platforms.tiktok.download_tiktok_photo_images",
+               side_effect=DownloadError(MSG_IMAGE_POST_FETCH_FAILED)), \
+         patch("platforms.tiktok.cleanup_dir"):
+        await _download_and_send(update, context, "https://vt.tiktok.com/ZSbxorMFG/")
+
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "Could not fetch this image post" in text

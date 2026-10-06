@@ -14,6 +14,13 @@ def _make_typing_indicator_mock():
     return MagicMock(return_value=mock_cm)
 
 
+@pytest.fixture(autouse=True)
+def _stub_photo_extractor():
+    """Stub the network-bound photo extractor; dedicated tests re-patch it."""
+    with patch("platforms.tiktok.download_tiktok_photo_images", return_value=[]):
+        yield
+
+
 @pytest.fixture
 def update():
     u = MagicMock()
@@ -90,7 +97,7 @@ async def test_handle_tiktok_cleans_up_on_success(update, context):
           patch("platforms.tiktok.cleanup_video_files"):
         await handle_tiktok(update, context, "https://tiktok.com/@user/photo/123")
 
-    mock_cleanup.assert_called_once()
+    assert mock_cleanup.call_count == 2  # photo-extractor dir + gallery-dl/video dir
 
 
 @pytest.mark.asyncio
@@ -103,7 +110,7 @@ async def test_handle_tiktok_cleans_up_on_failure(update, context):
           patch("platforms.tiktok.cleanup_video_files"):
         await handle_tiktok(update, context, "https://tiktok.com/@user/photo/123")
 
-    mock_cleanup.assert_called_once()
+    assert mock_cleanup.call_count == 2  # photo-extractor dir + gallery-dl/video dir
 
 
 @pytest.mark.asyncio
@@ -117,7 +124,7 @@ async def test_handle_tiktok_cleans_up_on_exception(update, context):
         with pytest.raises(Exception, match="send failed"):
             await handle_tiktok(update, context, "https://tiktok.com/@user/photo/123")
 
-    mock_cleanup.assert_called_once()
+    assert mock_cleanup.call_count == 2  # photo-extractor dir + gallery-dl/video dir
 
 
 @pytest.mark.asyncio
@@ -255,6 +262,46 @@ async def test_handle_tiktok_tries_video_for_unknown_ext(update, context):
          patch("builtins.open", MagicMock()), \
          patch("platforms.tiktok.cleanup_dir"), \
           patch("platforms.tiktok.cleanup_video_files"):
+        result = await handle_tiktok(update, context, "https://tiktok.com/@user/video/123")
+
+    assert result is True
+    assert context.user_data["_content_type"] == "video"
+
+
+# --- photo-post extractor (yt-dlp --write-pages) integration ---
+
+@pytest.mark.asyncio
+async def test_handle_tiktok_photo_extractor_tried_first(update, context):
+    """handle_tiktok tries download_tiktok_photo_images before any yt-dlp work."""
+    images = ["/tmp/tt1.jpg", "/tmp/tt2.jpg"]
+
+    with patch("platforms.tiktok.download_tiktok_photo_images", return_value=images) as mock_photo, \
+         patch("platforms.tiktok.download_video") as mock_video, \
+         patch("platforms.tiktok.get_metadata") as mock_meta, \
+         patch("platforms.tiktok.send_images", new_callable=AsyncMock, return_value=900000), \
+         patch("platforms.tiktok.cleanup_dir"):
+        result = await handle_tiktok(update, context, "https://vt.tiktok.com/ZSbPKwDAm/")
+
+    assert result is True
+    mock_photo.assert_called_once()
+    mock_video.assert_not_called()
+    mock_meta.assert_not_called()
+    assert context.user_data["_content_type"] == "image"
+    assert context.user_data["_request_success"] is True
+
+
+@pytest.mark.asyncio
+async def test_handle_tiktok_falls_through_when_photo_extractor_empty(update, context):
+    """When the photo extractor finds nothing, the regular video flow still runs."""
+    update.message.reply_video = AsyncMock()
+
+    with patch("platforms.tiktok.download_tiktok_photo_images", return_value=[]), \
+         patch("platforms.tiktok.get_metadata", return_value=None), \
+         patch("platforms.tiktok.download_video", return_value=True), \
+         patch("platforms.tiktok.os.path.isfile", return_value=True), \
+         patch("builtins.open", MagicMock()), \
+         patch("platforms.tiktok.cleanup_dir"), \
+         patch("platforms.tiktok.cleanup_video_files"):
         result = await handle_tiktok(update, context, "https://tiktok.com/@user/video/123")
 
     assert result is True

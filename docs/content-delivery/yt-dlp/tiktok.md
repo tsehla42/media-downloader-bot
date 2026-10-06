@@ -11,13 +11,20 @@ TikTok video download handling.
 ## Download Flow
 
 1. Detect platform as `tiktok`
-2. Fetch metadata via `get_metadata()` with `--referer` (WAF bypass) and `--cookies` (auth) to check file extension
-3. If metadata indicates photo post (ext in jpg/jpeg/png/webp): try gallery-dl images first (with cookies)
-4. If not a photo post (or gallery-dl fails): try yt-dlp video download via `_run_ytdlp()` (with cookies)
-5. If video download fails: fallback to gallery-dl images (with cookies)
-6. Send to user
+2. **Photo-post extractor first**: `download_tiktok_photo_images()` — yt-dlp's TikTok extractor does not match `/photo/` URLs at all, so the bot resolves the URL (following `vt.`/`vm.` short links; retries transient timeouts — 3× HEAD with backoff, then a streaming GET — so a network hiccup can't misclassify a photo post as a video), rewrites `/photo/` → `/video/`, and runs `yt-dlp --write-pages` to capture the page's `__UNIVERSAL_DATA_FOR_REHYDRATION__` JSON, which contains the `imagePost` gallery URLs. The images are then downloaded directly (with cookies).
+   - Non-photo URLs return `[]` immediately — the regular flow continues
+   - Known photo post where extraction fails → gallery-dl safety net → if that also fails, raises `DownloadError(MSG_IMAGE_POST_FETCH_FAILED)` ("Could not fetch this image post")
+3. For non-photo URLs: fetch metadata via `get_metadata()` with `--referer` (WAF bypass) and `--cookies` (auth) to check file extension
+4. If metadata indicates photo post (ext in jpg/jpeg/png/webp): try gallery-dl images first (with cookies)
+5. If not a photo post (or gallery-dl fails): try yt-dlp video download via `_run_ytdlp()` (with cookies)
+6. If video download fails: fallback to gallery-dl images (with cookies)
+7. Send to user
 
 The referer header (`https://www.tiktok.com/`) is defined in `src/platform_args.py` as `TIKTOK_REFERER` and applied to all TikTok yt-dlp calls. This bypasses TikTok's Akamai WAF challenge.
+
+### Why the photo-post extractor exists
+
+gallery-dl's TikTok extractor has been blocked by TikTok's anti-bot (403 on the rehydration request after its JS challenge) since ~September 2026, and yt-dlp has never supported `/photo/` URLs or `imagePost` galleries. yt-dlp's own challenge-cookie page fetch still works, so the bot uses `--write-pages` to capture that page and parses the gallery URLs out of it. gallery-dl is kept only as a safety net.
 
 ## TikTok Cookies
 
@@ -42,15 +49,23 @@ TikTok requires authentication for age-restricted and login-gated content. The b
 
 Cookies expire after ~30 days. When expired, TikTok downloads will fail with auth errors. Refresh by re-exporting from browser.
 
-## Three-Stage Process
+## Four-Stage Process
 
 ```python
 # src/platforms/tiktok.py
 async def handle_tiktok(update, context, url: str) -> bool:
-    """Handle TikTok URL: check metadata for photo posts, fallback to gallery-dl."""
+    """Handle TikTok URL: photo-post extractor first, then video, then gallery-dl."""
     reply_params = {"message_id": update.message.message_id, "allow_sending_without_reply": True}
 
-    # Stage 1: Check metadata for photo posts (with cookies)
+    # Stage 1: Photo-post extractor (yt-dlp --write-pages rehydration dump)
+    # Non-photo URLs return [] and fall through; known photo posts that
+    # cannot be extracted raise DownloadError(MSG_IMAGE_POST_FETCH_FAILED).
+    images = download_tiktok_photo_images(url, out_dir, TIKTOK_COOKIES_PATH)
+    if images:
+        await send_images(update.message, images, reply_params)
+        return True
+
+    # Stage 2: Check metadata for photo posts (with cookies)
     metadata = get_metadata(url, referer=TIKTOK_REFERER, cookies=TIKTOK_COOKIES_PATH)
     if metadata:
         ext = (metadata.get("ext") or "").lower()
@@ -60,14 +75,14 @@ async def handle_tiktok(update, context, url: str) -> bool:
                 await send_images(update.message, images, reply_params)
                 return True
 
-    # Stage 2: Try video download via yt-dlp (with cookies)
+    # Stage 3: Try video download via yt-dlp (with cookies)
     success = download_video(url, output_path, MAX_FILE_SIZE, platform="tiktok")
     if success:
         # Find downloaded file and send as video
         # ...
         return True
 
-    # Stage 3: Fallback to gallery-dl for images (with cookies)
+    # Stage 4: Fallback to gallery-dl for images (with cookies)
     images = download_gallery_dl_images(url, out_dir, TIKTOK_COOKIES_PATH)
     if images:
         await send_images(update.message, images, reply_params)
@@ -130,6 +145,9 @@ Some TikTok videos are gated behind "This post may not be comfortable for some a
 - **Guest mode**: message shown via `answer_guest_query()`
 
 With TikTok cookies configured, age-restricted content can be downloaded directly.
+
+### Image Post Extraction Failed
+When the URL is a known photo post (`/photo/` in the URL, or a short link resolving to one) and both the page-dump extraction and the gallery-dl safety net fail, `download_tiktok_photo_images()` raises `DownloadError(MSG_IMAGE_POST_FETCH_FAILED)`. Both P2P/groups (`_download_and_send`) and guest mode (`handle_guest`) reply with its text: **"Could not fetch this image post"** (the technical yt-dlp stderr goes to `request-details.jsonl` via `raw_error`). This also fails fast (~10s) instead of attempting the yt-dlp video path, which can never work on `/photo/` URLs.
 
 ### Download Failed
 - Try gallery-dl fallback
