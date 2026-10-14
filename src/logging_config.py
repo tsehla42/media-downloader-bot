@@ -339,6 +339,7 @@ def log_guest_request_completed(
     chat_owner_name: str | None = None,
     chat_owner_username: str | None = None,
     forwarded: dict | None = None,
+    skip_reason: str | None = None,
 ) -> None:
     """Log when a guest request completes."""
     log_data = {
@@ -356,6 +357,8 @@ def log_guest_request_completed(
     }
     if error:
         log_data["error"] = error
+    if skip_reason:
+        log_data["skip_reason"] = skip_reason
     if caller:
         log_data["user"] = {
             "id": caller.id,
@@ -595,6 +598,17 @@ def log_user_unblocked_bot(chat, user) -> None:
     service_logger.info("user_unblocked_bot", extra={"extra_data": log_data})
 
 
+def is_deleted_reply_error(error: object) -> bool:
+    """True when a send failed because the reply target message was deleted.
+
+    Telegram rejects replies with `allow_sending_without_reply=False` and a
+    missing source message ("message to be replied not found"). In groups this
+    is an expected outcome: the user deleted their message, cancelling the
+    request. String-based on purpose — logging_config stays stdlib-only.
+    """
+    return "to be replied" in str(error).lower() and "not found" in str(error).lower()
+
+
 def with_request_logging(handler):
     """Decorator that adds request_received/completed/failed logging to handlers."""
     @functools.wraps(handler)
@@ -660,6 +674,21 @@ def with_request_logging(handler):
             duration_ms = int((time.time() - start_time) * 1000)
             # Read platform stored by handler if available
             platform = context.user_data.get("_platform", platform)
+            if is_deleted_reply_error(e):
+                # Source message was deleted before the bot replied — the
+                # user cancelled the request. Expected: completed + skip.
+                log_request_completed(
+                    request_id=request_id,
+                    url=url,
+                    platform=platform,
+                    duration_ms=duration_ms,
+                    success=False,
+                    user=user,
+                    chat=chat,
+                    forwarded=forwarded,
+                    skip_reason="message_deleted",
+                )
+                return None
             log_request_failed(
                 request_id=request_id,
                 url=url,

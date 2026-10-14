@@ -7,6 +7,23 @@ from contextlib import asynccontextmanager
 from telegram import InputMediaPhoto
 from telegram.constants import ChatAction
 
+from auth import is_group_chat
+
+
+def source_reply_parameters(message_id: int, update) -> dict:
+    """Reply parameters for responding to a user's message.
+
+    In groups the reply requires the source message to still exist: if the
+    user deleted it (e.g. a pasted URL they changed their mind about),
+    Telegram rejects the reply and the bot stays silent — deleting the
+    message cancels the request. In private chats the reply is allowed
+    standalone (existing behavior).
+    """
+    return {
+        "message_id": message_id,
+        "allow_sending_without_reply": not is_group_chat(update),
+    }
+
 
 @asynccontextmanager
 async def typing_indicator(chat_id: int, bot):

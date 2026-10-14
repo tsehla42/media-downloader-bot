@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from messages import (
-    MSG_COOKIE_CAPTION_EMPTY,
     MSG_COOKIE_INVALID_CAPTION,
     MSG_COOKIE_INVALID_FILE,
+    MSG_COOKIE_NO_CAPTION_HINT,
     MSG_COOKIE_UPDATED,
 )
 
@@ -105,21 +105,24 @@ class TestAccessControl:
 
 class TestCaptionValidation:
     @pytest.mark.asyncio
-    async def test_missing_caption_rejected(self, cookie_env):
+    async def test_missing_caption_prompts_reply_with_phrase(self, cookie_env):
         from cookie_upload import handle_cookie_document
 
         update, context = _make_update(caption=None)
         await handle_cookie_document(update, context)
         update.message.reply_text.assert_called_once()
-        assert update.message.reply_text.call_args[0][0] == MSG_COOKIE_CAPTION_EMPTY
+        assert update.message.reply_text.call_args[0][0] == MSG_COOKIE_NO_CAPTION_HINT
+        # file is accepted but NOT saved until the reply activates it
+        assert not Path(cookie_env["ig"]).exists()
+        assert not Path(cookie_env["tt"]).exists()
 
     @pytest.mark.asyncio
-    async def test_whitespace_caption_rejected_as_empty(self, cookie_env):
+    async def test_whitespace_caption_treated_as_missing(self, cookie_env):
         from cookie_upload import handle_cookie_document
 
         update, context = _make_update(caption="   ")
         await handle_cookie_document(update, context)
-        assert update.message.reply_text.call_args[0][0] == MSG_COOKIE_CAPTION_EMPTY
+        assert update.message.reply_text.call_args[0][0] == MSG_COOKIE_NO_CAPTION_HINT
 
     @pytest.mark.asyncio
     async def test_wrong_keyword_rejected(self, cookie_env):
@@ -161,9 +164,8 @@ class TestCaptionValidation:
         with patch("cookie_upload.log_cookie_updated"):
             await handle_cookie_document(update, context)
         update.message.reply_text.assert_called_once()
-        assert (
-            update.message.reply_text.call_args[0][0]
-            == MSG_COOKIE_UPDATED.format(platform="tt")
+        assert update.message.reply_text.call_args[0][0].startswith(
+            MSG_COOKIE_UPDATED.format(platform="tt")
         )
 
 
@@ -214,9 +216,8 @@ class TestSuccessfulUpload:
         assert Path(cookie_env["ig"]).read_text() == NETSCAPE_CONTENT
 
         update.message.reply_text.assert_called_once()
-        assert (
-            update.message.reply_text.call_args[0][0]
-            == MSG_COOKIE_UPDATED.format(platform="ig")
+        assert update.message.reply_text.call_args[0][0].startswith(
+            MSG_COOKIE_UPDATED.format(platform="ig")
         )
         mock_log.assert_called_once()
 
@@ -275,6 +276,178 @@ class TestSuccessfulUpload:
         today = datetime.date.today().isoformat()
         dated = Path(cookie_env["dir"]) / f"tt-cookie-{today}.txt"
         assert "zzz" in dated.read_text()
+
+
+class TestExpiryNote:
+    @pytest.mark.asyncio
+    async def test_reply_includes_expiry_note(self, cookie_env):
+        from cookie_upload import handle_cookie_document
+        from messages import MSG_COOKIE_UPDATED
+
+        expiry_day = datetime.date.today() + datetime.timedelta(days=120)
+        exp_ts = int(datetime.datetime.combine(expiry_day, datetime.time(12, 0)).timestamp())
+        content = (
+            "# Netscape HTTP Cookie File\n"
+            f".instagram.com\tTRUE\t/\tTRUE\t{exp_ts}\tsessionid\tvalue\n"
+        )
+        update, context = _make_update(caption="cookie update ig", content=content.encode())
+        with patch("cookie_upload.log_cookie_updated"):
+            await handle_cookie_document(update, context)
+
+        text = update.message.reply_text.call_args[0][0]
+        assert text.startswith(MSG_COOKIE_UPDATED.format(platform="ig"))
+        assert "sessionid expires" in text
+        assert expiry_day.isoformat() in text
+        assert "120 days left" in text
+
+    @pytest.mark.asyncio
+    async def test_reply_warns_when_no_auth_cookie(self, cookie_env):
+        from cookie_upload import handle_cookie_document
+        from messages import MSG_COOKIE_NO_AUTH, MSG_COOKIE_UPDATED
+
+        # SID is a YouTube cookie; on a `tt` upload there is no TT auth cookie
+        update, context = _make_update(caption="cookie update tt")
+        with patch("cookie_upload.log_cookie_updated"):
+            await handle_cookie_document(update, context)
+
+        text = update.message.reply_text.call_args[0][0]
+        assert text.startswith(MSG_COOKIE_UPDATED.format(platform="tt"))
+        assert MSG_COOKIE_NO_AUTH in text
+
+
+def _make_reply_update(
+    *,
+    text="cookie update ig",
+    filename="cookies.txt",
+    content=NETSCAPE_CONTENT.encode(),
+    chat_type="private",
+    user_id=ADMIN_ID,
+    has_document=True,
+):
+    """Build (update, context) mocks for a text reply to an uploaded file."""
+    update = MagicMock()
+    update.effective_chat.type = chat_type
+    update.message.chat.type = chat_type
+    update.message.from_user.id = user_id
+    update.message.from_user.first_name = "Admin"
+    update.message.message_id = 55
+    update.message.text = text
+    update.message.caption = None
+    update.message.reply_text = AsyncMock()
+
+    replied = MagicMock()
+    if has_document:
+        replied.document = MagicMock()
+        replied.document.file_name = filename
+        replied.document.file_id = "file456"
+    else:
+        replied.document = None
+    update.message.reply_to_message = replied
+
+    context = MagicMock()
+    tg_file = MagicMock()
+    tg_file.download_as_bytearray = AsyncMock(return_value=bytearray(content))
+    context.bot.get_file = AsyncMock(return_value=tg_file)
+    return update, context
+
+
+class TestReplyActivation:
+    """A caption-less file is activated by replying `cookie update <platform>`."""
+
+    def test_filter_matches_phrase_reply_to_document(self):
+        from cookie_upload import cookie_reply_filter
+
+        update, _ = _make_reply_update(text="cookie update ig")
+        assert cookie_reply_filter.check_update(update) is True
+
+    def test_filter_matches_capitalized_phrase(self):
+        from cookie_upload import cookie_reply_filter
+
+        update, _ = _make_reply_update(text="Cookie update ig")
+        assert cookie_reply_filter.check_update(update) is True
+
+    def test_filter_rejects_wrong_phrase(self):
+        from cookie_upload import cookie_reply_filter
+
+        update, _ = _make_reply_update(text="update cookies ig")
+        assert cookie_reply_filter.check_update(update) is False
+
+    def test_filter_rejects_phrase_without_document_reply(self):
+        from cookie_upload import cookie_reply_filter
+
+        update, _ = _make_reply_update(text="cookie update ig", has_document=False)
+        assert cookie_reply_filter.check_update(update) is False
+
+    def test_filter_rejects_phrase_without_reply_target(self):
+        from cookie_upload import cookie_reply_filter
+
+        update, _ = _make_reply_update(text="cookie update ig")
+        update.message.reply_to_message = None
+        assert cookie_reply_filter.check_update(update) is False
+
+    @pytest.mark.asyncio
+    async def test_reply_updates_cookies(self, cookie_env):
+        from cookie_upload import handle_cookie_reply
+
+        update, context = _make_reply_update(
+            text="cookie update ig",
+            content=(
+                "# Netscape HTTP Cookie File\n"
+                ".instagram.com\tTRUE\t/\tTRUE\t0\tsessionid\tabc\n"
+            ).encode(),
+        )
+        with patch("cookie_upload.log_cookie_updated") as mock_log:
+            await handle_cookie_reply(update, context)
+
+        assert Path(cookie_env["ig"]).exists()
+        update.message.reply_text.assert_called_once()
+        assert update.message.reply_text.call_args[0][0].startswith(
+            MSG_COOKIE_UPDATED.format(platform="ig")
+        )
+        mock_log.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reply_with_capitalized_phrase_updates_cookies(self, cookie_env):
+        from cookie_upload import handle_cookie_reply
+
+        update, context = _make_reply_update(text="Cookie update ig")
+        with patch("cookie_upload.log_cookie_updated"):
+            await handle_cookie_reply(update, context)
+        assert Path(cookie_env["ig"]).exists()
+
+    @pytest.mark.asyncio
+    async def test_reply_to_non_txt_file_rejected(self, cookie_env):
+        from cookie_upload import handle_cookie_reply
+
+        update, context = _make_reply_update(filename="cookies.pdf")
+        await handle_cookie_reply(update, context)
+        update.message.reply_text.assert_called_once()
+        assert update.message.reply_text.call_args[0][0] == MSG_COOKIE_INVALID_FILE
+        assert not Path(cookie_env["ig"]).exists()
+
+    @pytest.mark.asyncio
+    async def test_reply_non_admin_silent(self, cookie_env):
+        from cookie_upload import handle_cookie_reply
+
+        update, context = _make_reply_update(user_id=OTHER_ID)
+        await handle_cookie_reply(update, context)
+        _assert_no_side_effects(update, context)
+
+    @pytest.mark.asyncio
+    async def test_reply_in_group_silent(self, cookie_env):
+        from cookie_upload import handle_cookie_reply
+
+        update, context = _make_reply_update(chat_type="supergroup")
+        await handle_cookie_reply(update, context)
+        _assert_no_side_effects(update, context)
+
+    @pytest.mark.asyncio
+    async def test_reply_to_message_without_document_silent(self, cookie_env):
+        from cookie_upload import handle_cookie_reply
+
+        update, context = _make_reply_update(has_document=False)
+        await handle_cookie_reply(update, context)
+        _assert_no_side_effects(update, context)
 
 
 class TestServiceLog:

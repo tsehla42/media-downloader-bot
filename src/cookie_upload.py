@@ -1,9 +1,11 @@
 """Admin-only cookie file upload via document messages in P2P chats.
 
-A bot admin sends a .txt document with the caption "cookie update <platform>"
-(platform: tt, ig, yt — lowercase only; keyword case-insensitive). The file
-is saved as cookies/<platform>-cookie-<date>.txt and copied over the active
-cookie path the downloader reads.
+A bot admin sends a .txt document either with the caption "cookie update
+<platform>" (platform: tt, ig, yt — lowercase only; keyword case-insensitive)
+or without a caption and then replies to that file with the same phrase
+(`cookie_reply_filter` + `handle_cookie_reply`). The file is saved as
+cookies/<platform>-cookie-<date>.txt and copied over the active cookie path
+the downloader reads.
 """
 
 import datetime
@@ -13,14 +15,18 @@ import re
 
 from telegram import Update
 from telegram.ext import ContextTypes
+from telegram.ext import filters as ptb_filters
 
 from auth import is_bot_admin, is_private_chat
 from config import COOKIES_DIR, IG_COOKIES_PATH, TIKTOK_COOKIES_PATH, YT_COOKIES_PATH
+from cookie_expiry import parse_cookie_expiry
 from logging_config import log_cookie_updated
 from messages import (
-    MSG_COOKIE_CAPTION_EMPTY,
+    MSG_COOKIE_EXPIRY_NOTE,
     MSG_COOKIE_INVALID_CAPTION,
     MSG_COOKIE_INVALID_FILE,
+    MSG_COOKIE_NO_AUTH,
+    MSG_COOKIE_NO_CAPTION_HINT,
     MSG_COOKIE_UPDATED,
 )
 
@@ -28,6 +34,21 @@ _log = logging.getLogger("cookie_upload")
 
 # "cookie update" is case-insensitive; platform must be lowercase tt/ig/yt
 _CAPTION_RE = re.compile(r"(?i:cookie update) (tt|ig|yt)")
+
+
+class _CookieReplyFilter(ptb_filters.BaseFilter):
+    """Match a `cookie update <platform>` text reply to an uploaded document."""
+
+    def check_update(self, update: Update) -> bool:
+        msg = update.message
+        if msg is None or not msg.text or not msg.reply_to_message:
+            return False
+        if msg.reply_to_message.document is None:
+            return False
+        return _CAPTION_RE.fullmatch(msg.text.strip()) is not None
+
+
+cookie_reply_filter = _CookieReplyFilter()
 
 
 def _active_path(platform: str) -> str:
@@ -57,10 +78,67 @@ def _looks_like_netscape(text: str) -> bool:
     return False
 
 
+async def _save_and_confirm(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    document,
+    platform: str,
+    reply_params: dict,
+    sender,
+) -> bool:
+    """Validate, save, confirm, and log an uploaded cookie file.
+
+    Returns True when the file was saved.
+    """
+    filename = getattr(document, "file_name", "") or ""
+    if not filename.lower().endswith(".txt"):
+        await update.message.reply_text(MSG_COOKIE_INVALID_FILE, reply_parameters=reply_params)
+        return False
+
+    tg_file = await context.bot.get_file(document.file_id)
+    data = await tg_file.download_as_bytearray()
+    try:
+        text = bytes(data).decode("utf-8")
+    except UnicodeDecodeError:
+        text = ""
+    if not _looks_like_netscape(text):
+        await update.message.reply_text(MSG_COOKIE_INVALID_FILE, reply_parameters=reply_params)
+        return False
+
+    os.makedirs(COOKIES_DIR, exist_ok=True)
+    date = datetime.date.today().isoformat()
+    dated_path = os.path.join(COOKIES_DIR, f"{platform}-cookie-{date}.txt")
+    for path in (dated_path, _active_path(platform)):
+        with open(path, "wb") as f:
+            f.write(data)
+
+    reply_lines = [MSG_COOKIE_UPDATED.format(platform=platform)]
+    expiry = parse_cookie_expiry(text, platform)
+    if expiry.expiry:
+        days_left = (expiry.expiry - datetime.date.today()).days
+        reply_lines.append(
+            MSG_COOKIE_EXPIRY_NOTE.format(
+                cookie=expiry.cookie,
+                date=expiry.expiry.isoformat(),
+                days=f"{days_left} day{'s' if days_left != 1 else ''}",
+            )
+        )
+    elif not expiry.has_auth:
+        reply_lines.append(MSG_COOKIE_NO_AUTH)
+
+    await update.message.reply_text("\n".join(reply_lines), reply_parameters=reply_params)
+    log_cookie_updated(platform, sender, os.path.basename(dated_path))
+    return True
+
+
 async def handle_cookie_document(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handle an uploaded cookie file. Silently ignores non-P2P and non-admin."""
+    """Handle an uploaded cookie file. Silently ignores non-P2P and non-admin.
+
+    A caption-less file is accepted with a hint: reply to it with
+    `cookie update <platform>` to activate.
+    """
     if not is_private_chat(update.effective_chat):
         return
 
@@ -76,39 +154,44 @@ async def handle_cookie_document(
 
     caption = (message.caption or "").strip()
     if not caption:
-        await message.reply_text(MSG_COOKIE_CAPTION_EMPTY, reply_parameters=reply_params)
+        await message.reply_text(MSG_COOKIE_NO_CAPTION_HINT, reply_parameters=reply_params)
         return
 
     match = _CAPTION_RE.fullmatch(caption)
     if not match:
         await message.reply_text(MSG_COOKIE_INVALID_CAPTION, reply_parameters=reply_params)
         return
-    platform = match.group(1)
 
-    document = message.document
-    filename = getattr(document, "file_name", "") or ""
-    if not filename.lower().endswith(".txt"):
-        await message.reply_text(MSG_COOKIE_INVALID_FILE, reply_parameters=reply_params)
-        return
-
-    tg_file = await context.bot.get_file(document.file_id)
-    data = await tg_file.download_as_bytearray()
-    try:
-        text = bytes(data).decode("utf-8")
-    except UnicodeDecodeError:
-        text = ""
-    if not _looks_like_netscape(text):
-        await message.reply_text(MSG_COOKIE_INVALID_FILE, reply_parameters=reply_params)
-        return
-
-    os.makedirs(COOKIES_DIR, exist_ok=True)
-    date = datetime.date.today().isoformat()
-    dated_path = os.path.join(COOKIES_DIR, f"{platform}-cookie-{date}.txt")
-    for path in (dated_path, _active_path(platform)):
-        with open(path, "wb") as f:
-            f.write(data)
-
-    await message.reply_text(
-        MSG_COOKIE_UPDATED.format(platform=platform), reply_parameters=reply_params
+    await _save_and_confirm(
+        update, context, message.document, match.group(1), reply_params, sender
     )
-    log_cookie_updated(platform, sender, os.path.basename(dated_path))
+
+
+async def handle_cookie_reply(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Activate a previously uploaded cookie file via `cookie update <platform>`.
+
+    The platform phrase arrives as a text reply to the .txt document message.
+    Silently ignores non-P2P, non-admin, and replies without a document.
+    """
+    if not is_private_chat(update.effective_chat):
+        return
+
+    message = update.message
+    sender = message.from_user
+    if sender is None or not is_bot_admin(sender.id):
+        return
+
+    match = _CAPTION_RE.fullmatch((message.text or "").strip())
+    replied = message.reply_to_message
+    if match is None or replied is None or replied.document is None:
+        return
+
+    reply_params = {
+        "message_id": message.message_id,
+        "allow_sending_without_reply": True,
+    }
+    await _save_and_confirm(
+        update, context, replied.document, match.group(1), reply_params, sender
+    )

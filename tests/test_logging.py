@@ -1450,3 +1450,52 @@ def test_log_unauthorized_access_enriches_chat_with_user():
         extra_data = call_args[1]["extra"]["extra_data"]
         assert extra_data["chat"]["name"] == "TestCaller"  # caller shown in private chat
         assert extra_data["chat"]["username"] == "chatowner"  # chat username preserved
+
+
+def test_decorator_deleted_source_logs_skip_not_failed():
+    """A send rejected because the source message was deleted is an expected
+    skip: logged as completed with skip_reason=message_deleted, not failed,
+    and the exception does not propagate."""
+    from telegram.error import BadRequest
+    from logging_config import with_request_logging
+
+    mock_context = MagicMock()
+    mock_context.user_data = {}
+    mock_update = _make_update_with_url()
+
+    @with_request_logging
+    async def dummy_handler(update, context):
+        raise BadRequest("Bad Request: message to be replied not found")
+
+    with patch("logging_config.log_request_completed") as mock_completed, \
+         patch("logging_config.log_request_failed") as mock_failed:
+        import asyncio
+        result = asyncio.run(dummy_handler(mock_update, mock_context))
+
+    assert result is None
+    mock_failed.assert_not_called()
+    mock_completed.assert_called_once()
+    kwargs = mock_completed.call_args[1]
+    assert kwargs["success"] is False
+    assert kwargs["skip_reason"] == "message_deleted"
+
+
+def test_decorator_still_raises_other_exceptions():
+    """Unrelated BadRequest errors keep the old failed-and-re-raise path."""
+    from telegram.error import BadRequest
+    from logging_config import with_request_logging
+
+    mock_context = MagicMock()
+    mock_context.user_data = {}
+    mock_update = _make_update_with_url()
+
+    @with_request_logging
+    async def dummy_handler(update, context):
+        raise BadRequest("Bad Request: PEER_ID_INVALID")
+
+    with patch("logging_config.log_request_failed") as mock_failed:
+        import asyncio
+        with pytest.raises(BadRequest):
+            asyncio.run(dummy_handler(mock_update, mock_context))
+
+    mock_failed.assert_called_once()

@@ -1271,3 +1271,50 @@ class TestGuestSpecificErrors:
         assert result["photo_file_id"] == "fid_1"
         assert result["caption"] == MSG_GUEST_MEDIA_GROUP_CAPTION.format(count=2)
         assert content_type == "image"
+
+
+class TestDeletedGuestMessage:
+    @pytest.mark.asyncio
+    async def test_deleted_guest_message_logged_as_skip(self):
+        """When the guest message was deleted before answering, completion is
+        logged with success=False and skip_reason=message_deleted."""
+        from guest import handle_guest
+        msg = _make_guest_message(text="https://youtube.com/watch?v=abc")
+        update = _make_update(msg)
+        context = _make_context()
+
+        fake_result = {"type": "video", "id": "abc", "video_file_id": "fid"}
+        with patch("guest.is_user_allowed", return_value=True), \
+             patch("guest.detect_platform", return_value="youtube"), \
+             patch("guest._download_and_build_result", new_callable=AsyncMock,
+                   return_value=(fake_result, "video", 2.5, False)), \
+             patch("guest._safe_answer_guest_query", new_callable=AsyncMock,
+                   return_value=False), \
+             patch("guest.log_guest_request_completed") as mock_completed:
+            await handle_guest(update, context)
+
+        mock_completed.assert_called_once()
+        kwargs = mock_completed.call_args[1]
+        assert kwargs["success"] is False
+        assert kwargs["skip_reason"] == "message_deleted"
+
+    @pytest.mark.asyncio
+    async def test_answered_guest_message_logged_as_success(self):
+        from guest import handle_guest
+        msg = _make_guest_message(text="https://youtube.com/watch?v=abc")
+        update = _make_update(msg)
+        context = _make_context()
+
+        fake_result = {"type": "video", "id": "abc", "video_file_id": "fid"}
+        with patch("guest.is_user_allowed", return_value=True), \
+             patch("guest.detect_platform", return_value="youtube"), \
+             patch("guest._download_and_build_result", new_callable=AsyncMock,
+                   return_value=(fake_result, "video", 2.5, False)), \
+             patch("guest._safe_answer_guest_query", new_callable=AsyncMock,
+                   return_value=True), \
+             patch("guest.log_guest_request_completed") as mock_completed:
+            await handle_guest(update, context)
+
+        kwargs = mock_completed.call_args[1]
+        assert kwargs["success"] is True
+        assert kwargs.get("skip_reason") is None

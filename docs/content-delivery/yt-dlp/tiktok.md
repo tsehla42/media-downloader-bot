@@ -47,7 +47,7 @@ TikTok requires authentication for age-restricted and login-gated content. The b
 
 ### Cookie Expiration
 
-Cookies expire after ~30 days. When expired, TikTok downloads will fail with auth errors. Refresh by re-exporting from browser.
+Cookies expire after ~30 days. When expired, TikTok downloads will fail with auth errors. Refresh by re-exporting from browser. The bot parses expiry timestamps from the cookie file and DMs admins the day before the auth cookie expires (see [cookies.md](../../cookies.md#expiry-notices)).
 
 ## Four-Stage Process
 
@@ -55,7 +55,9 @@ Cookies expire after ~30 days. When expired, TikTok downloads will fail with aut
 # src/platforms/tiktok.py
 async def handle_tiktok(update, context, url: str) -> bool:
     """Handle TikTok URL: photo-post extractor first, then video, then gallery-dl."""
-    reply_params = {"message_id": update.message.message_id, "allow_sending_without_reply": True}
+    # In groups: allow_sending_without_reply=False — a deleted source message
+    # cancels the reply (bot stays silent). P2P: standalone reply allowed.
+    reply_params = source_reply_parameters(update.message.message_id, update)
 
     # Stage 1: Photo-post extractor (yt-dlp --write-pages rehydration dump)
     # Non-photo URLs return [] and fall through; known photo posts that

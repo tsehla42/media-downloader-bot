@@ -278,3 +278,32 @@ async def test_send_images_total_size_accumulates_across_batches():
     assert total == 30720
     # 2 batches (10 + 5)
     assert message.reply_media_group.await_count == 2
+
+
+class TestSourceReplyParameters:
+    def test_group_chat_requires_source_message(self):
+        from telegram_utils import source_reply_parameters
+
+        update = MagicMock()
+        update.effective_chat.type = "supergroup"
+        assert source_reply_parameters(42, update) == {
+            "message_id": 42,
+            "allow_sending_without_reply": False,
+        }
+
+    def test_group_chat_type_also_gated(self):
+        from telegram_utils import source_reply_parameters
+
+        update = MagicMock()
+        update.effective_chat.type = "group"
+        assert source_reply_parameters(7, update)["allow_sending_without_reply"] is False
+
+    def test_private_chat_allows_standalone_reply(self):
+        from telegram_utils import source_reply_parameters
+
+        update = MagicMock()
+        update.effective_chat.type = "private"
+        assert source_reply_parameters(42, update) == {
+            "message_id": 42,
+            "allow_sending_without_reply": True,
+        }

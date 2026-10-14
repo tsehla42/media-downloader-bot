@@ -4,9 +4,75 @@ import os
 import re
 import shutil
 import uuid
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
 from config import DOWNLOAD_DIR
 
 URL_PATTERN = re.compile(r"https?://\S+")
+
+# Known tracking parameters stripped from non-platform URLs (gallery-dl
+# domains, generic sites). Load-bearing params are kept.
+_TRACKER_EXACT = frozenset({
+    "fbclid", "gclid", "dclid", "wbraid", "gbraid", "msclkid", "yclid",
+    "twclid", "igsh", "igshid", "mc_cid", "mc_eid", "vero_id", "vero_conv",
+    "ref", "ref_src", "spm", "_hsenc", "_hsmi", "mkt_tok", "s_kwcid",
+    "si", "feature", "ncid", "mbid", "cmpid",
+})
+_TRACKER_PREFIXES = (
+    "utm_", "pk_", "mtm_", "vero_", "piwik_", "matomo_", "oly_",
+)
+
+# Query params that must survive per platform. Everything else on these
+# hosts is share/tracker noise (IDs live in the URL path).
+_KEEP_QUERY_PARAMS: dict[str, frozenset[str]] = {
+    "youtube.com": frozenset({"v", "list"}),
+    "youtu.be": frozenset({"v", "list"}),
+    "youtube-nocookie.com": frozenset({"v", "list"}),
+    "tiktok.com": frozenset(),
+    "instagram.com": frozenset({"img_index"}),
+}
+
+
+def _matches_host(host: str, domain: str) -> bool:
+    return host == domain or host.endswith("." + domain)
+
+
+def _is_tracker(name: str) -> bool:
+    lowered = name.lower()
+    return lowered in _TRACKER_EXACT or lowered.startswith(_TRACKER_PREFIXES)
+
+
+def clean_url(url: str) -> str:
+    """Strip share/tracker query params from a URL, keeping it functional.
+
+    - YouTube: keep only `v` and `list` (the rest is share noise).
+    - TikTok: drop the whole query string (video ID is in the path).
+    - Instagram: drop everything except `img_index` (carousel position).
+    - Any other host: strip known trackers, keep everything else.
+    """
+    try:
+        parts = urlsplit(url)
+        if not parts.query or not parts.scheme.startswith("http"):
+            return url
+        host = parts.hostname or ""
+    except ValueError:
+        return url
+
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    allowed = next(
+        (keep for domain, keep in _KEEP_QUERY_PARAMS.items() if _matches_host(host, domain)),
+        None,
+    )
+    if allowed is not None:
+        kept = [kv for kv in pairs if kv[0] in allowed]
+    else:
+        kept = [kv for kv in pairs if not _is_tracker(kv[0])]
+
+    if len(kept) == len(pairs):
+        return url
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(kept), parts.fragment)
+    )
 
 
 def is_valid_url(text: str) -> bool:
@@ -15,8 +81,8 @@ def is_valid_url(text: str) -> bool:
 
 
 def extract_urls(text: str) -> list[str]:
-    """Extract all HTTP(S) URLs from text."""
-    return URL_PATTERN.findall(text)
+    """Extract all HTTP(S) URLs from text, cleaned of share/tracker params."""
+    return [clean_url(url) for url in URL_PATTERN.findall(text)]
 
 
 VIDEO_WORDS = frozenset({"video", "відео", "видео"})

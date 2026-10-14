@@ -232,3 +232,79 @@ def test_get_ytdlp_domains_import_error_returns_empty(monkeypatch):
     monkeypatch.setattr(subprocess, "run", mock_run)
     result = get_ytdlp_domains()
     assert result == frozenset()
+
+
+class TestCleanUrl:
+    def test_tiktok_share_url_drops_all_query_params(self):
+        from utils import clean_url
+
+        url = (
+            "https://www.tiktok.com/@zhaloba.nasta/video/7693159843586149653"
+            "?_r=1&u_code=dced299d27k730&preview_pb=0&sharer_language=en"
+            "&utm_source=telegram&utm_campaign=client_share&utm_medium=android"
+            "&share_item_id=7693159843586149653&source=h5_m&timestamp=1791209883"
+        )
+        assert (
+            clean_url(url)
+            == "https://www.tiktok.com/@zhaloba.nasta/video/7693159843586149653"
+        )
+
+    def test_youtube_watch_keeps_v_drops_share_params(self):
+        from utils import clean_url
+
+        url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&si=ShareURL&utm_source=share&feature=share"
+        assert clean_url(url) == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+    def test_youtube_playlist_keeps_list(self):
+        from utils import clean_url
+
+        url = "https://www.youtube.com/playlist?list=PLabc123&index=1&utm_source=share"
+        assert clean_url(url) == "https://www.youtube.com/playlist?list=PLabc123"
+
+    def test_music_youtube_keeps_v(self):
+        from utils import clean_url
+
+        url = "https://music.youtube.com/watch?v=abc&list=PLxyz&si=share"
+        assert clean_url(url) == "https://music.youtube.com/watch?v=abc&list=PLxyz"
+
+    def test_instagram_drops_share_params(self):
+        from utils import clean_url
+
+        url = "https://www.instagram.com/reel/Dd5A9JfMWg9/?obrf=NTc4MTIwNjQ2YQ%3D%3D&igsh=xyz"
+        assert clean_url(url) == "https://www.instagram.com/reel/Dd5A9JfMWg9/"
+
+    def test_instagram_keeps_img_index(self):
+        from utils import clean_url
+
+        url = "https://www.instagram.com/p/ABC/?img_index=2&igsh=xyz"
+        assert clean_url(url) == "https://www.instagram.com/p/ABC/?img_index=2"
+
+    def test_generic_site_strips_trackers_keeps_content_params(self):
+        from utils import clean_url
+
+        url = "https://example.com/view?id=42&utm_medium=app&fbclid=abc123&page=2"
+        assert clean_url(url) == "https://example.com/view?id=42&page=2"
+
+    def test_url_without_query_unchanged(self):
+        from utils import clean_url
+
+        url = "https://www.tiktok.com/@user/video/12345"
+        assert clean_url(url) == url
+
+    def test_invalid_url_returned_unchanged(self):
+        from utils import clean_url
+
+        url = "not a url"
+        assert clean_url(url) == url
+
+    def test_extract_urls_returns_cleaned_urls(self):
+        from utils import extract_urls
+
+        text = "see https://www.tiktok.com/@user/video/1?_r=1&utm_source=telegram and more"
+        assert extract_urls(text) == ["https://www.tiktok.com/@user/video/1"]
+
+    def test_extract_urls_keeps_youtube_v(self):
+        from utils import extract_urls
+
+        text = "https://www.youtube.com/watch?v=abc123&si=share"
+        assert extract_urls(text) == ["https://www.youtube.com/watch?v=abc123"]

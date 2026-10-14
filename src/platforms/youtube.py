@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 from config import MAX_FILE_SIZE
 from downloader import download_video, download_audio
 from commands import get_caption_for_user
-from telegram_utils import typing_indicator
+from telegram_utils import typing_indicator, source_reply_parameters
 from utils import cleanup_file, find_downloaded_file, cleanup_video_files, make_video_tmp_path, parse_format_choice
 from messages import MSG_DOWNLOAD_FAILED, MSG_YTMUSIC_AUDIO_FAILED, MSG_YTMUSIC_VIDEO_FAILED, MSG_YTMUSIC_UNKNOWN_CHOICE, MSG_YTMUSIC_REQUEST_EXPIRED
 
@@ -300,7 +300,7 @@ async def ytmusic_callback(update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         tmp_id, output_path, base = make_video_tmp_path()
 
-        reply_params = {"message_id": msg_id, "allow_sending_without_reply": True}
+        reply_params = source_reply_parameters(msg_id, update)
 
         try:
             await _send_format(

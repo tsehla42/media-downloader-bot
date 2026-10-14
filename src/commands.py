@@ -6,6 +6,7 @@ from telegram.ext import ContextTypes
 
 from config import MAX_FILE_SIZE
 from auth import reject_if_unauthorized
+from telegram_utils import source_reply_parameters
 from messages import (
     MSG_CAPTION_ENABLED, MSG_CAPTION_DISABLED,
     MSG_CAPTION_STATUS, MSG_START, MSG_HELP,
@@ -47,7 +48,7 @@ async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Handle /caption command to toggle caption preferences."""
     if await reject_if_unauthorized(
         update, "/caption",
-        reply_parameters={"message_id": update.message.message_id, "allow_sending_without_reply": True},
+        reply_parameters=source_reply_parameters(update.message.message_id, update),
     ):
         return
 
@@ -58,18 +59,18 @@ async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         _user_caption_prefs[user_id] = False
         await update.message.reply_text(
             MSG_CAPTION_ENABLED,
-            reply_parameters={"message_id": update.message.message_id, "allow_sending_without_reply": True},
+            reply_parameters=source_reply_parameters(update.message.message_id, update),
         )
     elif text in ("off", "0", "false", "no"):
         _user_caption_prefs[user_id] = True
         await update.message.reply_text(
             MSG_CAPTION_DISABLED,
-            reply_parameters={"message_id": update.message.message_id, "allow_sending_without_reply": True},
+            reply_parameters=source_reply_parameters(update.message.message_id, update),
         )
     else:
         current = _user_caption_prefs.get(user_id, True)
         state = "OFF (no captions)" if current else "ON (captions shown)"
         await update.message.reply_text(
             MSG_CAPTION_STATUS.format(state=state),
-            reply_parameters={"message_id": update.message.message_id, "allow_sending_without_reply": True},
+            reply_parameters=source_reply_parameters(update.message.message_id, update),
         )

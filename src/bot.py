@@ -16,11 +16,21 @@ from config import BOT_TOKEN, GUEST_MODE_ENABLED
 from handlers import handle_url, audio_command, my_chat_member_handler
 from platforms.youtube import ytmusic_callback
 from commands import start_command, help_command, caption_command
-from cookie_upload import handle_cookie_document
+from cookie_upload import handle_cookie_document, handle_cookie_reply, cookie_reply_filter
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log the error and send a telegram message to inform the user."""
+    from logging_config import is_deleted_reply_error
+
+    if is_deleted_reply_error(context.error):
+        # Source message was deleted before the bot replied — user cancelled
+        # the request. Silent on purpose (groups + commands not URL-logged).
+        details_logger.info(
+            "reply target deleted before send — request cancelled: %s", context.error
+        )
+        return
+
     log_error(context.error, update)
 
     if isinstance(update, Update) and update.effective_chat:
@@ -41,11 +51,14 @@ COMMANDS = [
 
 
 async def post_init(application: Application) -> None:
-    """Set bot commands and fetch username after initialization."""
+    """Set bot commands, fetch username, start daily cookie expiry check."""
     me = await application.bot.get_me()
     application.bot_data["bot_username"] = me.username
     await application.bot.set_my_commands(COMMANDS)
     service_logger.info("Bot username: @%s", me.username)
+
+    from cookie_expiry import expiry_check_loop
+    application.create_task(expiry_check_loop(application.bot))
 
 
 async def post_shutdown(application: Application) -> None:
@@ -85,6 +98,9 @@ def main() -> None:
     app.add_handler(CommandHandler("caption", caption_command))
     app.add_handler(CommandHandler("audio", audio_command))
     app.add_handler(CallbackQueryHandler(ytmusic_callback, pattern="^ytm\\|"))
+    # Cookie activation reply (`cookie update <platform>` replying to a file)
+    # must precede the generic text handler
+    app.add_handler(MessageHandler(cookie_reply_filter, handle_cookie_reply))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_cookie_document))
     app.add_handler(ChatMemberHandler(my_chat_member_handler, ChatMemberHandler.MY_CHAT_MEMBER))

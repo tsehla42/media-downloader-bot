@@ -632,6 +632,33 @@ class TestYouTubeCookies:
             assert "--cookies" not in call_args
 
 
+class TestInstagramCookies:
+    """IG_COOKIES_PATH is passed to yt-dlp for Instagram videos when the file exists."""
+
+    @pytest.fixture
+    def ig_cookies(self, tmp_path):
+        cookie_file = tmp_path / "ig-cookies.txt"
+        cookie_file.write_text("# Netscape HTTP Cookie File\n")
+        return str(cookie_file)
+
+    def test_download_video_passes_cookies_for_instagram(self, ig_cookies):
+        with patch("downloader.subprocess.run") as mock_run, \
+             patch("config.IG_COOKIES_PATH", ig_cookies):
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            download_video("https://www.instagram.com/reel/ABC123/", "/tmp/test.mp4", platform="instagram")
+            call_args = mock_run.call_args[0][0]
+            assert "--cookies" in call_args
+            assert ig_cookies in call_args
+
+    def test_download_video_no_instagram_cookies_when_file_missing(self):
+        with patch("downloader.subprocess.run") as mock_run, \
+             patch("config.IG_COOKIES_PATH", "/nonexistent/ig-cookies.txt"):
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            download_video("https://www.instagram.com/reel/ABC123/", "/tmp/test.mp4", platform="instagram")
+            call_args = mock_run.call_args[0][0]
+            assert "--cookies" not in call_args
+
+
 # ---------------------------------------------------------------------------
 # download_tiktok_photo_images — TikTok photo posts via yt-dlp --write-pages
 # ---------------------------------------------------------------------------

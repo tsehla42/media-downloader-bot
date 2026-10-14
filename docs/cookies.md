@@ -14,17 +14,32 @@ bot in a **private chat** (P2P). Group chats, guest mode, and inline queries are
 ignored.
 
 1. Export cookies from a browser as Netscape format (`cookies.txt`-style export)
-2. Send the file to the bot with the caption:
+2. Send the file to the bot either:
+   - with the caption:
+
+     ```
+     cookie update <platform>
+     ```
+
+     - `cookie update` is case-insensitive (`Cookie Update` works)
+     - `<platform>` must be lowercase: `tt`, `ig`, or `yt`
+     - Anything else → `Invalid caption`
+
+   - or **without a caption** — the file is accepted and the bot replies
+     "Cookie file received. Reply to it with `cookie update tt`…". Reply to
+     that file with `cookie update <platform>` to activate it (the file is
+     only saved once activated).
+
+3. On success the bot replies `Cookies updated for <platform>` plus an expiry
+   note parsed from the file, e.g.:
 
    ```
-   cookie update <platform>
+   Cookies updated for ig
+   sessionid expires 2027-10-14 — 364 days left
    ```
 
-   - `cookie update` is case-insensitive (`Cookie Update` works)
-   - `<platform>` must be lowercase: `tt`, `ig`, or `yt`
-   - Anything else → `Invalid caption`; no caption → `Caption cannot be empty`
-
-3. On success the bot replies `Cookies updated for <platform>` and the file is saved as:
+   If the file contains no auth cookie for that platform, the bot warns
+   `No auth cookie found — downloads may stay restricted`. The file is saved as:
    - Dated copy: `cookies/<platform>-cookie-<YYYY-MM-DD>.txt` (history; same-day
      re-upload overwrites)
    - Active copy: the path the downloader reads (`tiktok-cookies.txt`,
@@ -36,6 +51,21 @@ end in `.txt` and contain Netscape-format cookies; anything else → `Invalid fi
 
 Each successful update logs a `cookies_updated` event to `service.jsonl` with the
 platform, filename, and the admin who uploaded it.
+
+### Expiry notices
+
+The bot parses the per-cookie expiry timestamp from the active cookie file
+(`cookie_expiry.py`, critical auth cookies only — `sessionid` for ig/tt, the
+`SID`/`SAPISID`/`__Secure-*PSID*` family for yt). On startup and every 24
+hours it DMs all `BOT_ADMIN_IDS` admins **the day before** an auth cookie
+expires (or when it already expired):
+
+```
+ig cookies expire tomorrow (2027-10-14) — upload fresh: cookie update ig
+```
+
+Each (platform, expiry) pair alerts at most once per bot run. Irrelevant
+short-lived cookies (Instagram `wd`, `dpr`) never trigger notices.
 
 The `cookies/` directory is mounted into the container (`./cookies:/usr/src/app/cookies`),
 so uploads persist across container rebuilds.

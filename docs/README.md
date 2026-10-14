@@ -61,9 +61,10 @@ User-facing commands, depends on auth, config, logging_config:
 - `caption_command(update, context)` - Toggle video captions on/off (uses notification tracking)
 
 ### telegram_utils.py
-Telegram helper utilities, no dependencies:
+Telegram helper utilities, depends on auth:
 - `typing_indicator(chat_id, bot)` - Async context manager that shows typing indicator while active
 - `send_images(message, images, reply_params)` - Sends single photo or batched media groups, returns total size in bytes
+- `source_reply_parameters(message_id, update)` - Builds `reply_parameters` for responding to a user message. In groups returns `allow_sending_without_reply=False` so a deleted source message cancels the reply (the bot stays silent); in private chats returns `True` (standalone reply allowed).
 
 ### platforms/__init__.py
 Platform detection and registry, no dependencies:
@@ -92,9 +93,10 @@ Instagram download logic with gallery-dl fallback, depends on downloader, telegr
 - `handle_instagram(update, context, url)` - Handles both metadata-success (yt-dlp) and metadata-failure (gallery-dl with cookies) paths
 
 ### utils.py
-Pure utility functions, no dependencies:
+Pure utility functions:
 - `is_valid_url(text)` - Checks for HTTP(S) URL pattern
-- `extract_urls(text)` - Finds all URLs in text
+- `extract_urls(text)` - Finds all URLs in text, each passed through `clean_url()`
+- `clean_url(url)` - Strips share/tracker query params while keeping the link functional: YouTube keeps only `v`/`list`, TikTok drops the whole query (video ID is in the path), Instagram drops everything except `img_index`, other hosts get a known-tracker blocklist (`utm_*`, `fbclid`, `gclid`, `igsh`, `ref`, `si`, ...). Applied once at extraction, so downloads, cache keys, logs, and guest mode all use the cleaned URL.
 - `parse_format_choice(text)` - Parses format keywords (video/відео/видео, audio/аудіо/аудио) from free text; returns `"video"`, `"audio"`, `"both"`, or None. Case-insensitive, exact whitespace-separated token match.
 - `ensure_download_dir(path)` - Creates download directory if needed
 - `cleanup_file(path)` / `cleanup_dir(path)` - Safe file removal
@@ -103,7 +105,8 @@ Pure utility functions, no dependencies:
 ### Instagram cookies (manual)
 
 Instagram cookies are exported from a browser (Netscape format) and uploaded
-by a bot admin with caption `cookie update ig`, or placed manually as
+by a bot admin with caption `cookie update ig` (or by sending the file without
+a caption and replying `cookie update ig` to it), or placed manually as
 `ig-cookies.txt`. There is no automated login — the old instagrapi-based
 refresh module (`src/cookies.py`, `scripts/python/ig_login_local.py`) was
 removed. See [cookies.md](cookies.md).
@@ -112,7 +115,7 @@ removed. See [cookies.md](cookies.md).
 Wraps yt-dlp and gallery-dl binary calls via subprocess:
 - `_find_ytdlp()` / `_find_gallery_dl()` - Locate binaries
 - `get_metadata(url, format_selector=None, referer="", cookies="")` - Runs `yt-dlp --dump-json --no-playlist` (60s timeout). Optional `format_selector` param passes `-f` flag for accurate size estimates (YouTube passes `VIDEO_FORMAT_SELECTOR`, shared with `download_video()`). Optional `referer` and `cookies` params for platform-specific auth. When `cookies` is not set, falls back to `YT_COOKIES_PATH` for YouTube URLs. Logs stderr on failure. Raises `DownloadAuthRequired` for age-restricted content.
-- `download_video(url, path, max_size, platform)` - Downloads video with a codec-priority selector built by `_build_format_selector()` (H.264 first, then AV1/VP9, size-capped branches descend the quality ladder, catch-all branches guarantee a file; `platform="instagram"` switches to the progressive-first order so Instagram's H.264 rendition beats its VP9 DASH ladder — VP9 does not play on iPhone). Retries with lower quality on failure. When `platform="tiktok"`, adds referer header and cookies. Adds `YT_COOKIES_PATH` cookies for YouTube URLs when the file exists. On success applies faststart (moov atom to front) via `_apply_faststart()`.
+- `download_video(url, path, max_size, platform)` - Downloads video with a codec-priority selector built by `_build_format_selector()` (H.264 first, then AV1/VP9, size-capped branches descend the quality ladder, catch-all branches guarantee a file; `platform="instagram"` switches to the progressive-first order so Instagram's H.264 rendition beats its VP9 DASH ladder — VP9 does not play on iPhone). Retries with lower quality on failure. When `platform="tiktok"`, adds referer header and cookies; when `platform="instagram"`, adds `IG_COOKIES_PATH` cookies when the file exists (required for login-gated/restricted reels). Adds `YT_COOKIES_PATH` cookies for YouTube URLs when the file exists. On success applies faststart (moov atom to front) via `_apply_faststart()`.
 - `download_audio(url, path)` - Extracts audio as MP3 (adds `YT_COOKIES_PATH` cookies for YouTube URLs when the file exists)
 - `download_images(url, dir)` - Downloads carousel/gallery images via gallery-dl
 - `download_gallery_dl_images(url, dir, cookies)` - Downloads images using gallery-dl
@@ -127,15 +130,24 @@ Thin orchestrator, depends on auth, commands, platforms, telegram_utils, downloa
 - `handle_url(update, context)` - Main handler: clears stale `_platform`, filters pure playlist URLs, authorization check, detects group/P2P, unauthorized reply-to-bot check in groups (silently ignores), splits supported/unsupported URLs, filters unsupported against gallery-dl domain whitelist, handles reply-to-retry, routes remaining unsupported URLs to gallery-dl fallback
 
 ### cookie_upload.py
-Admin-only cookie file upload (document messages), depends on auth, config, logging_config, messages:
-- `handle_cookie_document(update, context)` - Handles `.txt` documents sent to the bot. Silently ignores non-P2P chats and non-admin senders. Validates the caption `cookie update <platform>` (`tt`/`ig`/`yt`; keyword case-insensitive, platform lowercase-only): missing → `MSG_COOKIE_CAPTION_EMPTY`, mismatch → `MSG_COOKIE_INVALID_CAPTION`. Validates file: `.txt` extension + Netscape cookie content → otherwise `MSG_COOKIE_INVALID_FILE`. On success saves `cookies/<platform>-cookie-<date>.txt` (dated history) and overwrites the active cookie path, replies `MSG_COOKIE_UPDATED`, logs `cookies_updated` via `log_cookie_updated()`.
+Admin-only cookie file upload (document messages), depends on auth, config, cookie_expiry, logging_config, messages:
+- `handle_cookie_document(update, context)` - Handles `.txt` documents sent to the bot. Silently ignores non-P2P chats and non-admin senders. A file sent **without a caption is accepted** and replied with `MSG_COOKIE_NO_CAPTION_HINT` ("reply to it with `cookie update tt|ig|yt`") — it is not saved until activated. With a caption `cookie update <platform>` (`tt`/`ig`/`yt`; keyword case-insensitive incl. capital `Cookie update`, platform lowercase-only): mismatch → `MSG_COOKIE_INVALID_CAPTION`. Validates file: `.txt` extension + Netscape cookie content → otherwise `MSG_COOKIE_INVALID_FILE`. On success saves `cookies/<platform>-cookie-<date>.txt` (dated history) and overwrites the active cookie path, replies `MSG_COOKIE_UPDATED` plus expiry note (`MSG_COOKIE_EXPIRY_NOTE`) or `MSG_COOKIE_NO_AUTH` warning, logs `cookies_updated` via `log_cookie_updated()`.
+- `handle_cookie_reply(update, context)` - Activates a previously uploaded caption-less file: a text message replying to that `.txt` document with `cookie update <platform>`. Same validation/save/confirm path as the caption flow (`_save_and_confirm()`).
+- `cookie_reply_filter` (`_CookieReplyFilter`) - `BaseFilter` matching exactly that phrase as a reply to a document; registered in `bot.py` **before** the generic text handler so `handle_url` never consumes it.
 - `_looks_like_netscape(text)` - Detects Netscape cookie files (header line or tab-separated 6-field rows, incl. `#HttpOnly_` rows)
 - `_active_path(platform)` - Maps `tt`/`ig`/`yt` to `TIKTOK_COOKIES_PATH`/`IG_COOKIES_PATH`/`YT_COOKIES_PATH`
+
+### cookie_expiry.py
+Cookie expiry parsing and daily admin alerts, depends on config, logging_config, messages:
+- `parse_cookie_expiry(text, platform)` - Parses a Netscape cookie file (column 5 = expiry epoch) for the **critical auth cookies** per platform (`ig`: `sessionid`; `yt`: `SID`/`SAPISID`/`__Secure-*PSID*`; `tt`: `sessionid`/`sid_guard`/`sid_tt`/`uid_tt*`). Returns `CookieExpiry(has_auth, expiry, cookie)` — earliest critical expiry; irrelevant short-lived cookies (Instagram `wd`, `dpr`) are ignored; session cookies (expires=0) count as auth present with no date.
+- `active_cookie_expiry(platform)` - Reads the active cookie file for a platform and parses it.
+- `check_and_notify(bot)` - DMs every `BOT_ADMIN_IDS` admin when a platform's auth cookie is <=1 day from expiry (`expire tomorrow`/`expire today`/`expired`), once per (platform, expiry) per process. Logs `cookie_expiry_alert` to service.jsonl.
+- `expiry_check_loop(bot)` - Runs `check_and_notify()` on startup and every 24h; started in `bot.post_init()` via `application.create_task()`.
 
 ### guest.py
 Bot API 10.0 guest mode handler, depends on auth, config, downloader, platforms, utils, logging_config, httpx, cache:
 - `handle_guest(update, context)` - Main handler for `guest_message` updates. Identifies caller via `guest_msg.from_user` (Telegram sends `from`, ptb maps to `from_user`). Auth check via `is_user_allowed()`. Unauthorized users get "You are not authorized" once via `answer_guest_query`, then silently ignored (uses `was_notified_guest()`/`mark_notified_guest()`). Logs unauthorized access to service.jsonl. Reply to bot message without URL is silently ignored. Reply to bot message with no text shows media type (e.g. `[photo]`) in logs. Extracts URLs from tag text OR replied-to message. Platform set from `extract_domain(url)` when `detect_platform()` returns None (for gallery-dl supported sites). Routes to download pipeline.
-- `_safe_answer_guest_query(bot, guest_query_id, result)` - Wrapper around `answer_guest_query()` that catches `BadRequest` when user deletes their message before bot answers. Logs gracefully instead of throwing unhandled exception.
+- `_safe_answer_guest_query(bot, guest_query_id, result)` - Wrapper around `answer_guest_query()` that catches `BadRequest` when user deletes their message before bot answers. Logs gracefully instead of throwing unhandled exception; the caller logs the request as completed with `skip_reason: "message_deleted"` when it returns False.
 - `_download_and_build_result(url, platform, force_video=False)` - Checks cache first (via `cache.get_cached()`, using cache variant `"audio"` for YouTube Music audio requests so audio and video entries coexist). On cache hit, returns cached `file_id` instantly. On miss, routes to platform-specific download: YouTube, TikTok, Instagram, or gallery-dl fallback. For TikTok, fetches metadata before download to get video ID for short URL deduplication. `music.youtube.com` URLs download audio by default; `force_video=True` (video/відео/видео keyword in tag text) selects video instead. Stores result in cache after successful download.
 - `_download_youtube(url)` - Downloads YouTube video, uploads to storage channel, returns `_video_result()`
 - `_download_audio(url)` - Downloads YouTube Music audio as MP3 (metadata for title, no size pre-check), uploads via `sendAudio`, returns `_audio_result()`

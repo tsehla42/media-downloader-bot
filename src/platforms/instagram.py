@@ -5,7 +5,7 @@ import re
 
 from config import IG_COOKIES_PATH, MAX_FILE_SIZE
 from downloader import download_video, download_gallery_dl_images
-from telegram_utils import send_images
+from telegram_utils import send_images, source_reply_parameters
 from utils import cleanup_dir, find_downloaded_file, cleanup_video_files, make_video_tmp_path, make_tmp_dir
 
 from logging_config import details_logger as _log
@@ -21,7 +21,7 @@ async def handle_instagram(update, context, url: str) -> bool:
         _log.info("instagram: stories URL without cookies, skipping", extra={"url": url})
         return False
 
-    reply_params = {"message_id": update.message.message_id, "allow_sending_without_reply": True}
+    reply_params = source_reply_parameters(update.message.message_id, update)
     base = None
 
     try:

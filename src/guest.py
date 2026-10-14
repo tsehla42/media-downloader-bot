@@ -271,7 +271,7 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     try:
         result, content_type, file_size_mb, cache_hit = await _download_and_build_result(url, platform, force_video)
-        await _safe_answer_guest_query(context.bot, guest_query_id, result)
+        answered = await _safe_answer_guest_query(context.bot, guest_query_id, result)
 
         duration_ms = int((time.time() - start_time) * 1000)
         log_guest_request_completed(
@@ -280,7 +280,7 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             url=url,
             platform=platform,
             duration_ms=duration_ms,
-            success=True,
+            success=answered,
             content_type=content_type,
             file_size_mb=file_size_mb,
             cache_hit=cache_hit,
@@ -289,6 +289,7 @@ async def handle_guest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             chat_owner_name=chat_owner_name,
             chat_owner_username=chat_owner_username,
             forwarded=forwarded,
+            skip_reason=None if answered else "message_deleted",
         )
     except DownloadError as e:
         duration_ms = int((time.time() - start_time) * 1000)

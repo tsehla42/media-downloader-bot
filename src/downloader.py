@@ -278,6 +278,10 @@ def download_video(url: str, output_path: str, max_size_mb: int = MAX_FILE_SIZE_
     platform_args = ["--referer", TIKTOK_REFERER] if platform == "tiktok" else []
     if platform == "tiktok" and TIKTOK_COOKIES_PATH and os.path.isfile(TIKTOK_COOKIES_PATH):
         platform_args.extend(["--cookies", TIKTOK_COOKIES_PATH])
+    if platform == "instagram":
+        from config import IG_COOKIES_PATH
+        if IG_COOKIES_PATH and os.path.isfile(IG_COOKIES_PATH):
+            platform_args.extend(["--cookies", IG_COOKIES_PATH])
     yt_cookies = _youtube_cookies(url)
     if yt_cookies:
         platform_args.extend(["--cookies", yt_cookies])
