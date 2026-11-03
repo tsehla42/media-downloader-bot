@@ -29,7 +29,7 @@ def test_bot_registers_my_chat_member_handler():
 
         mock_chat_member_handler.return_value = mock_handler
         mock_app = MagicMock()
-        mock_app_builder.builder.return_value.token.return_value.post_init.return_value.post_shutdown.return_value.build.return_value = mock_app
+        mock_app_builder.builder.return_value.token.return_value.request.return_value.post_init.return_value.post_shutdown.return_value.build.return_value = mock_app
 
         main()
 
@@ -107,7 +107,7 @@ def test_bot_registers_cookie_reply_handler_before_text_handler():
         mock_msg_handler.side_effect = _make_handler
 
         mock_app = MagicMock()
-        mock_app_builder.builder.return_value.token.return_value.post_init.return_value.post_shutdown.return_value.build.return_value = mock_app
+        mock_app_builder.builder.return_value.token.return_value.request.return_value.post_init.return_value.post_shutdown.return_value.build.return_value = mock_app
 
         main()
 
@@ -122,3 +122,62 @@ def test_bot_registers_cookie_reply_handler_before_text_handler():
         assert url_inst in added, "text handler not added to app"
         assert instances.index(cookie_inst) < instances.index(url_inst), \
             "cookie reply handler must be registered before handle_url"
+
+
+def test_bot_configures_resilient_request_with_media_timeout():
+    """main() wires a ResilientHTTPXRequest with a bumped media write timeout
+    (120s vs PTB's 20s default) so large uploads tolerate slow uplinks, and
+    retries kick in only after that."""
+    from bot import main
+
+    with patch("bot.Application") as mock_app_builder, \
+         patch("bot.setup_logging"), \
+         patch("bot.BOT_TOKEN", "test-token"), \
+         patch("bot.GUEST_MODE_ENABLED", False), \
+         patch("bot.start_command"), \
+         patch("bot.help_command"), \
+         patch("bot.handle_url"), \
+         patch("bot.caption_command"), \
+         patch("bot.audio_command"), \
+         patch("bot.ytmusic_callback"), \
+         patch("bot.ChatMemberHandler"), \
+         patch("bot.my_chat_member_handler"), \
+         patch("bot.ResilientHTTPXRequest") as mock_req_cls:
+        mock_app = MagicMock()
+        builder = mock_app_builder.builder.return_value
+        builder.token.return_value.request.return_value.post_init.return_value \
+            .post_shutdown.return_value.build.return_value = mock_app
+
+        main()
+
+        mock_req_cls.assert_called_once_with(media_write_timeout=120.0)
+        builder.token.return_value.request.assert_called_once_with(
+            mock_req_cls.return_value
+        )
+
+
+def test_error_handler_explains_stalled_upload():
+    """A TimedOut caused by httpx.WriteTimeout (upload stalled after the download
+    succeeded) gets a specific message, not the generic error text."""
+    import asyncio
+    import httpx
+    from unittest.mock import AsyncMock
+    from telegram import Update
+    from telegram.error import TimedOut
+    from bot import error_handler
+    from messages import MSG_UPLOAD_TIMED_OUT
+
+    context = MagicMock()
+    err = TimedOut()
+    err.__cause__ = httpx.WriteTimeout("write stalled")
+    context.error = err
+    context.bot.send_message = AsyncMock()
+
+    update = Update(update_id=1, message=MagicMock())
+    with patch("bot.log_error"), patch("bot.details_logger"):
+        asyncio.run(error_handler(update, context))
+
+    sent = context.bot.send_message.call_args.kwargs["text"]
+    assert sent == MSG_UPLOAD_TIMED_OUT, (
+        f"expected upload-timeout message, got: {sent!r}"
+    )

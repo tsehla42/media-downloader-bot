@@ -172,13 +172,19 @@ Structured JSON logging with zero external dependencies:
 - `log_new_user()` / `log_bot_added_to_chat()` / `log_bot_rejected_group_addition()` / `log_bot_removed_from_chat()` / `log_admin_rights_changed()` / `log_user_blocked_bot()` / `log_unauthorized_access()` / `log_cookie_updated()` - System events (use `service_logger`)
 - `_extract_admin_rights(member)` - Extracts admin rights dict from ChatMemberAdministrator
 
+### http_request.py
+Resilient HTTP request layer for Telegram uploads, depends on telegram, httpx:
+- `ResilientHTTPXRequest` - Subclass of PTB's `HTTPXRequest`, wired into `Application` by `bot.py`. Retries a request **once** when its write to Telegram stalls (`TimedOut` caused by `httpx.WriteTimeout`): an incomplete body cannot have been processed by the Bot API, so the retry cannot duplicate a send. Read timeouts are never retried (the request may already have been processed). Before the retry, upload file handles are rewound so the full file is re-sent; an unrewindable handle skips the retry instead of uploading a truncated file.
+- `MEDIA_WRITE_TIMEOUT` - Media upload write timeout in seconds (120.0; PTB's 20s default was too tight for large videos on a slow uplink)
+- `UPLOAD_ATTEMPTS` - Total attempts for a stalled request (2 = original + one retry)
+
 ### bot.py
 Entry point:
-- Creates `Application` with bot token
+- Creates `Application` with bot token and `ResilientHTTPXRequest(media_write_timeout=MEDIA_WRITE_TIMEOUT)` (upload stall retry — see http_request.py)
 - Registers all handlers (guest handler BEFORE text handler -- see guest.py note)
 - Adds `"guest_message"` to `allowed_updates` when `GUEST_MODE_ENABLED=true`
 - Starts polling via `app.run_polling()`
-- Global `error_handler` for unhandled exceptions
+- Global `error_handler` for unhandled exceptions; a stalled upload (`TimedOut` from `httpx.WriteTimeout`) gets `MSG_UPLOAD_TIMED_OUT` instead of the generic error message
 
 ## Data Flow
 

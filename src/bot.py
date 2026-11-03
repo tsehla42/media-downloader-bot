@@ -1,7 +1,9 @@
 import logging
 from logging_config import setup_logging, details_logger, service_logger, log_error
 
+import httpx
 from telegram import BotCommand, Update
+from telegram.error import TimedOut
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -17,6 +19,8 @@ from handlers import handle_url, audio_command, my_chat_member_handler
 from platforms.youtube import ytmusic_callback
 from commands import start_command, help_command, caption_command
 from cookie_upload import handle_cookie_document, handle_cookie_reply, cookie_reply_filter
+from http_request import MEDIA_WRITE_TIMEOUT, ResilientHTTPXRequest
+from messages import MSG_UPLOAD_TIMED_OUT
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -34,10 +38,17 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     log_error(context.error, update)
 
     if isinstance(update, Update) and update.effective_chat:
+        # A stalled upload (WriteTimeout) means the download worked but the send
+        # didn't — say so instead of the generic error
+        error_text = "An error occurred while processing your request. Please try again later."
+        if isinstance(context.error, TimedOut) and isinstance(
+            context.error.__cause__, httpx.WriteTimeout
+        ):
+            error_text = MSG_UPLOAD_TIMED_OUT
         try:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="An error occurred while processing your request. Please try again later.",
+                text=error_text,
             )
         except Exception as e:
             details_logger.error("Failed to send error message to user: %s", e)
@@ -78,6 +89,8 @@ def main() -> None:
     app = (
         Application.builder()
         .token(BOT_TOKEN)
+        # Retry stalled media uploads once; longer write timeout for big files
+        .request(ResilientHTTPXRequest(media_write_timeout=MEDIA_WRITE_TIMEOUT))
         .post_init(post_init)
         .post_shutdown(post_shutdown)
         .build()
