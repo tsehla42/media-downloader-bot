@@ -5,7 +5,7 @@ import re
 
 from config import IG_COOKIES_PATH, MAX_FILE_SIZE
 from downloader import download_video, download_gallery_dl_images
-from telegram_utils import send_images, source_reply_parameters
+from telegram_utils import send_images, source_reply_parameters, probe_video_metadata
 from utils import cleanup_dir, find_downloaded_file, cleanup_video_files, make_video_tmp_path, make_tmp_dir
 
 from logging_config import details_logger as _log
@@ -38,6 +38,7 @@ async def handle_instagram(update, context, url: str) -> bool:
                         video=f,
                         reply_parameters=reply_params,
                         supports_streaming=True,
+                        **probe_video_metadata(downloaded),
                     )
                 context.user_data["_content_type"] = "video"
                 try:

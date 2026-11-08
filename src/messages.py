@@ -22,7 +22,7 @@ MSG_DOWNLOAD_FAILED = "Download failed"
 # Upload stalled mid-send after a successful download (httpx.WriteTimeout)
 MSG_UPLOAD_TIMED_OUT = (
     "The file was downloaded, but sending it to Telegram timed out. "
-    "Please try again — if it keeps happening, the connection to Telegram is unstable"
+    "Please try again"
 )
 
 # Audio

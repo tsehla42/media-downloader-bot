@@ -89,7 +89,12 @@ async def handle_gallery_dl_fallback(update: Update, context: ContextTypes.DEFAU
     video = download_gallery_dl_video(url, out_dir)
     if video:
         with open(video, "rb") as f:
-            await update.message.reply_video(video=f, reply_parameters=reply_params)
+            await update.message.reply_video(
+                video=f,
+                reply_parameters=reply_params,
+                supports_streaming=True,
+                **probe_video_metadata(video),
+            )
         return True
 
     return False

@@ -56,7 +56,15 @@ def detect_platform(url: str) -> str | None:
 
 ## Video Streaming
 
-All video sends include `supports_streaming=True` so Telegram plays them inline (streaming) rather than requiring full download first. This applies to all paths: direct reply, gallery-dl fallback, guest mode upload, and YouTube Music callbacks.
+For Telegram to stream a video (play inline while downloading) instead of showing a download tile, three things must be true:
+
+1. **Faststart** — `moov` before `mdat`, applied after download via `_apply_faststart()` (moves the atom without re-encoding).
+2. **H.264 codec** — chosen by the codec-priority format selector (`ext=mp4` does not imply H.264; VP9/AV1 won't play on every client).
+3. **Send metadata** — `supports_streaming=True` **plus** `duration`, `width`, `height` on every `sendVideo`.
+
+All video sends pass all three. This applies to every path: direct reply, gallery-dl fallback, guest-mode storage upload, and YouTube Music callbacks.
+
+The metadata comes from `telegram_utils.probe_video_metadata(path)` (an `ffprobe` call that returns `{}` on any failure, so a probe error never blocks a send). It is required because Telegram only auto-probes files under ~10MB — above that, omitting the metadata makes the server store `0/0/0`, so the client shows a `0:00` download tile and Android refuses to stream even though the file itself is perfect faststart H.264. python-telegram-bot does not probe on your behalf: `send_video` passes through only what it is given.
 
 ## Temporary Files
 

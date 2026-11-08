@@ -53,7 +53,7 @@ All logs use structured JSON format:
 
 ## Examples
 
-See [Log Examples](examples/) for real log samples.
+See [Log Examples](examples.md) for real log samples.
 
 ## Implementation
 

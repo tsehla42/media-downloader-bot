@@ -31,6 +31,7 @@ from logging_config import (
 )
 from platforms import detect_platform, extract_domain
 from utils import extract_urls, cleanup_dir, cleanup_file, get_gallery_dl_domains, get_ytdlp_domains, parse_format_choice
+from telegram_utils import probe_video_metadata
 from cache import get_cached, store
 from downloader import (
     get_metadata,
@@ -673,6 +674,11 @@ async def _upload_to_telegram(file_path: str, media_type: str, title: str = "") 
                 data = {"chat_id": STORAGE_CHANNEL_ID}
                 if media_type == "video":
                     data["supports_streaming"] = "true"
+                    # Over ~10MB Telegram does not probe the file itself: without
+                    # duration/width/height the video card stores 0:00 and Android
+                    # won't stream it. Form values must be strings.
+                    for key, value in probe_video_metadata(file_path).items():
+                        data[key] = str(value)
                 elif media_type == "audio" and title:
                     data["title"] = title
 

@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 from config import MAX_FILE_SIZE
 from downloader import download_video, download_audio
 from commands import get_caption_for_user
-from telegram_utils import typing_indicator, source_reply_parameters
+from telegram_utils import typing_indicator, source_reply_parameters, probe_video_metadata
 from utils import cleanup_file, find_downloaded_file, cleanup_video_files, make_video_tmp_path, parse_format_choice
 from messages import MSG_DOWNLOAD_FAILED, MSG_YTMUSIC_AUDIO_FAILED, MSG_YTMUSIC_VIDEO_FAILED, MSG_YTMUSIC_UNKNOWN_CHOICE, MSG_YTMUSIC_REQUEST_EXPIRED
 
@@ -57,6 +57,7 @@ async def _download_and_send_video(
             caption=caption,
             reply_parameters=reply_params,
             supports_streaming=True,
+            **probe_video_metadata(downloaded),
         )
     if context:
         _store_download_metadata(context, "video", downloaded)
@@ -147,6 +148,7 @@ async def _send_format(
                             caption=caption,
                             reply_parameters=reply_params,
                             supports_streaming=True,
+                            **probe_video_metadata(downloaded),
                         )
                     _store_download_metadata(context, "both", downloaded)
                     _log.info("ytmusic: video sent for %s", url)

@@ -2,12 +2,73 @@
 """Telegram helper utilities: typing indicators, image sending."""
 
 import asyncio
+import json
 import os
+import shutil
+import subprocess
 from contextlib import asynccontextmanager
 from telegram import InputMediaPhoto
 from telegram.constants import ChatAction
 
 from auth import is_group_chat
+
+
+def probe_video_metadata(path: str) -> dict:
+    """Probe a video file for sendVideo metadata with ffprobe.
+
+    Returns {"duration": int, "width": int, "height": int} on success, or {}
+    on any failure (ffprobe missing, timeout, bad file). Callers splat the
+    result into reply_video/sendVideo, so {} simply omits the fields — the
+    send must never break because probing failed.
+
+    Why this matters: Telegram only auto-probes small files (~<10MB). Above
+    that, if the bot does not supply duration/width/height, the server stores
+    0/0/0 — the client then shows a 0:00 download tile and Android will not
+    stream the video even though the file itself is faststart H.264.
+    """
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return {}
+
+    try:
+        result = subprocess.run(
+            [
+                ffprobe, "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height:format=duration",
+                "-of", "json",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return {}
+
+    if result.returncode != 0:
+        return {}
+
+    try:
+        data = json.loads(result.stdout or "{}")
+    except ValueError:
+        return {}
+
+    streams = data.get("streams") or []
+    stream = streams[0] if streams else {}
+    fmt = data.get("format") or {}
+
+    meta = {}
+    if stream.get("width") is not None:
+        meta["width"] = int(stream["width"])
+    if stream.get("height") is not None:
+        meta["height"] = int(stream["height"])
+    if fmt.get("duration") is not None:
+        try:
+            meta["duration"] = int(float(fmt["duration"]))
+        except (ValueError, TypeError):
+            pass
+    return meta
 
 
 def source_reply_parameters(message_id: int, update) -> dict:

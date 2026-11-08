@@ -147,6 +147,46 @@ async def test_reply_video_includes_supports_streaming():
 
 
 @pytest.mark.asyncio
+async def test_reply_video_includes_metadata():
+    """reply_video must pass duration/width/height so Telegram stores them.
+
+    Above ~10MB Telegram does not probe the file itself; without these the
+    video card stores duration 0 and Android won't stream it (download tile).
+    """
+    update = MagicMock()
+    update.message.text = "https://youtube.com/watch?v=abc"
+    update.message.message_id = 99
+    update.message.from_user.id = 123
+    update.message.from_user.first_name = "Test"
+    update.message.from_user.username = "test"
+    update.message.chat.id = -100
+    update.message.chat.title = "Group"
+    update.message.chat.type = "group"
+    update.message.reply_video = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+
+    with patch("handlers.detect_platform", return_value="youtube"), \
+         patch("handlers.get_metadata", return_value={"title": "Test Video", "duration": 60, "format": "720p"}), \
+         patch("platforms.youtube.download_video", return_value=True), \
+         patch("platforms.youtube.probe_video_metadata",
+               return_value={"duration": 60, "width": 1280, "height": 720}):
+        with patch("os.path.isfile", return_value=True), \
+             patch("os.path.getsize", return_value=1024*1024), \
+             patch("handlers.cleanup_file"), \
+             patch("builtins.open", MagicMock()):
+            await _download_and_send(update, context, "https://youtube.com/watch?v=abc")
+
+        update.message.reply_video.assert_called_once()
+        kwargs = update.message.reply_video.call_args[1]
+        assert kwargs.get("duration") == 60
+        assert kwargs.get("width") == 1280
+        assert kwargs.get("height") == 720
+        assert kwargs.get("supports_streaming") is True
+
+
+@pytest.mark.asyncio
 async def test_download_and_send_logs_error_on_exception():
     """_download_and_send replies with error message when download raises an exception."""
     update = MagicMock()

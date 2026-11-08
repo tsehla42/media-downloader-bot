@@ -9,6 +9,59 @@ from telegram_utils import typing_indicator, send_images
 
 
 # ---------------------------------------------------------------------------
+# probe_video_metadata tests
+# ---------------------------------------------------------------------------
+
+def test_probe_video_metadata_returns_duration_width_height(monkeypatch):
+    """probe_video_metadata returns int duration/width/height from ffprobe JSON."""
+    import telegram_utils
+
+    fake_json = '{"programs": [], "streams": [{"width": 1280, "height": 720}], "format": {"duration": "333.206349"}}'
+
+    class FakeResult:
+        returncode = 0
+        stdout = fake_json
+        stderr = ""
+
+    monkeypatch.setattr(
+        telegram_utils.subprocess, "run",
+        lambda *a, **k: FakeResult()
+    )
+    monkeypatch.setattr(telegram_utils.shutil, "which", lambda name: "/usr/bin/ffprobe")
+
+    meta = telegram_utils.probe_video_metadata("/some/file.mp4")
+    assert meta["duration"] == 333
+    assert meta["width"] == 1280
+    assert meta["height"] == 720
+
+
+def test_probe_video_metadata_empty_when_ffprobe_missing(monkeypatch):
+    """Returns {} (no crash) when ffprobe is unavailable — send must not break."""
+    import telegram_utils
+    monkeypatch.setattr(telegram_utils.shutil, "which", lambda name: None)
+
+    assert telegram_utils.probe_video_metadata("/some/file.mp4") == {}
+
+
+def test_probe_video_metadata_empty_on_probe_failure(monkeypatch):
+    """Returns {} (no crash) when ffprobe exits non-zero — send must not break."""
+    import telegram_utils
+
+    class FakeResult:
+        returncode = 1
+        stdout = ""
+        stderr = "boom"
+
+    monkeypatch.setattr(
+        telegram_utils.subprocess, "run",
+        lambda *a, **k: FakeResult()
+    )
+    monkeypatch.setattr(telegram_utils.shutil, "which", lambda name: "/usr/bin/ffprobe")
+
+    assert telegram_utils.probe_video_metadata("/some/file.mp4") == {}
+
+
+# ---------------------------------------------------------------------------
 # typing_indicator tests
 # ---------------------------------------------------------------------------
 

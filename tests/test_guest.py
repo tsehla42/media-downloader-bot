@@ -1112,6 +1112,37 @@ class TestUploadToTelegramAudio:
         data = mock_client.post.call_args[1]["data"]
         assert "title" not in data
 
+    @pytest.mark.asyncio
+    async def test_video_upload_passes_duration_width_height(self):
+        """sendVideo must carry duration/width/height — over ~10MB Telegram
+        won't probe the file, so without them the video card stores 0:00 and
+        Android won't stream it."""
+        from guest import _upload_to_telegram
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "ok": True,
+            "result": {"video": {"file_id": "v"}},
+        }
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch("guest.httpx.AsyncClient", return_value=mock_client), \
+             patch("guest.STORAGE_CHANNEL_ID", "12345"), \
+             patch("config.BOT_TOKEN", "test-token"), \
+             patch("guest.probe_video_metadata",
+                   return_value={"duration": 333, "width": 1280, "height": 720}), \
+             patch("builtins.open", MagicMock()):
+            await _upload_to_telegram("/tmp/some.mp4", "video")
+
+        data = mock_client.post.call_args[1]["data"]
+        assert data["supports_streaming"] == "true"
+        assert data["duration"] == "333"
+        assert data["width"] == "1280"
+        assert data["height"] == "720"
+
 
 class TestDownloadAudioUploadTitle:
     """_download_audio must pass the metadata title into the storage upload."""

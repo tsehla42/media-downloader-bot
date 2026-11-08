@@ -110,7 +110,7 @@ from logging_config import (
     set_current_request_id,
     details_logger,
 )
-from telegram_utils import typing_indicator, send_images, source_reply_parameters
+from telegram_utils import typing_indicator, send_images, source_reply_parameters, probe_video_metadata
 
 
 async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -398,6 +398,7 @@ async def _download_and_send(
                                 video=f,
                                 reply_parameters=reply_params,
                                 supports_streaming=True,
+                                **probe_video_metadata(filepath),
                             )
                         context.user_data["_content_type"] = "video"
                         context.user_data["_file_size_mb"] = round(os.path.getsize(filepath) / (1024 * 1024), 2)
@@ -567,6 +568,7 @@ async def handle_gallery_dl_fallback(update: Update, context: ContextTypes.DEFAU
                         video=f,
                         reply_parameters=reply_params,
                         supports_streaming=True,
+                        **probe_video_metadata(video),
                     )
             except Exception as e:
                 details_logger.error("gallery-dl video send failed: %s", e)

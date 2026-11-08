@@ -65,6 +65,7 @@ Telegram helper utilities, depends on auth:
 - `typing_indicator(chat_id, bot)` - Async context manager that shows typing indicator while active
 - `send_images(message, images, reply_params)` - Sends single photo or batched media groups, returns total size in bytes
 - `source_reply_parameters(message_id, update)` - Builds `reply_parameters` for responding to a user message. In groups returns `allow_sending_without_reply=False` so a deleted source message cancels the reply (the bot stays silent); in private chats returns `True` (standalone reply allowed).
+- `probe_video_metadata(path)` - Runs `ffprobe` to return `{"duration": int, "width": int, "height": int}` for a video file, or `{}` on any failure (missing ffprobe, timeout, bad file). Splatted into every `reply_video`/`sendVideo` call so Telegram stores the metadata needed for streaming on files over ~10MB (see [Content Delivery → Video Streaming](content-delivery/README.md#video-streaming)).
 
 ### platforms/__init__.py
 Platform detection and registry, no dependencies:
