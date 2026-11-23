@@ -43,6 +43,7 @@ Both are merged into a single allowlist at startup.
 ### Sources Configured
 - If user is in allowlist -> authorized
 - If user is not in allowlist -> unauthorized
+- The command suggestion menu is registered only for allowed users' chats and allowed groups, so unauthorized chats see no menu (see [Command Menu Visibility](commands.md#command-menu-visibility))
 
 ### No Sources Configured
 - All users are authorized

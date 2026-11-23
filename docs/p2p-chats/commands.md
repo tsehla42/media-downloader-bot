@@ -109,6 +109,27 @@ The `get_caption_for_user()` function in `src/commands.py` controls caption beha
 
 **Note:** The default is captions OFF. Users must run `/caption on` to enable them.
 
+## Command Menu Visibility
+
+Telegram's command suggestion menu (`/start`, `/help`, `/audio`, `/caption`) is
+registered at startup with per-chat scopes (`src/bot.py:register_command_scopes()`,
+called from `post_init()`):
+
+- **Allowlist configured** (`allowed-users.json` or `ALLOWED_USER_IDS`): the
+  default (global) menu is cleared first, then the menu is registered for each
+  allowed user's chat and each allowed group chat — or all group chats when
+  `ALLOWED_GROUP_IDS` is empty. Unauthorized users and unauthorized groups see
+  no command menu at all (their messages are ignored anyway).
+- **No allowlist (allow all)**: the single global menu stays as-is, since
+  everyone is authorized.
+
+Each `setMyCommands` call swallows and logs its own Telegram error
+(`service.jsonl`), so one bad chat cannot abort startup. Menu visibility only
+controls the suggestions — commands still work when typed manually, subject to
+the normal authorization checks below.
+
+See [Authorization](authorization.md) for the allowlist itself.
+
 ## Authorization
 
 All commands check authorization before responding. Unauthorized users get one "not authorized" message on first attempt, then are silently ignored. See [Authorization](authorization.md).

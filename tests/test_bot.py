@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 def test_bot_imports_my_chat_member_handler():
@@ -181,3 +181,132 @@ def test_error_handler_explains_stalled_upload():
     assert sent == MSG_UPLOAD_TIMED_OUT, (
         f"expected upload-timeout message, got: {sent!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_allowlist_mode_clears_global_and_registers_per_user():
+    """With an allowlist configured, the global (default-scope) menu is cleared
+    first, then COMMANDS is registered per allowed user chat."""
+    from telegram import BotCommandScopeChat, BotCommandScopeDefault
+    from bot import COMMANDS, register_command_scopes
+
+    bot = AsyncMock()
+    with patch("bot.ALLOWED_IDS_CONFIGURED", True), \
+         patch("bot.ALLOWED_USER_IDS", {111, 222}), \
+         patch("bot.ALLOWED_GROUP_IDS", []):
+        await register_command_scopes(bot)
+
+    calls = bot.set_my_commands.call_args_list
+    assert calls[0].args == ([],)  # first call clears the default scope
+    assert isinstance(calls[0].kwargs["scope"], BotCommandScopeDefault)
+    per_user = {
+        c.kwargs["scope"].chat_id for c in calls
+        if isinstance(c.kwargs["scope"], BotCommandScopeChat)
+    }
+    assert per_user == {111, 222}
+    default_clears = [
+        c for c in calls if isinstance(c.kwargs["scope"], BotCommandScopeDefault)
+    ]
+    assert len(default_clears) == 1  # global menu cleared exactly once
+    for c in calls[1:]:  # every registration after the clear carries COMMANDS
+        assert c.args == (COMMANDS,)
+
+
+@pytest.mark.asyncio
+async def test_allowall_mode_keeps_single_global_menu():
+    """No allowlist configured (allow-all): one global registration, no
+    default-scope clearing, no per-chat calls."""
+    from bot import COMMANDS, register_command_scopes
+
+    bot = AsyncMock()
+    with patch("bot.ALLOWED_IDS_CONFIGURED", False):
+        await register_command_scopes(bot)
+
+    bot.set_my_commands.assert_called_once()
+    c = bot.set_my_commands.call_args
+    assert c.args == (COMMANDS,)
+    assert c.kwargs.get("scope") is None
+
+
+@pytest.mark.asyncio
+async def test_configured_groups_registered_individually():
+    """Each allowed group chat gets the menu via BotCommandScopeChat."""
+    from telegram import BotCommandScopeChat
+    from bot import register_command_scopes
+
+    bot = AsyncMock()
+    with patch("bot.ALLOWED_IDS_CONFIGURED", True), \
+         patch("bot.ALLOWED_USER_IDS", set()), \
+         patch("bot.ALLOWED_GROUP_IDS", [-1001, -1002]):
+        await register_command_scopes(bot)
+
+    group_scopes = {
+        c.kwargs["scope"].chat_id for c in bot.set_my_commands.call_args_list
+        if isinstance(c.kwargs["scope"], BotCommandScopeChat)
+        and c.kwargs["scope"].chat_id < 0
+    }
+    assert group_scopes == {-1001, -1002}
+
+
+@pytest.mark.asyncio
+async def test_empty_group_allowlist_registers_all_group_chats():
+    """Empty ALLOWED_GROUP_IDS (= all groups allowed) registers one
+    BotCommandScopeAllGroupChats call, never skips groups."""
+    from telegram import BotCommandScopeAllGroupChats, BotCommandScopeChat
+    from bot import register_command_scopes
+
+    bot = AsyncMock()
+    with patch("bot.ALLOWED_IDS_CONFIGURED", True), \
+         patch("bot.ALLOWED_USER_IDS", set()), \
+         patch("bot.ALLOWED_GROUP_IDS", []):
+        await register_command_scopes(bot)
+
+    scopes = [c.kwargs["scope"] for c in bot.set_my_commands.call_args_list]
+    assert any(isinstance(s, BotCommandScopeAllGroupChats) for s in scopes)
+    assert not any(isinstance(s, BotCommandScopeChat) for s in scopes)
+
+
+@pytest.mark.asyncio
+async def test_scope_failure_does_not_abort_registration():
+    """A TelegramError from any setMyCommands call is logged and swallowed;
+    every remaining scope still gets registered."""
+    from telegram.error import TelegramError
+    from bot import register_command_scopes
+
+    bot = AsyncMock()
+    bot.set_my_commands = AsyncMock(
+        side_effect=[TelegramError("boom"), True, True]
+    )
+    with patch("bot.ALLOWED_IDS_CONFIGURED", True), \
+         patch("bot.ALLOWED_USER_IDS", {111}), \
+         patch("bot.ALLOWED_GROUP_IDS", [-1001]), \
+         patch("bot.service_logger") as mock_log:
+        await register_command_scopes(bot)  # must not raise
+
+    assert bot.set_my_commands.call_count == 3
+    mock_log.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_post_init_registers_scoped_commands():
+    """post_init delegates command registration to register_command_scopes
+    and keeps its other duties (bot_data username, cookie expiry loop)."""
+    from bot import post_init
+
+    app = MagicMock()
+    app.bot.get_me = AsyncMock(return_value=MagicMock(username="testbot"))
+    app.bot.set_my_commands = AsyncMock()
+    app.bot_data = {}  # plain dict: MagicMock __getitem__/__setitem__ don't persist
+    app.create_task = MagicMock()
+
+    with patch("bot.register_command_scopes", new=AsyncMock()) as mock_reg, \
+         patch("bot.service_logger") as mock_log:
+        await post_init(app)
+
+    mock_reg.assert_awaited_once_with(app.bot)
+    app.bot.set_my_commands.assert_not_called()
+    assert app.bot_data["bot_username"] == "testbot"
+    mock_log.info.assert_called_once_with("Bot username: @%s", "testbot")
+    app.create_task.assert_called_once()
+    coro = app.create_task.call_args[0][0]
+    coro.close()  # never awaited in test — close to avoid warnings

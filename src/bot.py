@@ -2,8 +2,14 @@ import logging
 from logging_config import setup_logging, details_logger, service_logger, log_error
 
 import httpx
-from telegram import BotCommand, Update
-from telegram.error import TimedOut
+from telegram import (
+    BotCommand,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
+    Update,
+)
+from telegram.error import TelegramError, TimedOut
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -14,7 +20,13 @@ from telegram.ext import (
     filters,
 )
 
-from config import BOT_TOKEN, GUEST_MODE_ENABLED
+from config import (
+    ALLOWED_GROUP_IDS,
+    ALLOWED_IDS_CONFIGURED,
+    ALLOWED_USER_IDS,
+    BOT_TOKEN,
+    GUEST_MODE_ENABLED,
+)
 from handlers import handle_url, audio_command, my_chat_member_handler
 from platforms.youtube import ytmusic_callback
 from commands import start_command, help_command, caption_command
@@ -61,11 +73,42 @@ COMMANDS = [
 ]
 
 
+async def _set_commands_safe(bot, commands, scope=None) -> None:
+    """setMyCommands that logs and swallows errors so one bad chat
+    cannot abort startup registration."""
+    try:
+        await bot.set_my_commands(commands, scope=scope)
+    except TelegramError as e:
+        service_logger.warning("Failed to set command scope %s: %s", scope, e)
+
+
+async def register_command_scopes(bot) -> None:
+    """Register the command menu only where it should be visible.
+
+    Allow-all mode: keep the single global menu (no user list to restrict to).
+    Allowlist configured: clear the default scope, then register COMMANDS per
+    allowed user and per allowed group (all group chats when no group
+    allowlist is configured)."""
+    if not ALLOWED_IDS_CONFIGURED:
+        await _set_commands_safe(bot, COMMANDS)
+        return
+
+    await _set_commands_safe(bot, [], scope=BotCommandScopeDefault())
+    for user_id in ALLOWED_USER_IDS:
+        await _set_commands_safe(bot, COMMANDS, scope=BotCommandScopeChat(user_id))
+
+    if ALLOWED_GROUP_IDS:
+        for group_id in ALLOWED_GROUP_IDS:
+            await _set_commands_safe(bot, COMMANDS, scope=BotCommandScopeChat(group_id))
+    else:
+        await _set_commands_safe(bot, COMMANDS, scope=BotCommandScopeAllGroupChats())
+
+
 async def post_init(application: Application) -> None:
     """Set bot commands, fetch username, start daily cookie expiry check."""
     me = await application.bot.get_me()
     application.bot_data["bot_username"] = me.username
-    await application.bot.set_my_commands(COMMANDS)
+    await register_command_scopes(application.bot)
     service_logger.info("Bot username: @%s", me.username)
 
     from cookie_expiry import expiry_check_loop

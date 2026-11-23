@@ -25,7 +25,7 @@ For detailed documentation, see `docs/README.md` (human-readable overview) and t
 ```
 media-downloader-bot/
 ├── src/                # Application code
-│   ├── bot.py          # Entry point - creates Application, registers handlers, runs polling
+│   ├── bot.py          # Entry point - creates Application, registers handlers, runs polling, registers scoped command menu
 │   ├── config.py       # Loads .env, exports settings as constants
 │   ├── downloader.py   # yt-dlp subprocess wrapper (metadata, download, audio, images, DownloadError)
 │   ├── platform_args.py # Platform-specific yt-dlp constants (USER_AGENT, COMMON_YTDL_ARGS, TIKTOK_REFERER)
@@ -105,10 +105,11 @@ media-downloader-bot/
 | `src/cookie_upload.py` | auth, config, cookie_expiry, logging_config, messages | Admin-only cookie upload: `handle_cookie_document()` handles `.txt` documents in P2P chats only (groups/guest/inline ignored). Flow: private-chat check → `is_bot_admin()` (non-admins silently ignored) → caption: empty → accepted with `MSG_COOKIE_NO_CAPTION_HINT` (reply-to-file activation, file NOT saved yet); bad keyword → `MSG_COOKIE_INVALID_CAPTION` → `.txt` + Netscape content check (`MSG_COOKIE_INVALID_FILE`) → saves `cookies/<platform>-cookie-YYYY-MM-DD.txt` + overwrites active path → replies `MSG_COOKIE_UPDATED` + expiry note (`MSG_COOKIE_EXPIRY_NOTE`) or `MSG_COOKIE_NO_AUTH` → `log_cookie_updated()` to service.jsonl. `handle_cookie_reply()` activates a caption-less file when the admin replies `cookie update <platform>` to it; matched by `cookie_reply_filter` (BaseFilter), registered in `bot.py` before the generic text handler. |
 | `src/cookie_expiry.py` | config, logging_config, messages | Cookie expiry: `parse_cookie_expiry(text, platform)` parses Netscape expiry timestamps (column 5) for critical auth cookies only (`ig`: sessionid; `yt`: SID/SAPISID/`__Secure-*PSID*`; `tt`: sessionid/sid_guard/sid_tt/uid_tt*) → `CookieExpiry(has_auth, expiry, cookie)`; `active_cookie_expiry(platform)` reads the active file; `check_and_notify(bot)` DMs all `BOT_ADMIN_IDS` when expiry is <=1 day away (once per platform+expiry per run); `expiry_check_loop(bot)` runs it on startup + every 24h (started in `bot.post_init()`). |
 | `src/http_request.py` | telegram, httpx | Resilient HTTP layer: `ResilientHTTPXRequest` (subclass of PTB's `HTTPXRequest`, wired in `bot.py` via `Application.builder().request(...)`) retries a request **once** when its write to Telegram stalls — `TimedOut` caused by `httpx.WriteTimeout` means the body never fully reached the Bot API, so the request cannot have been processed and a retry cannot duplicate a send. Read timeouts are never retried (the request may already have been processed → duplicate risk). Before retrying, upload file handles are rewound (`_rewind_uploads()`); an unrewindable handle skips the retry rather than uploading a truncated file. Also exports `MEDIA_WRITE_TIMEOUT` (120.0 — PTB's 20s default killed large-video uploads) and `UPLOAD_ATTEMPTS` (2). |
-| `src/bot.py` | config, handlers, commands, platforms.youtube, logging_config, guest, http_request | Entry point, wires everything together, initializes logging, global error handler. Guest handler registered BEFORE text handler (filters.TEXT matches guest messages via effective_message). Builds the Application with `ResilientHTTPXRequest(media_write_timeout=MEDIA_WRITE_TIMEOUT)`. |
+| `src/bot.py` | config, handlers, commands, platforms.youtube, logging_config, guest, http_request | Entry point, wires everything together, initializes logging, global error handler. Guest handler registered BEFORE text handler (filters.TEXT matches guest messages via effective_message). Builds the Application with `ResilientHTTPXRequest(media_write_timeout=MEDIA_WRITE_TIMEOUT)`. `post_init()` resolves the bot username, registers the command menu via `register_command_scopes()` (scoped per allowlist — see Key Design Decisions), and starts the cookie expiry loop. |
 
 ## Data Flow
 
+0. **Startup** (`post_init`): resolve bot username into `bot_data`, register the command menu via `register_command_scopes()` (scoped to allowed users/groups — see Key Design Decisions), start the daily cookie expiry loop
 1. User sends URL or `/audio` command -> `handlers.py` routes to appropriate handler
 2. **Authorization check**: `is_authorized(update)` called at start of every handler:
    - **Groups**: always allowed (bot only exists if admin added it)
@@ -173,6 +174,7 @@ media-downloader-bot/
 - **Auto best quality** - Downloads best quality under 50MB Telegram limit, retries with worst on failure.
 - **Codec compatibility (iOS)** - Format selectors prefer H.264 (`vcodec^=avc1`) because it is the only codec every Telegram client decodes (iOS AVPlayer has no VP9; most iPhones have no AV1) — `ext=mp4` does NOT imply H.264: Instagram DASH ships VP9 and YouTube ships AV1 in mp4 containers. Size-capped branches come first so yt-dlp drops over-limit rungs and descends the quality ladder (1080p > 50MB → 720p → 480p → ...); each codec phase falls through to the next (H.264 → AV1/VP9 → catch-all) so a video is always sent rather than an error. Instagram uses `INSTAGRAM_FORMAT_SELECTOR` (`platform="instagram"`, progressive-first): its H.264 rendition has no vcodec metadata while its DASH ladder is VP9-only, so the bare progressive branch must precede the VP9 DASH merge (otherwise iPhone Telegram shows only a blurred preview with sound).
 - **User allowlist** - IDs merged from `allowed-users.json` (array of objects with `id` field) + `ALLOWED_USER_IDS` env var. If no sources configured = allow all. If sources configured but user not in list = deny.
+- **Scoped command menus** - The command suggestion menu (`COMMANDS`) is registered per allowed user (`BotCommandScopeChat`) and per allowed group chat (or `BotCommandScopeAllGroupChats` when `ALLOWED_GROUP_IDS` is empty), with the default global scope cleared first — so unauthorized DMs and unauthorized groups see no command menu. When no allowlist is configured (allow-all), the single global menu stays as before. Registration runs once at startup in `post_init` via `register_command_scopes()`; each `setMyCommands` call swallows+logs its own `TelegramError` so one bad chat cannot abort startup. Removing a user from the allowlist leaves their per-user menu until the next config change clears it (Telegram has no scope-enumeration API) — cosmetic only, their messages are ignored anyway.
 - **Bot admins** - `BOT_ADMIN_IDS` env var (comma-separated). Admins can always add bot to groups. Empty = anyone can add.
 - **Unauthorized user handling** - First attempt: "You are not authorized" + log `unauthorized_access` event. Subsequent attempts: silently ignored (in-memory sets, resets on restart). P2P and guest mode track separately — a user told in P2P can still use guest mode and vice versa. Guest mode only shows auth message when URL is present; without URL, unauthorized users are silently ignored.
 - **Group security** - Relaxed group addition: bot admins can always add; anonymous admins and allowed users can add if a bot admin is in the group; group admins with invite rights can add if a bot admin is in the group. No bot admin in group → reject. **Gotcha:** the bot-admin-presence check uses `getChatMember`, which is only guaranteed when the bot itself is an admin — a bot admin acting as an *anonymous admin* may fail to resolve, causing a false rejection (bot replies "Not everyone can add me to groups" and leaves). Workaround: disable anonymous mode for that admin before adding the bot. Each presence-check lookup is logged to service.jsonl as `bot_admin_lookup` (status or error) so failed lookups are diagnosable. The presence check accepts `administrator`/`member`/`creator` statuses. See `docs/group-chats/admin-controls.md#known-gotchas`.
@@ -218,7 +220,7 @@ All 595 tests use mocked subprocess calls - no real downloads needed.
 
 **Add a new platform:** Create `src/platforms/newplatform.py` with a `handle_newplatform()` function, add domain to `SUPPORTED_PLATFORMS` in `src/platforms/__init__.py`, add platform-specific args in `src/downloader.py`. Register in `handlers.py` `_download_and_send()`.
 
-**Add a new command:** Add handler function in `src/commands.py`, register in `src/bot.py` with `app.add_handler(CommandHandler(...))`.
+**Add a new command:** Add handler function in `src/commands.py`, register in `src/bot.py` with `app.add_handler(CommandHandler(...))`, and add a `BotCommand` entry to `COMMANDS` in `src/bot.py` so it appears in the (scoped) command menu.
 
 **Change download behavior:** Edit `src/downloader.py` for yt-dlp changes, or the platform-specific handler in `src/platforms/` for platform logic.
 
@@ -280,3 +282,7 @@ This copies today's logs from the server into local `logs/YYYY-MM-DD/`. Then rea
 - [Deployment](docs/deploy.md) - Production server, SSH access, deploy commands (gitignored)
 - [Guest Mode](docs/guest-mode/README.md) - Bot API 10.0 guest mode overview and technical reference
 - [Cookies](docs/cookies.md) - Manual cookie setup/refresh (Instagram + TikTok) and troubleshooting
+
+## Todo
+
+If `docs/todo.md` exists, read it and suggest a relevant item to the human partner at the start or end of a session. It is gitignored (owner's private backlog) — never commit it.
